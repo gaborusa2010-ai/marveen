@@ -69,6 +69,12 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/config-overrides.json
 add_if "${REPOLIST}" "${REPO_ROOT}" .env
 add_if "${REPOLIST}" "${REPO_ROOT}" scheduled-tasks.json
 add_if "${REPOLIST}" "${REPO_ROOT}" assets/meetings
+# The owner's own tooling (work log, invoicing, cutting list, receipts, Google
+# auth). It lives in the repo but was untracked for three days, so neither git
+# nor this archive held a copy -- a disk failure would have taken all of it.
+# It is tracked now; keeping it here too means a restore does not depend on the
+# git history being intact.
+add_if "${REPOLIST}" "${REPO_ROOT}" scripts/muhely
 # Per-agent identity + channel secrets (glob; missing dir is not an error).
 if [[ -d agents ]]; then
   find agents -type f \
