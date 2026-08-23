@@ -17,6 +17,35 @@ import sys
 import zlib
 
 
+def _ascii85decode(data):
+    """Decode the PDF ASCII85 variant (whitespace and z shorthand)."""
+    data = re.sub(rb"\s+", b"", data)
+    if data.startswith(b"<~"):
+        data = data[2:]
+    if b"~>" in data:
+        data = data[:data.find(b"~>")]
+    out, group = bytearray(), []
+    for value in data:
+        if value == ord("z") and not group:
+            out.extend(b"\0\0\0\0")
+            continue
+        if 33 <= value <= 117:
+            group.append(value - 33)
+        if len(group) == 5:
+            number = 0
+            for digit in group:
+                number = number * 85 + digit
+            out.extend(number.to_bytes(4, "big")); group = []
+    if group:
+        original = len(group)
+        group.extend([84] * (5 - original))
+        number = 0
+        for digit in group:
+            number = number * 85 + digit
+        out.extend(number.to_bytes(4, "big")[:original - 1])
+    return bytes(out)
+
+
 def _objects(data):
     """obj number -> (header bytes, decompressed stream or None)."""
     objs = {}
@@ -30,11 +59,18 @@ def _objects(data):
         if sm:
             se = body.find(b"endstream", sm.end())
             raw = body[sm.end():se if se > 0 else len(body)].rstrip(b"\r\n")
-            try:
-                stream = zlib.decompress(raw)
-            except zlib.error:
-                stream = raw
             header = body[:sm.start()]
+            stream = raw
+            filters = re.findall(rb"/(ASCII85Decode|A85|FlateDecode|Fl)",
+                                 header)
+            try:
+                for stream_filter in filters:
+                    if stream_filter in (b"ASCII85Decode", b"A85"):
+                        stream = _ascii85decode(stream)
+                    else:
+                        stream = zlib.decompress(stream)
+            except (ValueError, OverflowError, zlib.error):
+                stream = raw
         else:
             header = body
         objs[num] = (header, stream)
@@ -65,40 +101,93 @@ def _objects(data):
     return objs
 
 
-def _font_cmaps(objs):
-    """Resource name (F1, FF0, ...) -> its own cid table.
+def _dict_after(data, key):
+    """Return the (possibly indirect) dictionary following key."""
+    m = re.search(re.escape(key) + rb"\s*(?:(\d+)\s+\d+\s+R|<<)", data)
+    if not m:
+        return None, None
+    if m.group(1):
+        return int(m.group(1)), None
+    start, pos, depth = m.end() - 2, m.end(), 1
+    while pos < len(data) - 1:
+        pair = data[pos:pos + 2]
+        if pair == b"<<":
+            depth += 1; pos += 2
+        elif pair == b">>":
+            depth -= 1; pos += 2
+            if not depth:
+                return None, data[start:pos]
+        else:
+            pos += 1
+    return None, None
 
-    Per font, never merged: two subset fonts reuse the same low CIDs for
-    different glyphs, so one shared table turns half the document into noise.
-    """
-    tounicode = {}
-    for num, (header, _stream) in objs.items():
-        m = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", header)
-        if m and b"/Font" in header:
-            tounicode[num] = int(m.group(1))
-    by_name = {}
-    for num, (header, _s) in objs.items():
-        for name, ref in re.findall(rb"/([A-Za-z0-9_.-]+)\s+(\d+)\s+\d+\s+R",
-                                    header):
-            ref = int(ref)
-            if ref in tounicode:
-                cm = objs.get(tounicode[ref], (None, None))[1]
-                if cm:
-                    by_name[name.decode()] = _parse_cmap(cm)
-    return by_name
+
+def _resource_dict(header, objs):
+    ref, inline = _dict_after(header, b"/Resources")
+    if ref is not None:
+        return objs.get(ref, (b"", None))[0]
+    return inline
+
+
+def _font_cmaps(resources, objs):
+    """Return the font-name -> CMap mapping for one resource dictionary."""
+    if not resources:
+        return {}
+    ref, font_dict = _dict_after(resources, b"/Font")
+    if ref is not None:
+        font_dict = objs.get(ref, (b"", None))[0]
+    if not font_dict:
+        return {}
+    result = {}
+    for name, font_ref in re.findall(
+            rb"/([A-Za-z0-9_.-]+)\s+(\d+)\s+\d+\s+R", font_dict):
+        font = objs.get(int(font_ref))
+        if not font:
+            continue
+        cmref = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", font[0])
+        if not cmref:
+            continue
+        cmap_stream = objs.get(int(cmref.group(1)), (None, None))[1]
+        if cmap_stream:
+            result[name.decode()] = _parse_cmap(cmap_stream)
+    return result
+
+
+def _xobject_refs(resources, objs):
+    """Return named Form XObjects from one resource dictionary."""
+    if not resources:
+        return {}
+    ref, xobjects = _dict_after(resources, b"/XObject")
+    if ref is not None:
+        xobjects = objs.get(ref, (b"", None))[0]
+    if not xobjects:
+        return {}
+    return {name.decode(): int(num) for name, num in re.findall(
+        rb"/([A-Za-z0-9_.-]+)\s+(\d+)\s+\d+\s+R", xobjects)}
 
 
 def _parse_cmap(c):
     table = {}
     for blk in re.findall(rb"beginbfchar(.*?)endbfchar", c, re.S):
         for src, dst in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
-            table[int(src, 16)] = _hex_to_str(dst)
+            table[bytes.fromhex(src.decode())] = _hex_to_str(dst)
     for blk in re.findall(rb"beginbfrange(.*?)endbfrange", c, re.S):
         for lo, hi, dst in re.findall(
                 rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
-            lo_i, hi_i, base = int(lo, 16), int(hi, 16), int(dst, 16)
+            lo_i, hi_i = int(lo, 16), int(hi, 16)
+            src_len = len(lo) // 2
+            dst_bytes = bytes.fromhex(dst.decode())
+            base = int.from_bytes(dst_bytes, "big")
             for i in range(lo_i, min(hi_i, lo_i + 65535) + 1):
-                table[i] = chr(base + (i - lo_i))
+                value = (base + i - lo_i).to_bytes(len(dst_bytes), "big")
+                table[i.to_bytes(src_len, "big")] = _hex_to_str(value.hex())
+        for lo, hi, values in re.findall(
+                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[(.*?)\]", blk,
+                re.S):
+            lo_i, hi_i, src_len = int(lo, 16), int(hi, 16), len(lo) // 2
+            dests = re.findall(rb"<([0-9A-Fa-f]+)>", values)
+            for offset, dst in enumerate(dests[:hi_i - lo_i + 1]):
+                table[(lo_i + offset).to_bytes(src_len, "big")] = _hex_to_str(dst)
     return table
 
 
@@ -107,21 +196,57 @@ def _streams(data):
 
 
 def _content_streams(objs):
-    """Return page content streams, excluding fonts, XRefs, and metadata."""
-    refs = []
+    """Return (page content stream, page font maps) pairs."""
+    chunks = []
     for header, _stream in objs.values():
         if not re.search(rb"/Type\s*/Page\b", header):
             continue
+        resources = _resource_dict(header, objs)
+        ancestor = header
+        seen = set()
+        while resources is None:
+            parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", ancestor)
+            if not parent or int(parent.group(1)) in seen:
+                break
+            parent_num = int(parent.group(1)); seen.add(parent_num)
+            ancestor = objs.get(parent_num, (b"", None))[0]
+            resources = _resource_dict(ancestor, objs)
+        fonts = _font_cmaps(resources, objs)
         match = re.search(
             rb"/Contents\s*(?:\[([^]]*)\]|(\d+)\s+\d+\s+R)", header, re.S)
         if not match:
             continue
         if match.group(2):
-            refs.append(int(match.group(2)))
+            refs = [int(match.group(2))]
         else:
-            refs.extend(int(n) for n in re.findall(rb"(\d+)\s+\d+\s+R",
-                                                    match.group(1)))
-    return [objs[num][1] for num in refs if num in objs and objs[num][1]]
+            refs = [int(n) for n in re.findall(rb"(\d+)\s+\d+\s+R",
+                                                match.group(1))]
+        page_chunks = [(objs[num][1], fonts) for num in refs
+                       if num in objs and objs[num][1]]
+        chunks.extend(page_chunks)
+
+        # Some producers put all page text in Form XObjects.  Walk only forms
+        # actually invoked by the page/form stream and give each its own
+        # resources (or the caller's resources when omitted).
+        pending = [(stream, resources) for stream, _fonts in page_chunks]
+        visited = set()
+        while pending:
+            caller_stream, caller_resources = pending.pop(0)
+            xobjects = _xobject_refs(caller_resources, objs)
+            invoked = re.findall(rb"/([A-Za-z0-9_.-]+)\s+Do\b", caller_stream)
+            for name in invoked:
+                obj_num = xobjects.get(name.decode())
+                if obj_num is None or obj_num in visited:
+                    continue
+                form = objs.get(obj_num)
+                if not form or not form[1] or not re.search(
+                        rb"/Subtype\s*/Form\b", form[0]):
+                    continue
+                visited.add(obj_num)
+                form_resources = _resource_dict(form[0], objs) or caller_resources
+                chunks.append((form[1], _font_cmaps(form_resources, objs)))
+                pending.append((form[1], form_resources))
+    return chunks
 
 
 def _cmaps(chunks):
@@ -170,25 +295,72 @@ def _unescape(s):
     return bytes(out)
 
 
+def _decode_with_cmap(value, cmap):
+    """Decode a PDF string using variable-width source codes."""
+    if not cmap:
+        return value.decode("latin-1", "replace")
+    lengths = sorted({len(code) for code in cmap}, reverse=True)
+    out, pos = [], 0
+    while pos < len(value):
+        for size in lengths:
+            code = value[pos:pos + size]
+            if len(code) == size and code in cmap:
+                out.append(cmap[code]); pos += size
+                break
+        else:
+            # Preserve the old fallback for an unmapped byte rather than
+            # dropping an entire string when a font has an incomplete CMap.
+            out.append(bytes([value[pos]]).decode("latin-1")); pos += 1
+    return "".join(out)
+
+
+def _tj_adjustment_is_space(value):
+    """Return whether a TJ positioning adjustment represents a word gap."""
+    # In this corpus, ordinary negative kerning adjustments top out at 21
+    # thousandths of an em, while spacing adjustments begin above 100.  Keep
+    # the cutoff at that observed boundary rather than splitting on every
+    # adjustment (which turns individually positioned glyphs into words).
+    return -value > 100
+
+
 def extract(path, raw=False):
     data = open(path, "rb").read()
     objs = _objects(data)
     chunks = _content_streams(objs)
-    fonts = _font_cmaps(objs)
     cmap = {}
     lines = []
-    for c in chunks:
-        if b"Tj" not in c and b"TJ" not in c:
+    for c, fonts in chunks:
+        if b"BT" not in c:
             continue
         text = c.decode("latin-1", "replace")
         cur = []
-        for m in re.finditer(r"/([A-Za-z0-9_.-]+)\s+[\d.]+\s+Tf"
+        in_tj_array = False
+        for m in re.finditer(r"%[^\r\n]*"
+                             r"|/([A-Za-z0-9_.-]+)\s+[\d.]+\s+Tf"
+                             r"|([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+(Td|TD)"
                              r"|\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]+>"
+                             r"|([\[\]])|([-+]?\d*\.?\d+)"
                              r"|\bTJ\b|\bTj\b|\bTd\b|\bTD\b|\bT\*\b|\bET\b",
                              text):
             tok = m.group()
+            if tok.startswith("%"):           # comments may contain (parens)
+                continue
             if m.group(1):                      # font switch
                 cmap = fonts.get(m.group(1), {})
+                continue
+            if m.group(4):                      # positioned text move
+                # A zero vertical move merely advances to the next glyph.
+                # The affected PDFs use one Tj per glyph with "x 0 Td" moves.
+                if float(m.group(3)) and cur:
+                    lines.append("".join(cur)); cur = []
+                continue
+            if m.group(5):
+                in_tj_array = tok == "["
+                continue
+            if m.group(6):
+                if (in_tj_array and _tj_adjustment_is_space(float(tok))
+                        and cur and not cur[-1].endswith(" ")):
+                    cur.append(" ")
                 continue
             if tok in ("Td", "TD", "T*", "ET"):
                 if cur:
@@ -199,18 +371,12 @@ def extract(path, raw=False):
             if tok.startswith("<"):
                 hx = re.sub(r"\s", "", tok[1:-1])
                 if cmap:
-                    for k in range(0, len(hx) - 1, 4 if max(cmap) > 255 else 2):
-                        step = 4 if max(cmap) > 255 else 2
-                        cid = int(hx[k:k + step] or "0", 16)
-                        cur.append(cmap.get(cid, ""))
+                    cur.append(_decode_with_cmap(bytes.fromhex(hx), cmap))
                 else:
                     cur.append(_hex_to_str(hx))
             else:
                 b = _unescape(tok[1:-1].encode("latin-1", "replace"))
-                if cmap and all(x in cmap for x in b if x):
-                    cur.append("".join(cmap.get(x, "") for x in b))
-                else:
-                    cur.append(b.decode("latin-1", "replace"))
+                cur.append(_decode_with_cmap(b, cmap))
         if cur:
             lines.append("".join(cur))
     result = "\n".join(lines) if raw else "\n".join(

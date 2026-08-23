@@ -122,7 +122,13 @@ def money(v):
 def render(kind, job, business, out_path):
     is_invoice = kind == "invoice"
     title = "INVOICE" if is_invoice else "QUOTATION"
-    ref = job.get("reference") or next_number(kind, business)
+    # Peek at the number, do NOT consume it yet. Anything below can still raise
+    # (a malformed job file, a font/layout error), and a burnt reference leaves a
+    # permanent hole in the sequence -- the one thing HMRC numbering must not do.
+    # The counter is bumped only after the PDF is on disk. Measured 2026-08-23:
+    # a job file with a bad line still advanced the counter from 10010 to 10011.
+    explicit_ref = job.get("reference")
+    ref = explicit_ref or next_number(kind, business, bump=False)
 
     issued = job.get("date") or date.today().isoformat()
     issued_d = datetime.strptime(issued, "%Y-%m-%d").date()
@@ -271,6 +277,16 @@ def render(kind, job, business, out_path):
         pg.text(R, 42, extra, size=7.5, colour=(0.5, 0.5, 0.5), align="right")
 
     write_pdf(out_path, [pg], title=f"{title} {ref}")
+    # PDF exists: only now is the reference actually spent.
+    if not explicit_ref:
+        consumed = next_number(kind, business)
+        if consumed != ref:
+            # Another process took the number between the peek and the write.
+            # Say so loudly rather than shipping a PDF whose printed reference
+            # disagrees with the ledger.
+            raise SystemExit(
+                f"sorszam utkozes: a PDF-en {ref} all, de a szamlalo {consumed}-t "
+                f"adta ki. A {out_path} fajlt NE hasznald, futtasd ujra.")
     return {"reference": ref, "subtotal": round(subtotal, 2), "vat": vat,
             "cis_rate": cis_rate, "cis_base": cis_base, "cis": cis,
             "total": total, "deposit": deposit, "balance": balance,
