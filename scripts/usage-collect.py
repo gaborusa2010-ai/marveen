@@ -92,7 +92,8 @@ LATEST_PATH = os.path.join(STORE_DIR, "usage-latest.json")
 STATE_PATH = os.path.join(STORE_DIR, "usage-alert-state.json")
 ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
-BUDAPEST = ZoneInfo("Europe/Budapest")
+# The owner lives in London; a Budapest-stamped reset time is an hour wrong.
+BUDAPEST = ZoneInfo(os.environ.get("MARVEEN_TZ", "Europe/London"))
 
 TOKEN_FIELDS = (
     "input_tokens",
