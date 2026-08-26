@@ -75,12 +75,26 @@ add_if "${REPOLIST}" "${REPO_ROOT}" assets/meetings
 # It is tracked now; keeping it here too means a restore does not depend on the
 # git history being intact.
 add_if "${REPOLIST}" "${REPO_ROOT}" scripts/muhely
+# ...and the DATA those scripts run on, which was the other half of the same gap
+# (found 2026-08-24). store/ is gitignored, and only the db and the token were
+# listed above, so the invoice counter, the business details and every job folder
+# (cutting lists, nesting plans, generators, drawing photos) had NO copy anywhere.
+# Losing muhely-counters.json alone would break the continuous invoice sequence
+# that HMRC requires.
+add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely-business.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely-counters.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely-jobs.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/autonomy-config.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely
 # Per-agent identity + channel secrets (glob; missing dir is not an error).
 if [[ -d agents ]]; then
   find agents -type f \
     \( -name 'CLAUDE.md' -o -name 'SOUL.md' -o -name '.mcp.json' \
        -o -name 'access.json' -o -name '.env' \) \
     -print >> "${REPOLIST}"
+  # An agent's memory/ is its accumulated knowledge, not a runtime cache: it is
+  # what stops the owner re-explaining his own conventions. Same 2026-08-24 gap.
+  find agents -type f -path '*/memory/*.md' -print >> "${REPOLIST}"
 fi
 
 # home/ group (relative to $HOME)
