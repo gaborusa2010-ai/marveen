@@ -80,8 +80,15 @@ def build(spec):
 
     # Depth available for panels in front of the back
     if back_type == "rebate":
-        panel_depth = D - back_t
-        notes.append(f"Hatlap {back_t} mm, falcba ul, ezert a panelek melysege {panel_depth:.0f} mm.")
+        # A rebated back sits INSIDE the carcass depth: the rebate is machined
+        # into the side, top and bottom, so those panels stay full depth. Only
+        # the clear internal depth loses the back thickness. Subtracting it from
+        # every panel (as this did until 2026-08-26) made each one back_t too
+        # shallow, which the Kreg media console, dowel bookcase and pegboard
+        # cabinet cut lists all contradict.
+        panel_depth = D
+        notes.append(f"Hatlap {back_t} mm, falcba ul: a panelek TELJES melysegek, "
+                     f"a belso szabad melyseg {D - back_t:.0f} mm.")
     elif back_type == "applied":
         panel_depth = D - back_t
         notes.append(f"Hatlap {back_t} mm, kivulrol felcsavarozva, a korpusz melysege {panel_depth:.0f} mm.")
@@ -121,7 +128,10 @@ def build(spec):
     n_shelf = int(sh.get("count", 0))
     if n_shelf:
         setback = float(sh.get("setback", 5))
-        clr = cfg["shelf_side_clearance"]
+        # A fixed shelf is screwed or dowelled into the carcass and IS the
+        # structure, so it is cut to the opening exactly. Only an adjustable
+        # shelf needs clearance to drop in without binding.
+        clr = cfg["shelf_side_clearance"] if sh.get("adjustable") else 0.0
         sw = inner_w - 2 * clr
         sd = panel_depth - setback
         parts_add(parts, "polc", sw, sd, n_shelf, grain="w",

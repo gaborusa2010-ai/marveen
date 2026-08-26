@@ -229,7 +229,17 @@ def cmd_stop(a):
     print(f"{_local(live['started_at'])} -> {_local(live['stopped_at'])}   {h} ora")
     print(f"Fotok: {len(live['photos'])}   Jegyzetek: {len(live['notes'])}")
     if live.get("rate"):
-        print(f"Munkadij {live['rate']} / nap alapjan: kb. {round(h / 8 * live['rate'], 2)}")
+        # The mode matters HERE too, not only in cmd_invoice. Measured 2026-08-25:
+        # a 9-hour day-rate job printed "kb. 225.0" (9/8 x 200) while the invoice
+        # it feeds would correctly bill one day at 200. A wrong number on the
+        # closing line is the one the owner reads in the workshop, so it has to
+        # agree with the invoice, not with an hourly formula that does not apply.
+        if live.get("billing", "daily") == "daily":
+            days = max(1, live.get("days") or 1)
+            print(f"Napidij {live['rate']} x {days} nap = {round(days * float(live['rate']), 2)}"
+                  f"   ({h} ora a helyszinen, de a napidij nem oraaranyos)")
+        else:
+            print(f"Oradij-elszamolas: {h} ora, kb. {round(h / 8 * live['rate'], 2)}")
     print(f"\nSzamlahoz:  python3 scripts/muhely/jobs.py invoice {live['id']}")
     return 0
 

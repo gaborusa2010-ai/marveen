@@ -38,11 +38,62 @@ def _enc(text):
     return "".join(out)
 
 
+def _jpeg_size(data):
+    """(width, height, components) from a JPEG's SOF marker.
+
+    Walks the marker chain rather than trusting a fixed offset: JFIF/Exif
+    headers vary in length, and a wrong guess silently yields a stretched page.
+    """
+    if data[:2] != b"\xff\xd8":
+        raise ValueError("not a JPEG (missing SOI marker)")
+    i = 2
+    while i < len(data) - 1:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seg_len = int.from_bytes(data[i + 2:i + 4], "big")
+        # SOF0..SOF15 carry the frame header; C4 (DHT), C8, CC are not SOF.
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            h = int.from_bytes(data[i + 5:i + 7], "big")
+            w = int.from_bytes(data[i + 7:i + 9], "big")
+            return w, h, data[i + 9]
+        i += 2 + seg_len
+    raise ValueError("no SOF marker found in JPEG")
+
+
 class Page:
     def __init__(self, width, height):
         self.w = width
         self.h = height
         self.ops = []
+        self.images = []      # (name, jpeg_bytes, px_w, px_h, colourspace)
+
+    def image(self, path, x, y, w, h):
+        """Place a JPEG at (x, y) with size w x h, in points.
+
+        JPEG only, and deliberately so: PDF carries JPEG natively via
+        /DCTDecode, so the file is embedded byte-for-byte with no decoding,
+        no re-compression and no third-party library. PNG would need a full
+        decoder here; convert it first instead, ffmpeg is on the box:
+            ffmpeg -y -i page.png -q:v 2 page.jpg
+        Added 2026-08-25: the owner's KDP colouring books need image pages,
+        and this writer previously had no way to place one.
+        """
+        data = open(path, "rb").read()
+        px_w, px_h, comps = _jpeg_size(data)
+        cs = {1: "/DeviceGray", 3: "/DeviceRGB", 4: "/DeviceCMYK"}.get(comps)
+        if cs is None:
+            raise ValueError("%s: %d-component JPEG is not supported" % (path, comps))
+        name = "Im%d" % (len(self.images) + 1)
+        self.images.append((name, data, px_w, px_h, cs))
+        # cm maps the unit square onto the target rectangle; q/Q keeps it local.
+        self.ops.append("q %.2f 0 0 %.2f %.2f %.2f cm /%s Do Q"
+                        % (w, h, x, y, name))
+        return px_w, px_h
 
     def rect(self, x, y, w, h, fill=None, stroke=None, lw=0.6):
         if fill:
@@ -102,10 +153,21 @@ def write_pdf(path, pages, title="", compress=True):
             extra = b""
         content_id = add(b"<< " + extra + b"/Length " + str(len(data)).encode() +
                          b" >>\nstream\n" + data + b"\nendstream")
+        # Image XObjects, one per placed JPEG. The bytes go in verbatim under
+        # /DCTDecode -- that is the whole point of restricting to JPEG.
+        xobj = []
+        for name, jpg, px_w, px_h, cs in getattr(pg, "images", []):
+            img_id = add(("<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+                          "/ColorSpace %s /BitsPerComponent 8 /Filter /DCTDecode "
+                          "/Length %d >>\nstream\n" % (px_w, px_h, cs, len(jpg))
+                          ).encode() + jpg + b"\nendstream")
+            xobj.append("/%s %d 0 R" % (name, img_id))
+        res = ("/Font << /F1 %d 0 R /F2 %d 0 R >>" % (font_regular, font_bold))
+        if xobj:
+            res += " /XObject << %s >>" % " ".join(xobj)
         pid = add(("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.2f %.2f] "
-                   "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> "
-                   "/Contents %d 0 R >>"
-                   % (pages_obj_id, pg.w, pg.h, font_regular, font_bold, content_id)
+                   "/Resources << %s >> /Contents %d 0 R >>"
+                   % (pages_obj_id, pg.w, pg.h, res, content_id)
                    ).encode())
         page_ids.append(pid)
 
