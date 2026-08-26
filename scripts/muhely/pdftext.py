@@ -381,6 +381,14 @@ def extract(path, raw=False):
             lines.append("".join(cur))
     result = "\n".join(lines) if raw else "\n".join(
         l.strip() for l in lines if l.strip())
+    # NUL bytes must never reach the caller. Measured 2026-08-25 on the owner's
+    # own "12-Month Income Plan" PDF: the extraction was complete (26,774 chars)
+    # but carried 39 embedded NULs, the first at offset 125. Stored in SQLite
+    # that text is intact, yet `length()` reports 125 and -- far worse -- `LIKE`
+    # matches NOTHING past the first NUL. The document was silently unsearchable
+    # in the idea box while looking merely "short" in every diagnostic.
+    # They are decoding artifacts (unmapped glyphs), never meaningful content.
+    result = result.replace("\x00", "")
     return result if _plausible_text(result) else ""
 
 
