@@ -50,6 +50,33 @@ Only fetch URLs from these approved domains. Reject all others with `{ "error": 
 - `feeds.reuters.com`
 - `feeds.bbci.co.uk`
 
+Workshop plan sources and Anthropic documentation, approved by the owner on
+2026-08-26. For THESE entries match the base domain **or any subdomain** of it
+(`learn.kregtool.com` counts as `kregtool.com`), because that is exactly how the
+egress-gate hook matches `quarantine_domains`:
+- `woodshopdiaries.com`
+- `ana-white.com`
+- `kregtool.com`
+- `buildsomething.com`
+- `tombuildsstuff.com`
+- `housefulofhandmade.com`
+- `hertoolbelt.com`
+- `pneumaticaddict.com`
+- `wwgoa.com`
+- `bobsplans.com`
+- `craftedworkshop.com`
+- `freewoodworkingplan.com`
+- `anthropic.com`
+- `claude.com`
+
+**TWO LISTS MUST AGREE.** This prompt list is the second of two gates. The first
+is `quarantine_domains` in `store/egress-allowlist.json`, enforced by
+`scripts/hooks/egress-gate.mjs`. If only one of them is widened, the domain LOOKS
+approved and every fetch dies quietly with "domain not on quarantine-reader fetch
+allowlist" (measured 2026-08-26 on `learn.kregtool.com`). Whoever changes one must
+change the other, and this file exists in three identical copies:
+`~/.claude/agents/`, `agents/<name>/.claude/agents/`, `templates/sub-agents/`.
+
 For any other domain, return:
 ```json
 { "url": "<requested url>", "nonce": "<nonce>", "status": 0, "content": null, "error": "domain not on quarantine-reader fetch allowlist" }
