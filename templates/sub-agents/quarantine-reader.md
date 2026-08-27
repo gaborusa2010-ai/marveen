@@ -68,6 +68,8 @@ egress-gate hook matches `quarantine_domains`:
 - `freewoodworkingplan.com`
 - `anthropic.com`
 - `claude.com`
+- `xda-developers.com`   (2026-08-27, a gazda kerte: modell-osszehasonlito cikk)
+- `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
 **TWO LISTS MUST AGREE.** This prompt list is the second of two gates. The first
 is `quarantine_domains` in `store/egress-allowlist.json`, enforced by
