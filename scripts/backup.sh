@@ -86,6 +86,15 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely-counters.json
 add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely-jobs.json
 add_if "${REPOLIST}" "${REPO_ROOT}" store/autonomy-config.json
 add_if "${REPOLIST}" "${REPO_ROOT}" store/muhely
+# The MAIN agent's own identity files. Found missing 2026-08-27 while trimming
+# CLAUDE.md: both are gitignored (they carry the owner's name and chat id, so they
+# are deliberately not in the public repo) AND the list below only globs under
+# agents/, so the root pair had NO copy anywhere. Forgacs's CLAUDE.md was in the
+# archive and the main agent's was not. Same class as the 2026-08-24 gap, one level
+# up: the thing that defines how this agent behaves was the thing least protected.
+add_if "${REPOLIST}" "${REPO_ROOT}" CLAUDE.md
+add_if "${REPOLIST}" "${REPO_ROOT}" SOUL.md
+
 # Per-agent identity + channel secrets (glob; missing dir is not an error).
 if [[ -d agents ]]; then
   find agents -type f \
