@@ -128,6 +128,36 @@ restart`-ja **tilos**, a közös tmux szervert vinné.
 
 ---
 
+## Kép-olvasás idegen oldalról
+
+Terv-oldalak a szabáslistát gyakran képben tartják. A képet **nem szűrjük**, mert
+a megítéléshez el kellene olvasni, és az olvasás maga a kitettség. Helyette a
+KIMENET szűk: az olvasó csak egy rögzített űrlapot tölthet ki, szabad szöveget nem
+adhat vissza. Három lépés, sorrendben:
+
+```bash
+# 1. letoltes: a kaput MEGKERDEZI (nem masolja), atiranyitast NEM kovet,
+#    a formatumot a fajl sajat bajtjaibol allapitja meg. SVG-t nem fogad el.
+python3 scripts/fetch-image.py "https://oldal.tld/plan.jpg" --out store/muhely/kepek
+
+# 2. olvasas: kulon sub-agens, egyetlen eszkozzel (Read). A valasza CSAK az urlap.
+#    Agent({ subagent_type: "quarantine-image-reader",
+#            prompt: `READ {"path":"...","nonce":"..."}` })
+
+# 3. alak-ellenorzes GEPPEL, mielott barmi tovabbmegy:
+python3 scripts/muhely/imgform.py valasz.json --clean jovahagyott.json
+```
+
+- A 3. lépés kimenete (`--clean`) megy tovább, **soha nem** az olvasó nyers válasza.
+- `unreadable` kötelező mező. A veszély nem a rossz olvasás, hanem a **kitalálás**:
+  ha nincs hova tenni a bizonytalanságot, tippelni fog, és a tipp mérésnek látszik.
+- `region: table` átírás, `region: drawing` értelmezés. Rajzból **javaslat** lehet,
+  végleges szabáslista nem: a félreolvasott nyíl számnak látszik, nem hibának.
+- A letöltés beleszámít a napi forrás-keretbe (`ALLOWED_IMAGE` sor a naplóban).
+- Teszt: `bash scripts/__tests__/image-pipeline.test.sh` (éles telepítésen is fut).
+
+---
+
 ## Reggeli napindító formátum
 
 MarkdownV2, a Telegram csatornára.
