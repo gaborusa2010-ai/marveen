@@ -15,6 +15,7 @@ Usage
                  [--lat 51.37 --lon -0.09] [--rate 240] [--cis] [--at 08:00]
   jobs.py photo  <file> [--note "..."]      # EXIF gives location and time
   jobs.py note   "amit mondani akarsz"
+  jobs.py edit   <id> --job "..." [--client "..."]   # javitas a forrasnal
   jobs.py stop   [--note "..."] [--at 17:30]
   jobs.py status                            # what is open right now
   jobs.py list   [--client X] [--open]
@@ -294,6 +295,55 @@ def cmd_show(a):
     return 0
 
 
+def cmd_edit(a):
+    """Correct a job's client or description AT THE SOURCE, keeping the history.
+
+    A note is not enough. `cmd_invoice` copies `job` into the invoice unchanged
+    and puts the notes in a separate field, so a description corrected only by a
+    note still reaches the customer wrong unless whoever builds the PDF reads the
+    notes and compares. That is a protection that works if somebody notices, and
+    those are the ones that fail.
+
+    So the field is rewritten, and the old value is appended as a note with the
+    time. The record improves where it is read from, and nothing is lost.
+
+    An INVOICED job is refused: the description on it has already gone out on a
+    document, and quietly editing the record to disagree with the paper the
+    customer holds is worse than a wrong description. Correct that with a note
+    and a credit note, not by rewriting history.
+    """
+    rows = _load()
+    r = next((x for x in rows if x["id"] == a.id), None)
+    if not r:
+        print(f"Nincs #{a.id} munka.")
+        return 1
+    if r.get("invoiced"):
+        print(f"#{a.id} MAR SZAMLAZVA. A leiras kiment a vevonek, ezert nem irom at: "
+              f"a rekord es a papir nem terhet el egymastol. Ha teved, jegyzet es "
+              f"helyesbito szamla a jo ut.")
+        return 1
+    changed = []
+    for field, new in (("client", a.client), ("job", a.job)):
+        if new is None or new == r.get(field):
+            continue
+        old = r.get(field, "")
+        r[field] = new
+        changed.append(f"{field}: \"{old}\" -> \"{new}\"")
+    if not changed:
+        print("Nincs mit valtoztatni.")
+        return 0
+    r.setdefault("notes", []).append({
+        "at": time.time(),
+        "text": "JAVITAS a rekordban: " + "; ".join(changed)
+                + ". A regi ertek itt marad, hogy a tortenet ne vesszen el."})
+    _save(rows)
+    print(f"#{a.id} javitva:")
+    for c in changed:
+        print(f"  {c}")
+    print("  a regi ertek jegyzetkent rogzitve")
+    return 0
+
+
 def cmd_invoice(a):
     rows = _load()
     r = next((x for x in rows if x["id"] == a.id), None)
@@ -366,6 +416,9 @@ def main(argv):
     p = sub.add_parser("photo"); p.add_argument("file"); p.add_argument("--note")
     p.set_defaults(fn=cmd_photo)
     p = sub.add_parser("note"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
+    p = sub.add_parser("edit"); p.add_argument("id", type=int)
+    p.add_argument("--job"); p.add_argument("--client")
+    p.set_defaults(fn=cmd_edit)
     p = sub.add_parser("stop"); p.add_argument("--note")
     p.add_argument("--at", help="befejezes idopontja, pl. 17:30")
     p.set_defaults(fn=cmd_stop)
