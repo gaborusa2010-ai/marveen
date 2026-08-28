@@ -155,8 +155,15 @@ python3 scripts/muhely/imgform.py valasz.json --nonce "$NONCE" --clean jovahagyo
   egyetlen valódi képet sem engedett át. Egy éles futtatás derítette ki.)
 - `unreadable` kötelező mező. A veszély nem a rossz olvasás, hanem a **kitalálás**:
   ha nincs hova tenni a bizonytalanságot, tippelni fog, és a tipp mérésnek látszik.
-- `region: table` átírás, `region: drawing` értelmezés. Rajzból **javaslat** lehet,
-  végleges szabáslista nem: a félreolvasott nyíl számnak látszik, nem hibának.
+- **Két tömb, nem egy jelölő.** `rows` = nyomtatott szabáslista-sor (név, darab,
+  két méret, mind kötelező). `measurements` = rajzi méret (egy szám, opcionális
+  címke). Egy rajzon nincs darabszám és nincs második méret, tehát ha rows-ba
+  kényszerítjük, a reader kitalálja őket vagy eldobja a sort. 2026-08-28-án
+  eldobta: olvasható lapról nulla eredmény jött. A rajzi méretből **javaslat**
+  lehet, végleges szabáslista nem.
+- Mérés ugyanaznap: a rajzról olvasott számok HELYESEK voltak és MÁS méretet
+  jelentettek (polc 506x22 a rajzon, 499,5x346 a listán: elölnézetben a 22 a lap
+  vastagsága). A félreolvasott nyíl számnak látszik, nem hibának.
 - A letöltés beleszámít a napi forrás-keretbe (`ALLOWED_IMAGE` sor a naplóban).
 - Teszt: `bash scripts/__tests__/image-pipeline.test.sh` (éles telepítésen is fut).
 

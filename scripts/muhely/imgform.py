@@ -8,13 +8,31 @@ a sentence into the conversation: the reader may only return this form, and this
 checker refuses anything that is not exactly this form.
 
 The form is the workshop agent's, sent 2026-08-28 before the code existed, which
-was the cheapest possible moment for it. Row level:
+was the cheapest possible moment for it. A CUT-LIST ROW, off a printed table:
 
+    name    short text, closed character set, max 40
     qty     int
     w, h    number
     unit    "mm" or "in", no third value
-    region  "table" or "drawing" -- which KIND of image the row came off
-    name    short text, closed character set, max 40
+
+and separately, a DIMENSION off a drawing:
+
+    value   number
+    unit    "mm" or "in"
+    label   optional, same closed character set
+
+TWO ARRAYS, NOT A FLAG, and that came out of running it. The first version had
+one row shape with a `region: table | drawing` marker on it, and a drawing could
+not be expressed in it at all: a cut-list row requires qty, w AND h and a name,
+while a drawing carries a labelled single dimension -- "330 Adj shelf" -- with no
+quantity, no second dimension, and sometimes no label. Faced with a form that had
+no shape for what it saw, the reader dropped every row. It behaved correctly, and
+the chain returned nothing at all from a perfectly legible sheet.
+
+So the distinction the marker described is now structural. A drawing dimension
+goes in `measurements` where it fits, and it CANNOT be assembled into a cut list
+by accident, because it is not shaped like a part. That is stronger than a flag
+plus a warning: the wrong thing does not fit rather than being marked.
 
 Document level:
 
@@ -77,8 +95,10 @@ import json
 import math
 import sys
 
-ROW_KEYS = {"qty", "w", "h", "unit", "region", "name"}
-DOC_KEYS = {"units_declared", "unreadable", "rows", "nonce"}
+ROW_KEYS = {"qty", "w", "h", "unit", "name"}
+MEAS_KEYS = {"value", "unit"}
+MEAS_OPTIONAL = {"label"}
+DOC_KEYS = {"units_declared", "unreadable", "rows", "measurements", "nonce"}
 
 # The nonce ties one answer to one request, so a form from an earlier or
 # different read cannot be passed off as the answer to this one. It is checked
@@ -91,7 +111,6 @@ DOC_KEYS = {"units_declared", "unreadable", "rows", "nonce"}
 NONCE_MIN, NONCE_MAX = 8, 64
 
 UNITS = ("mm", "in")
-REGIONS = ("table", "drawing")
 DECLARED = ("mm", "in", "both", "none")
 
 NAME_MAX = 40
@@ -163,9 +182,14 @@ def check(doc, expected_nonce=None):
                    "nincs hova mennie, es a talalgatas meresnek fog latszani")
         unreadable = None
 
-    rows = doc.get("rows")
-    if not isinstance(rows, list) or not rows:
-        bad.append("rows: nem ures lista kell")
+    rows = doc.get("rows", [])
+    meas = doc.get("measurements", [])
+    if not isinstance(rows, list) or not isinstance(meas, list):
+        bad.append("rows es measurements csak lista lehet")
+        return bad, None
+    if not rows and not meas and not unreadable:
+        bad.append("ures valasz: se sor, se meret, es unreadable sem mondja hogy "
+                   "miert. Ha nem volt mit olvasni, azt az unreadable mondja meg")
         return bad, None
 
     clean = []
@@ -185,9 +209,6 @@ def check(doc, expected_nonce=None):
 
         if r["unit"] not in UNITS:
             bad.append(f"{where}: unit csak {UNITS} egyike lehet, ez jott: {r['unit']!r}")
-            continue
-        if r["region"] not in REGIONS:
-            bad.append(f"{where}: region csak {REGIONS} egyike lehet, ez jott: {r['region']!r}")
             continue
         if not name_ok(r["name"]):
             bad.append(f"{where}: a nev csak betu, szam, szokoz es kotojel lehet, "
@@ -213,31 +234,67 @@ def check(doc, expected_nonce=None):
             continue
 
         clean.append({"name": " ".join(r["name"].split()), "qty": q,
-                      "w": dims["w"], "h": dims["h"],
-                      "unit": r["unit"], "region": r["region"]})
+                      "w": dims["w"], "h": dims["h"], "unit": r["unit"]})
+
+    clean_meas = []
+    for i, m in enumerate(meas):
+        where = f"measurements[{i}]"
+        if not isinstance(m, dict):
+            bad.append(f"{where}: nem objektum")
+            continue
+        missing = MEAS_KEYS - set(m)
+        unknown = set(m) - MEAS_KEYS - MEAS_OPTIONAL
+        if missing:
+            bad.append(f"{where}: hianyzo mezo {sorted(missing)}")
+        if unknown:
+            bad.append(f"{where}: ismeretlen mezo {sorted(unknown)}")
+        if missing or unknown:
+            continue
+        if m["unit"] not in UNITS:
+            bad.append(f"{where}: unit csak {UNITS} egyike lehet, ez jott: {m['unit']!r}")
+            continue
+        lo, hi = BOUNDS[m["unit"]]
+        v = num(m["value"])
+        if v is None or not (lo <= v <= hi):
+            bad.append(f"{where}: value={m['value']!r} kivul van a {lo}-{hi} "
+                       f"{m['unit']} savon")
+            continue
+        label = m.get("label")
+        if label is not None and not name_ok(label):
+            bad.append(f"{where}: a label csak betu, szam, szokoz es kotojel lehet, "
+                       f"legfeljebb {NAME_MAX} karakter")
+            continue
+        entry = {"value": v, "unit": m["unit"]}
+        if label is not None:
+            entry["label"] = " ".join(label.split())
+        clean_meas.append(entry)
 
     if bad:
         return bad, None
 
-    return [], {"units_declared": declared, "unreadable": unreadable, "rows": clean}
+    return [], {"units_declared": declared, "unreadable": unreadable,
+                "rows": clean, "measurements": clean_meas}
 
 
 def notes(clean):
     """Things worth saying out loud about a form that IS well-shaped."""
     out = []
-    drawing = [r for r in clean["rows"] if r["region"] == "drawing"]
-    if drawing and clean["unreadable"] == 0:
-        out.append(f"{len(drawing)} sor MERETEZETT RAJZROL jon, es a reader nulla "
+    meas = clean["measurements"]
+    if meas and clean["unreadable"] == 0:
+        out.append(f"{len(meas)} meret MERETEZETT RAJZROL jon, es a reader nulla "
                    f"olvashatatlant jelentett. Egy fenykepezett rajznal ez inkabb "
                    f"talalgatas jele mint pontossage. Nezd at.")
-    if drawing:
-        out.append(f"{len(drawing)} sor region=drawing: ezekbol NEM lehet vegleges "
-                   f"szabaslista, csak javaslat, amit a gazdaval vissza kell nezetni. "
-                   f"A felreolvasott nyil szamnak latszik, nem hibanak.")
+    if meas:
+        out.append(f"{len(meas)} rajzi meret. Ezek NEM alkatreszek: nincs rajtuk "
+                   f"darabszam es nincs parjuk, mert egy rajzon meretezett elem van, "
+                   f"nem szabaslista-sor. Javaslat lehet beloluk, amit a gazdaval "
+                   f"vissza kell nezetni. Meres 2026-08-28: a szamok helyesek voltak "
+                   f"es MAS meretet jelentettek, a polc 22-es magassaga a lap "
+                   f"vastagsaga volt, nem a melysege.")
     if clean["unreadable"]:
-        out.append(f"{clean['unreadable']} sort a reader nem tudott elolvasni. "
-                   f"A lista NEM teljes.")
-    units = {r["unit"] for r in clean["rows"]}
+        out.append(f"{clean['unreadable']} sort vagy meretet a reader nem tudott "
+                   f"elolvasni. A lista NEM teljes.")
+    units = {r["unit"] for r in clean["rows"]} | {m["unit"] for m in meas}
     if clean["units_declared"] in UNITS and units - {clean["units_declared"]}:
         out.append(f"az oldal {clean['units_declared']}-t mond, a sorokban viszont "
                    f"{sorted(units)} van. Valamelyik ertelmezes rossz.")
@@ -267,7 +324,8 @@ def main(argv=None):
               "azert szuk, hogy ami nem fer bele, az elakadjon.")
         return 1
 
-    print(f"RENDBEN. {len(clean['rows'])} sor, alakra ervenyes.")
+    print(f"RENDBEN. {len(clean['rows'])} szabaslista-sor es "
+          f"{len(clean['measurements'])} rajzi meret, alakra ervenyes.")
     if a.nonce is None:
         # Say it rather than checking nothing quietly. An unverified binding that
         # looks verified is worse than an obviously absent one.
