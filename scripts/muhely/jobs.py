@@ -212,12 +212,25 @@ def _state(r):
 
 
 def cmd_note(a):
+    """Note the open job, or a named one with --id.
+
+    A closed job still needs notes: the gap between stopping and invoicing is
+    exactly when the corrections arrive ("the customer confirmed X", "the morning
+    was actually Y"), and those notes go onto the invoice. Refusing them because
+    the clock has stopped pushed that information into thin air.
+    """
     rows = _load()
-    live = _open_job(rows)
-    if not live:
-        print("Nincs nyitott munka.")
-        return 1
-    live["notes"].append({"at": time.time(), "text": a.text})
+    if a.id:
+        live = next((x for x in rows if x["id"] == a.id), None)
+        if not live:
+            print(f"Nincs #{a.id} munka.")
+            return 1
+    else:
+        live = _open_job(rows)
+        if not live:
+            print("Nincs nyitott munka. Lezart munkahoz add meg: note --id <n>")
+            return 1
+    live.setdefault("notes", []).append({"at": time.time(), "text": a.text})
     _save(rows)
     print(f"#{live['id']} jegyzet hozzaadva.")
     return 0
@@ -352,6 +365,17 @@ def cmd_edit(a):
               f"kapcsoloval.")
         return 1
     changed = []
+    if a.stop:
+        # The finish time is the one field where a correction has to be visible:
+        # it is what the day rate and the invoice are built on. Same rules as the
+        # rest -- rewrite, and keep the old value in a note.
+        new_stop = parse_when(a.stop)
+        if new_stop != r.get("stopped_at"):
+            # Human time, not epoch: these notes are copied onto the invoice.
+            # _local is the formatter the rest of the file already uses.
+            old_s = _local(r["stopped_at"]) if r.get("stopped_at") else "nyitva"
+            changed.append(f"befejezes: {old_s} -> {_local(new_stop)}")
+            r["stopped_at"] = new_stop
     for field, new in (("client", a.client), ("job", a.job)):
         if new is None or new == r.get(field):
             continue
@@ -447,9 +471,12 @@ def main(argv):
 
     p = sub.add_parser("photo"); p.add_argument("file"); p.add_argument("--note")
     p.set_defaults(fn=cmd_photo)
-    p = sub.add_parser("note"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
+    p = sub.add_parser("note"); p.add_argument("text")
+    p.add_argument("--id", type=int, help="lezart munkahoz is")
+    p.set_defaults(fn=cmd_note)
     p = sub.add_parser("edit"); p.add_argument("id", type=int)
     p.add_argument("--job"); p.add_argument("--client")
+    p.add_argument("--stop", help="a befejezes idopontjanak javitasa, pl. 16:00")
     p.add_argument("--force", action="store_true",
                    help="lezart munkanal is, ha biztos hogy meg nincs szamlazva")
     p.set_defaults(fn=cmd_edit)
