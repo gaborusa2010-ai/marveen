@@ -135,7 +135,13 @@ def cmd_start(a):
         "days": a.days,
         "photos": [],
         "notes": [],
-        "invoiced": None,
+        # TWO fields, because one held two meanings and every reader got it wrong.
+        # `invoice_ref` is the issued invoice number and nothing else; `no_charge`
+        # is a reason this job is not billable. The old `invoiced` field carried
+        # either, so `if r.get("invoiced")` read "not to be invoiced, a favour" as
+        # PROOF OF INVOICING -- and the status list printed that job as szamlazva.
+        "invoice_ref": None,
+        "no_charge": None,
     }
     rows.append(row)
     _save(rows)
@@ -192,6 +198,17 @@ def cmd_photo(a):
     elif "lat" not in ex:
         print(ex.get("gps_note", ""))
     return 0
+
+
+def _state(r):
+    """One place decides what a job's state is, so the list and the guards agree."""
+    if r.get("stopped_at") is None:
+        return "fut"
+    if r.get("invoice_ref"):
+        return f"szamlazva {r['invoice_ref']}"
+    if r.get("no_charge"):
+        return "nem szamlazando"
+    return "kesz"
 
 
 def cmd_note(a):
@@ -279,7 +296,7 @@ def cmd_list(a):
     print(f"{'ID':>4} {'ALLAPOT':<8} {'ORA':>6}  {'KEZDES':<17} UGYFEL / MUNKA")
     print("-" * 84)
     for r in rows:
-        st = "fut" if r.get("stopped_at") is None else ("szamlazva" if r.get("invoiced") else "kesz")
+        st = _state(r)
         print(f"{r['id']:>4} {st:<8} {_hours(r):>6}  {_local(r['started_at']):<17} "
               f"{r['client']} / {r['job'][:34]}")
     return 0
@@ -317,10 +334,22 @@ def cmd_edit(a):
     if not r:
         print(f"Nincs #{a.id} munka.")
         return 1
-    if r.get("invoiced"):
-        print(f"#{a.id} MAR SZAMLAZVA. A leiras kiment a vevonek, ezert nem irom at: "
-              f"a rekord es a papir nem terhet el egymastol. Ha teved, jegyzet es "
-              f"helyesbito szamla a jo ut.")
+    if r.get("invoice_ref"):
+        print(f"#{a.id} MAR SZAMLAZVA ({r['invoice_ref']}). A leiras kiment egy "
+              f"dokumentumon a vevonek, ezert nem irom at: a rekord es a papir nem "
+              f"terhet el egymastol. Jegyzet es helyesbito szamla a jo ut.")
+        return 1
+    # A stopped job MIGHT already be on an invoice: invoice.py takes a JSON file
+    # and never records which job it came from, so nothing here can prove it
+    # either way. Refusing would be a guess dressed as a rule, and passing
+    # silently would be the same guess with the opposite sign. So it says what it
+    # does not know and asks. Measured 2026-08-28: the previous version leaned on
+    # `invoiced`, which no code ever writes.
+    if r.get("stopped_at") is not None and not a.force:
+        print(f"#{a.id} LEZART munka. Nem tudom megallapitani, kiment-e mar rola "
+              f"szamla: az invoice.py nem jegyzi fel, melyik munkabol keszult. "
+              f"Ha biztos vagy benne hogy meg nem szamlaztad, ismeteld meg --force "
+              f"kapcsoloval.")
         return 1
     changed = []
     for field, new in (("client", a.client), ("job", a.job)):
@@ -335,7 +364,10 @@ def cmd_edit(a):
     r.setdefault("notes", []).append({
         "at": time.time(),
         "text": "JAVITAS a rekordban: " + "; ".join(changed)
-                + ". A regi ertek itt marad, hogy a tortenet ne vesszen el."})
+                + ". A regi ertek itt marad, hogy a tortenet ne vesszen el."
+                + (" LEZART munkan, --force kapcsoloval, tehat valaki ALLITOTTA "
+                   "hogy meg nincs szamlazva, nem a rendszer tudta."
+                   if r.get("stopped_at") is not None else "")})
     _save(rows)
     print(f"#{a.id} javitva:")
     for c in changed:
@@ -418,6 +450,8 @@ def main(argv):
     p = sub.add_parser("note"); p.add_argument("text"); p.set_defaults(fn=cmd_note)
     p = sub.add_parser("edit"); p.add_argument("id", type=int)
     p.add_argument("--job"); p.add_argument("--client")
+    p.add_argument("--force", action="store_true",
+                   help="lezart munkanal is, ha biztos hogy meg nincs szamlazva")
     p.set_defaults(fn=cmd_edit)
     p = sub.add_parser("stop"); p.add_argument("--note")
     p.add_argument("--at", help="befejezes idopontja, pl. 17:30")
