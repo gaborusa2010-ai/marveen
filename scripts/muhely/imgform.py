@@ -34,6 +34,18 @@ goes in `measurements` where it fits, and it CANNOT be assembled into a cut list
 by accident, because it is not shaped like a part. That is stronger than a flag
 plus a warning: the wrong thing does not fit rather than being marked.
 
+AND THE OLD SHAPE DID NOT ONLY BLOCK, IT FABRICATED. Measured the same day, same
+image, same reader, only the form changed. Under the old shape a shelf came back
+as "506 x 22", and 22 is the panel THICKNESS seen from the front, not a height:
+the form demanded a w AND an h, so the nearest other number on the sheet was
+recruited to fill the second slot. Under the two-array shape the 22 arrives as
+its own measurement and the false pairing is simply gone.
+
+That is the sharpest thing this file has to teach. A required field is a demand,
+and a reader with nothing to put there will find something. Every field made
+mandatory is a place an invention can be requested from -- so require only what
+the source actually contains.
+
 Document level:
 
     units_declared  what the page itself says the units are
