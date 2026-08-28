@@ -39,6 +39,7 @@ plant stay false, or the contractor deducts 20% from money that was never yours.
 import json
 import os
 import sys
+import time
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +49,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 STORE = os.path.join(REPO, "store")
 BUSINESS = os.path.join(STORE, "muhely-business.json")
 COUNTERS = os.path.join(STORE, "muhely-counters.json")
+# Which job each issued reference came from. Separate file from COUNTERS on
+# purpose: that one is a counter and nothing else. Putting a log beside a
+# counter in one file is how a field ends up meaning two things, which is the
+# bug this whole change exists to undo -- jobs.py had one `invoiced` field
+# carrying both "billed" and "never to be billed", and the list read it as a
+# boolean and called a free favour an invoiced job for days.
+ISSUED = os.path.join(STORE, "muhely-invoice-log.json")
 
 BUSINESS_TEMPLATE = {
     "_doc": "Sole trader adatai a szamlahoz. A csillagozott mezok KOTELEZOEK.",
@@ -113,6 +121,74 @@ def next_number(kind, business, bump=True):
     if not prefix:
         return str(n)
     return f"{prefix}-{year}-{n:04d}"
+
+
+def _issued_load():
+    if not os.path.exists(ISSUED):
+        return []
+    try:
+        with open(ISSUED) as fh:
+            rows = json.load(fh)
+        return rows if isinstance(rows, list) else []
+    except (OSError, ValueError):
+        # Unreadable log means the guard downstream cannot know and will ask a
+        # human instead. That is the safe direction, so do not raise here.
+        return []
+
+
+def record_issued(kind, ref, job, out_path):
+    """Write down which job this reference was spent on.
+
+    WHY, and it is not bookkeeping for its own sake: jobs.py refuses to edit a
+    job's description once an invoice has gone out, because the paper in the
+    customer's hand and the record here must not drift apart. Until now it had
+    no way to know, so it asked for --force on every closed job -- a guard that
+    can only ever say "I cannot tell". This is the fact it was missing.
+
+    Called ONLY after the PDF is written and the number is spent, and after the
+    collision check. Earlier would be worse than not writing at all: a failed
+    render would register an invoice that does not exist, and jobs.py would then
+    block a correction citing a document nobody ever sent.
+
+    `job_id` is None for a hand-written job JSON that did not come from jobs.py.
+    That is honest, and it is exactly the case where --force must stay: nothing
+    here can vouch for a file we did not produce.
+
+    A failure to write is loud but not fatal. The PDF exists and the number is
+    gone; refusing at this point would help nobody. Missing the record only
+    costs the downstream guard its certainty, and it degrades to asking.
+    """
+    rec = {
+        "kind": kind,
+        "reference": str(ref),
+        "job_id": job.get("_job_id"),
+        "client": (job.get("client") or {}).get("name"),
+        "pdf": out_path,
+        "at": int(time.time()),
+    }
+    rows = _issued_load()
+    # Re-rendering the same reference must not create a second entry: the
+    # question the log answers is "did a document with this number go out",
+    # and that is a yes or a no, not a count.
+    rows = [r for r in rows
+            if not (r.get("kind") == kind and str(r.get("reference")) == str(ref))]
+    rows.append(rec)
+    try:
+        os.makedirs(STORE, exist_ok=True)
+        with open(ISSUED, "w") as fh:
+            json.dump(rows, fh, indent=2, ensure_ascii=False)
+    except OSError as e:
+        print(f"FIGYELEM: a szamla elkeszult ({out_path}, {ref}), de a "
+              f"nyilvantartasba nem sikerult beirni: {e}\n"
+              f"  A jobs.py ezert nem fogja tudni, hogy errol a munkarol ment "
+              f"szamla, es megerositest fog kerni a javitashoz.", file=sys.stderr)
+
+
+def issued_for(job_id):
+    """Every reference issued for one job, newest last. [] if none."""
+    if job_id is None:
+        return []
+    return [r for r in _issued_load() if r.get("job_id") == job_id]
 
 
 def money(v):
@@ -287,6 +363,9 @@ def render(kind, job, business, out_path):
             raise SystemExit(
                 f"sorszam utkozes: a PDF-en {ref} all, de a szamlalo {consumed}-t "
                 f"adta ki. A {out_path} fajlt NE hasznald, futtasd ujra.")
+    # Past the collision check, so the number on the PDF is the number the
+    # ledger agrees was spent. Only now is there something true to write down.
+    record_issued(kind, ref, job, out_path)
     return {"reference": ref, "subtotal": round(subtotal, 2), "vat": vat,
             "cis_rate": cis_rate, "cis_base": cis_base, "cis": cis,
             "total": total, "deposit": deposit, "balance": balance,
