@@ -68,23 +68,34 @@ egress-gate hook matches `quarantine_domains`:
 - `freewoodworkingplan.com`
 - `anthropic.com`
 - `claude.com`
+- `wordsnwood.com`       (2026-08-28, lepcso alatti es ferde butor tervek)
+- `100things2do.ca`      (2026-08-28, ugyanaz)
 - `xda-developers.com`   (2026-08-27, a gazda kerte: modell-osszehasonlito cikk)
 - `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
 **VENDEGKENT VISELKEDJ A FORRASOKON.** 2026-08-28-an a `learn.kregtool.com` MINDENRE
-403-at kezdett adni. A naploban merve: 140 letoltes HAROM nap alatt (84 + 52 + 5), mikozben
-minden mas hostrol 3 es 10 kozott. A dontő nem a napi osszeg volt, hanem a SEBESSEG:
-csucson 8 keres per perc, loketekben. Ez egy ingyenes, publikus forras volt, es elhasznaltuk.
-A domain a listan van, a hozzaferes megis oda.
+403-at kezdett adni. A naploban merve, harom nap alatt 141 keres: 84 + 52 + 5.
+
+**A KOTOELEM A NAPI DARABSZAM, NEM A SEBESSEG.** Ezt Forgacs merte ki, es megcafolta az
+elso magyarazatomat. A ket nagy napon az atlag mindossze **0,4 keres per perc** volt:
+84 keres 212 perc alatt, illetve 52 keres 125 perc alatt. Az ido kilenc tizede nema volt,
+a keresek 22 illetve 14 aktiv percbe estek, loketekben, csucson 8 per perc.
+Vagyis NEM "folyamatosan nyomtuk". Es ha 0,4/perc atlag mellett is kizartak, akkor
+UGYANANNAK A MENNYISEGNEK A SZETTERITESE TOBB ORARA NEM MENTETT VOLNA MEG. Kevesebb
+oldalt kell akarni, nem udvariasabban ugyanannyit.
+
+**A SZABALY: napi darabszam-plafon hostonkent.** Tucatnyi oldal egy hostrol egy napon
+boven eleg; ha egy gyujtes szazas nagysagrendu, akkor TOBB FORRAS kozott kell elosztani,
+nem tobb oraba nyujtani.
 
 **A KORLAT A HIVO OLDALAN KOT, NEM ITT.** Egy sub-agens nem latja a testvereit: ha a hivo
-egymas utan inditt husz sweepet, mindegyik kulon-kulon "keveset" ker, es a kar megis
+egymas utan indit husz sweepet, mindegyik kulon-kulon "keveset" ker, es a kar megis
 osszeadodik. Ezert a szabaly annak szol, AKI a sweepet inditja:
 
-    python3 scripts/fetch-budget.py     # hostonkent ossz, csucsnap, csucs/perc
+    python3 scripts/fetch-budget.py     # hostonkent ossz, csucsnap, aktiv perc, csucs/perc
 
-Sweep ELOTT futtatni. 1-gyel lep ki, ha valamelyik host atlepte a kuszobot. Forgacs irta
-2026-08-28-an, pontosan azert, mert az en per-futas szabalyom ezt nem tudta megfogni.
+Sweep ELOTT futtatni. Az AKTIV PERC oszlop azert van benne, hogy a csucs/perc onmagaban
+ne fessen folyamatos terhelest oda, ahol egy loket volt.
 
 A LENYEG: a hozzaferes NEM ujratermelodo eroforras. Ha egy oldal kizar, azt a lista
 bovitesevel NEM lehet megjavitani.
