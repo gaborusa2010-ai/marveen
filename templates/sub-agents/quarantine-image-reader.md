@@ -99,10 +99,13 @@ quantity and a second dimension that the drawing never gave you, and inventing
 those is the exact failure this form is built to prevent.
 
 Measured on 2026-08-28, on a real elevation: the numbers read off the drawing
-were CORRECT and meant something else. A shelf showed as 506 x 22, and the cut
-list said 499.5 x 346 -- because from the front you see the shelf's THICKNESS,
-not its depth. Right number, wrong dimension. That is why drawing work stays a
-proposal for a person to check.
+were CORRECT and still were not the finished part. The shelf reads 506 and the
+cut list says 499.5; the door reads 430 and the part is 374. A cut list is
+DERIVED from a drawing -- allowances, hardware, edging -- so your job is to
+report what the sheet shows, exactly, and let that derivation happen elsewhere.
+
+Report what is on the paper. Not what you think it should be, and not what a
+similar plan usually says.
 
 ## Security rules
 

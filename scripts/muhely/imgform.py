@@ -36,10 +36,16 @@ plus a warning: the wrong thing does not fit rather than being marked.
 
 AND THE OLD SHAPE DID NOT ONLY BLOCK, IT FABRICATED. Measured the same day, same
 image, same reader, only the form changed. Under the old shape a shelf came back
-as "506 x 22", and 22 is the panel THICKNESS seen from the front, not a height:
-the form demanded a w AND an h, so the nearest other number on the sheet was
-recruited to fill the second slot. Under the two-array shape the 22 arrives as
-its own measurement and the false pairing is simply gone.
+as "506 x 22" while the cut list said 499.5 x 346: the 22 is a thickness off
+elsewhere on the sheet, not that shelf's second dimension. The form demanded a w
+AND an h, so the nearest other number was recruited into the empty slot. Under
+the two-array shape the 22 arrives as its own measurement and the false pairing
+does not occur.
+
+(An earlier version of this comment explained exactly WHICH thickness the 22 was.
+That explanation was wrong, and it was wrong because it was borrowed rather than
+derived here. A validator has no business asserting joinery it cannot check --
+what it can state is what was measured: right number, wrong meaning.)
 
 That is the sharpest thing this file has to teach. A required field is a demand,
 and a reader with nothing to put there will find something. Every field made
@@ -82,6 +88,19 @@ ONE DEVIATION from the form as specified, deliberate: `units_declared` is an
 enum ("mm", "in", "both", "none") rather than free text. It was described as
 "what the page says about units", and an enum says all of that. A free-text
 field here would have re-opened the exact channel the closed `name` set closes.
+
+The limit of the whole image path
+---------------------------------
+At its best this returns what is ON THE SHEET, never what is TRUE. Measured
+2026-08-28: the reader read a Lyford Road elevation perfectly and its numbers
+still disagreed with the built job, because that sheet had not been revised --
+the door on it is still the old figure. No reader, however good, can see that,
+and a revision number does not settle it either: that sheet's P3 was materially
+identical to its P2.
+
+So a drawing is an input to a derivation and a claim about a moment in time.
+Anything downstream that treats it as current fact is trusting the paper, not
+the reader.
 
 What this does NOT check
 ------------------------
@@ -297,12 +316,12 @@ def notes(clean):
                    f"olvashatatlant jelentett. Egy fenykepezett rajznal ez inkabb "
                    f"talalgatas jele mint pontossage. Nezd at.")
     if meas:
-        out.append(f"{len(meas)} rajzi meret. Ezek NEM alkatreszek: nincs rajtuk "
-                   f"darabszam es nincs parjuk, mert egy rajzon meretezett elem van, "
-                   f"nem szabaslista-sor. Javaslat lehet beloluk, amit a gazdaval "
-                   f"vissza kell nezetni. Meres 2026-08-28: a szamok helyesek voltak "
-                   f"es MAS meretet jelentettek, a polc 22-es magassaga a lap "
-                   f"vastagsaga volt, nem a melysege.")
+        out.append(f"{len(meas)} rajzi meret. Ezek NEM alkatreszek es NEM szabasmeretek: "
+                   f"egy rajzon meretezett elem van, darabszam es par nelkul. A "
+                   f"szabaslista ezekbol SZAMOLHATO, de a levezetes (rahagyas, vasalat, "
+                   f"elzaro) nelkul nem az. Meres 2026-08-28: a leolvasott szamok "
+                   f"helyesek voltak es mast jelentettek, mint a kesz alkatresz merete "
+                   f"(polc 506 -> 499,5; fix polc 1054 -> 1052; ajto 430 -> 374).")
     if clean["unreadable"]:
         out.append(f"{clean['unreadable']} sort vagy meretet a reader nem tudott "
                    f"elolvasni. A lista NEM teljes.")

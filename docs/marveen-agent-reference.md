@@ -161,9 +161,15 @@ python3 scripts/muhely/imgform.py valasz.json --nonce "$NONCE" --clean jovahagyo
   kényszerítjük, a reader kitalálja őket vagy eldobja a sort. 2026-08-28-án
   eldobta: olvasható lapról nulla eredmény jött. A rajzi méretből **javaslat**
   lehet, végleges szabáslista nem.
-- Mérés ugyanaznap: a rajzról olvasott számok HELYESEK voltak és MÁS méretet
-  jelentettek (polc 506x22 a rajzon, 499,5x346 a listán: elölnézetben a 22 a lap
-  vastagsága). A félreolvasott nyíl számnak látszik, nem hibának.
+- Mérés ugyanaznap: a rajzról leolvasott számok HELYESEK voltak, és nem a kész
+  alkatrész méretei (polc 506 -> 499,5; fix polc 1054 -> 1052; ajtó 430 -> 374).
+  A szabáslista a rajzból **számolható**, de a levezetés (ráhagyás, vasalat,
+  élzáró) nélkül nem az. A félreolvasott méret számnak látszik, nem hibának.
+- **A lánc határa: legjobb esetben is azt adja vissza, ami A LAPON van, nem azt
+  ami IGAZ.** Élő eset 2026-08-28: a reader tökéletesen olvasta a Lyford Road
+  elevationt, de az a lap nem lett javítva, tehát a rajta lévő ajtóméret elavult.
+  Ezt semmilyen olvasó nem látja, és revíziószám sem dönti el (az a P3 tartalmilag
+  azonos volt a P2-vel). A rajz állítás egy időpontról, nem tény.
 - A letöltés beleszámít a napi forrás-keretbe (`ALLOWED_IMAGE` sor a naplóban).
 - Teszt: `bash scripts/__tests__/image-pipeline.test.sh` (éles telepítésen is fut).
 
