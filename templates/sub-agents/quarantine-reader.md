@@ -72,13 +72,22 @@ egress-gate hook matches `quarantine_domains`:
 - `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
 **VENDEGKENT VISELKEDJ A FORRASOKON.** 2026-08-28-an a `learn.kregtool.com` MINDENRE
-403-at kezdett adni. Ok: elozo nap 140 letoltest inditottunk rola, percenkent hatot-hetet,
-mikozben minden mas hostrol 2 es 10 kozott. Ez egy ingyenes, publikus forras volt, es
-elhasznaltuk. A domain a listan van, a hozzaferes megis oda.
-Ezert: egy futasban ne kerj tucatnyinal tobb oldalt UGYANARROL a hostrol, es ha egy
-gyujtes tobb szazas nagysagrendu, az mar nem letoltes hanem lehalaszas -- oszd el napokra,
-vagy kerdezd meg a gazdat hogy akarja-e egyaltalan. A hozzaferes nem ujratermelodo eroforras:
-ha egy oldal kizar, az a lista bovitesevel NEM javithato.
+403-at kezdett adni. A naploban merve: 140 letoltes HAROM nap alatt (84 + 52 + 5), mikozben
+minden mas hostrol 3 es 10 kozott. A dontő nem a napi osszeg volt, hanem a SEBESSEG:
+csucson 8 keres per perc, loketekben. Ez egy ingyenes, publikus forras volt, es elhasznaltuk.
+A domain a listan van, a hozzaferes megis oda.
+
+**A KORLAT A HIVO OLDALAN KOT, NEM ITT.** Egy sub-agens nem latja a testvereit: ha a hivo
+egymas utan inditt husz sweepet, mindegyik kulon-kulon "keveset" ker, es a kar megis
+osszeadodik. Ezert a szabaly annak szol, AKI a sweepet inditja:
+
+    python3 scripts/fetch-budget.py     # hostonkent ossz, csucsnap, csucs/perc
+
+Sweep ELOTT futtatni. 1-gyel lep ki, ha valamelyik host atlepte a kuszobot. Forgacs irta
+2026-08-28-an, pontosan azert, mert az en per-futas szabalyom ezt nem tudta megfogni.
+
+A LENYEG: a hozzaferes NEM ujratermelodo eroforras. Ha egy oldal kizar, azt a lista
+bovitesevel NEM lehet megjavitani.
 
 **TWO LISTS MUST AGREE.** This prompt list is the second of two gates. The first
 is `quarantine_domains` in `store/egress-allowlist.json`, enforced by
