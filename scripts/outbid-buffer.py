@@ -61,6 +61,8 @@ def main(argv=None):
                     help="egy tullicitalt tetel neve; annyiszor add meg, ahany ertesites jott")
     ap.add_argument("--window", type=int, default=WINDOW,
                     help="masodperc ket jelentes kozott (alap 3600)")
+    ap.add_argument("--commit", action="store_true",
+                    help="a puffert CSAK ezzel uriti; add meg MIUTAN tenyleg elkuldted")
     a = ap.parse_args(argv)
 
     d = load()
@@ -92,12 +94,25 @@ def main(argv=None):
     else:
         print("MEG VAR -- nincs mit jelenteni.")
 
-    if not a.add and not due:
-        return 0  # pure read, nothing to persist
+    # DUE IS NOT SENT. The first version emptied the buffer and stamped the
+    # clock in the same breath as saying "MEHET MOST", so the record claimed a
+    # message had gone out before the caller had decided to send one. Caught
+    # live on 2026-08-28 18:30: the owner had said good night an hour earlier,
+    # holding the notice was the right call, and by then the buffer was already
+    # cleared and the clock already stamped. A step that records an action it
+    # did not take is the exact failure this file was written to avoid.
+    #
+    # So emptying is now a SEPARATE decision. Check, send, then --commit.
+    if due and not a.commit:
+        print("  (a puffer NEM urult ki: ha tenyleg elkuldted, futtasd ujra --commit-tal)")
 
-    d["outbid_pending"] = [] if due else pending
-    if due:
+    if a.commit and due:
+        d["outbid_pending"] = []
         d["last_outbid_report_at"] = now
+    elif a.add:
+        d["outbid_pending"] = pending
+    else:
+        return 0  # pure read, nothing to persist
     try:
         with open(STATE, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False)
