@@ -236,3 +236,25 @@ bash scripts/skill-index.sh /home/gabor/marveen # ágensspecifikus
 - Szerverkód után: `npm run build`, majd
   `systemctl --user restart marveen-dashboard`, majd curl-lel várd meg a 200-at.
   Ez biztonságos, és NEM azonos a channels újraindításával.
+
+### Git: EGY munkakönyvtár van, a főágens és a sub-ágensek közösen használják
+
+**Az ág itt nem izolál, csak címkéz.** Eldönti, milyen név alá kerülnek a commitok,
+de a fájlokat ugyanabban a mappában írja mindenki. Ezért a "ne commitolj a mainre"
+szabály nálunk **nem védelem, hanem csapda**: ott ahol mindenkinek saját checkoutja
+van, az ág megvédi a másikat, itt viszont csak annyit ér el, hogy a main csendben
+lemarad, miközben mindenki azt hiszi, óvatos volt.
+
+- **Közös checkoutban a mainre commitolunk.** Aki ágat NYIT, az szól mindenkinek.
+- Élő eset 2026-08-28: egy ágnyitás után négy commit ment az ágra abban a hitben,
+  hogy a mainre megy. A main közben egy ismert hibás változaton állt.
+- **Ág-mutatót léptetni ÍGY kell**, ha más ágens is dolgozik a mappában:
+
+  ```bash
+  git log --oneline main..HEAD && git log --oneline HEAD..main   # elobb merd le
+  git merge-base --is-ancestor main HEAD && git branch -f main HEAD   # ff, mutato
+  ```
+
+  A `git branch -f` a **mutatót** lépteti és a munkakönyvtárhoz hozzá sem nyúl.
+  A `checkout` viszont kirántja a fájlokat a másik ágens keze alól: azt **ő végezze**,
+  amikor tiszta ponton van.
