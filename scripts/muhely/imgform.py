@@ -20,6 +20,7 @@ Document level:
 
     units_declared  what the page itself says the units are
     unreadable      HOW MANY rows the reader could not read
+    nonce           echoed back from the request, tying this answer to it
 
 `name` is the only place text crosses at all, so it is the field with the closed
 character set: letters, digits, spaces and hyphens. A part name needs nothing
@@ -61,7 +62,11 @@ proposal to be checked with the owner, never a final cut list.
 
 Usage
 -----
-  imgform.py FORM.json [--clean OUT.json]
+  imgform.py FORM.json [--clean OUT.json] [--nonce SENT]
+
+Pass --nonce with the value the request carried. Without it the answer is still
+shape-checked, but nothing binds it to YOUR request, and the run says so out
+loud rather than checking nothing quietly.
 
 Exit 0 the form is well-shaped, 1 rejected. With --clean, the validated and
 normalised copy is written out, and THAT is the file the rest of the chain
@@ -73,7 +78,17 @@ import math
 import sys
 
 ROW_KEYS = {"qty", "w", "h", "unit", "region", "name"}
-DOC_KEYS = {"units_declared", "unreadable", "rows"}
+DOC_KEYS = {"units_declared", "unreadable", "rows", "nonce"}
+
+# The nonce ties one answer to one request, so a form from an earlier or
+# different read cannot be passed off as the answer to this one. It is checked
+# here, never forwarded: nothing downstream needs it, and every field that
+# crosses is a field to keep narrow.
+#
+# NARROW IT, because this is the mistake this file already made once with
+# units_declared: a string field with no character rule is a free-text channel,
+# whatever it is nominally for. Letters and digits only, 8 to 64 of them.
+NONCE_MIN, NONCE_MAX = 8, 64
 
 UNITS = ("mm", "in")
 REGIONS = ("table", "drawing")
@@ -95,6 +110,12 @@ def name_ok(s):
     return all(c.isalpha() or c.isdigit() or c in " -" for c in s)
 
 
+def nonce_ok(s):
+    """Letters and digits only. A nonce is an identifier, not a message."""
+    return (isinstance(s, str) and NONCE_MIN <= len(s) <= NONCE_MAX
+            and all(c.isalnum() and c.isascii() for c in s))
+
+
 def num(v):
     """A real, finite number -- and not a bool, which is an int in Python."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -103,11 +124,28 @@ def num(v):
     return f if math.isfinite(f) else None
 
 
-def check(doc):
+def check(doc, expected_nonce=None):
     """Returns (findings, cleaned_or_None). Any finding means rejected."""
     bad = []
     if not isinstance(doc, dict):
         return ["a valasz nem objektum"], None
+
+    # The reader's prompt REQUIRES it to echo the nonce, so the form carries one
+    # and this file used to reject the whole answer as an unknown field. The two
+    # halves of our own chain disagreed and nothing could ever pass -- the same
+    # two-gate split that broke the allowlist and the reader prompt on 08-26.
+    # Found by the workshop agent running it on real drawings, which is the only
+    # way that class of bug ever surfaces.
+    nonce = doc.get("nonce")
+    if nonce is not None and not nonce_ok(nonce):
+        bad.append(f"a nonce csak betu es szam lehet, {NONCE_MIN}-{NONCE_MAX} karakter")
+    elif expected_nonce is not None:
+        if nonce is None:
+            bad.append("--nonce meg lett adva, de a valaszban nincs nonce. "
+                       "Nem tudni, melyik keresre valasz ez")
+        elif nonce != expected_nonce:
+            bad.append("a nonce NEM egyezik. Ez egy masik vagy egy korabbi "
+                       "keresre adott urlap, nem erre")
 
     extra = set(doc) - DOC_KEYS
     if extra:
@@ -210,6 +248,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("form", help="a reader valasza, JSON")
     ap.add_argument("--clean", help="ide irja a jovahagyott, normalizalt masolatot")
+    ap.add_argument("--nonce", help="a keresben kikuldott nonce; a valaszenak egyeznie kell vele")
     a = ap.parse_args(argv)
 
     try:
@@ -219,7 +258,7 @@ def main(argv=None):
         print(f"ELUTASITVA: nem olvashato JSON: {e}")
         return 1
 
-    bad, clean = check(doc)
+    bad, clean = check(doc, a.nonce)
     if bad:
         print("ELUTASITVA. A kepbol jott valasz nem felel meg az urlapnak:")
         for b in bad:
@@ -229,6 +268,11 @@ def main(argv=None):
         return 1
 
     print(f"RENDBEN. {len(clean['rows'])} sor, alakra ervenyes.")
+    if a.nonce is None:
+        # Say it rather than checking nothing quietly. An unverified binding that
+        # looks verified is worse than an obviously absent one.
+        print("  FIGYELEM: --nonce nelkul futott, tehat NEM ellenoriztem, hogy ez "
+              "a valasz a te keresedre jott-e. Add meg a kikuldott nonce-t.")
     for n in notes(clean):
         print(f"  FIGYELEM: {n}")
     if a.clean:

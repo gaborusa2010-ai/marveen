@@ -145,10 +145,14 @@ python3 scripts/fetch-image.py "https://oldal.tld/plan.jpg" --out store/muhely/k
 #            prompt: `READ {"path":"...","nonce":"..."}` })
 
 # 3. alak-ellenorzes GEPPEL, mielott barmi tovabbmegy:
-python3 scripts/muhely/imgform.py valasz.json --clean jovahagyott.json
+python3 scripts/muhely/imgform.py valasz.json --nonce "$NONCE" --clean jovahagyott.json
 ```
 
 - A 3. lépés kimenete (`--clean`) megy tovább, **soha nem** az olvasó nyers válasza.
+- A `--nonce` **nem formalitás**: enélkül semmi nem köti a választ a te kérésedhez.
+  Ha kihagyod, a script kiírja, hogy nem ellenőrizte. (2026-08-28: a reader
+  kötelezővé tette a nonce-t, az imgform ismeretlen mezőként dobta ki, és a lánc
+  egyetlen valódi képet sem engedett át. Egy éles futtatás derítette ki.)
 - `unreadable` kötelező mező. A veszély nem a rossz olvasás, hanem a **kitalálás**:
   ha nincs hova tenni a bizonytalanságot, tippelni fog, és a tipp mérésnek látszik.
 - `region: table` átírás, `region: drawing` értelmezés. Rajzból **javaslat** lehet,

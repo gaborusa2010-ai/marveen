@@ -35,6 +35,10 @@ no markdown fence.
 
 Field by field:
 
+- `nonce` -- copy the request's nonce back VERBATIM. It is letters and digits
+  only, and it is what proves this form answers this request. The checker
+  rejects the whole form if it is missing, altered, or anything but an
+  identifier: do not put a message in it.
 - `units_declared` -- what the PICTURE itself says the units are. Not what you
   infer from the numbers. If it says nothing, that is `"none"`.
 - `unreadable` -- how many rows or dimensions you could NOT read. See below.
