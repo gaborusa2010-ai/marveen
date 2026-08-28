@@ -71,12 +71,17 @@ egress-gate hook matches `quarantine_domains`:
 - `wordsnwood.com`       (2026-08-28, lepcso alatti es ferde butor tervek)
 - `100things2do.ca`      (2026-08-28, ugyanaz)
 - `woodgears.ca`         (2026-08-28, metrikus tervek, Matthias Wandel)
-- `ibuildit.ca`          (2026-08-28, metrikus, korpuszbutor)
-- `canadianwoodworking.com` (2026-08-28, metrikus szabaslistak)
 - `buildeazy.com`        (2026-08-28, metrikus ES huvelykes valtozat)
 - `ukworkshop.co.uk`     (2026-08-28, UK forum, brit anyagmeretek)
 - `pinterest.com`        (2026-08-28, design-otletek; a gazda kerte, nem szabaslista-forras)
 - `sketchup.com`         (2026-08-28, 3D Warehouse latvanyterv-modellek; szabaslista NINCS rajta)
+
+Levéve 2026-08-28-an, meres utan. A ket ok NEM ugyanaz, es ez szandekosan van
+kiirva: aki kesobb ujra felveszi, tudja melyiket miert.
+- `canadianwoodworking.com`: kemeny 403 a bejarati ajton, az ELSO keresre. Lezart
+  valasz, nem altalunk felepitett rate-limit. Tudjuk hogy nem enged be.
+- `ibuildit.ca`: bot-ellenorzo interstitial, az oldalt meg sem lattuk. NEM tudjuk,
+  van-e rajta hasznalhato szabaslista. Ez DONTES, nem itelet: a falat nem keruljuk meg.
 - `xda-developers.com`   (2026-08-27, a gazda kerte: modell-osszehasonlito cikk)
 - `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
