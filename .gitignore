@@ -92,3 +92,6 @@ __pycache__/
 # Claude Code Channels runtime config/session dir (sessions, history, tokens,
 # plugins, skills). Per-install runtime state -- never source, never commit.
 .channels-config/
+
+# Telepites-specifikus nyelvi beallitas, a start/stop/migrate olvassa. Nem kod.
+.lang
