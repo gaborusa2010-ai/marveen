@@ -178,8 +178,11 @@ OUT=$(python3 scripts/muhely/imgform.py "$TMP/draw.json" 2>&1)
 echo "$OUT" | grep -q "talalgatas" \
   && ok "rajz plusz nulla olvashatatlan -> szol, hogy ez inkabb talalgatas" \
   || no "a nulla olvashatatlan rajznal nem szolt"
-echo "$OUT" | grep -qi "javaslat" \
-  && ok "rajzi meretbol javaslat lehet, vegleges lista nem" \
+# The wording moved when the owner reframed it: a drawing is not an unreliable
+# cut list, it is the INPUT a cut list is derived from. What must stay true is
+# that a measurement never leaves here looking like a finished part size.
+echo "$OUT" | grep -q "NEM szabasmeretek" \
+  && ok "rajzi meret nem szabasmeret -- a levezetes nelkul nem az" \
   || no "a rajzi meret korlatozasa nem jelent meg"
 
 # THE CASE THAT RETURNED NOTHING. A legible drawing sheet produced zero rows,
