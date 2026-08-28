@@ -71,6 +71,15 @@ egress-gate hook matches `quarantine_domains`:
 - `xda-developers.com`   (2026-08-27, a gazda kerte: modell-osszehasonlito cikk)
 - `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
+**VENDEGKENT VISELKEDJ A FORRASOKON.** 2026-08-28-an a `learn.kregtool.com` MINDENRE
+403-at kezdett adni. Ok: elozo nap 140 letoltest inditottunk rola, percenkent hatot-hetet,
+mikozben minden mas hostrol 2 es 10 kozott. Ez egy ingyenes, publikus forras volt, es
+elhasznaltuk. A domain a listan van, a hozzaferes megis oda.
+Ezert: egy futasban ne kerj tucatnyinal tobb oldalt UGYANARROL a hostrol, es ha egy
+gyujtes tobb szazas nagysagrendu, az mar nem letoltes hanem lehalaszas -- oszd el napokra,
+vagy kerdezd meg a gazdat hogy akarja-e egyaltalan. A hozzaferes nem ujratermelodo eroforras:
+ha egy oldal kizar, az a lista bovitesevel NEM javithato.
+
 **TWO LISTS MUST AGREE.** This prompt list is the second of two gates. The first
 is `quarantine_domains` in `store/egress-allowlist.json`, enforced by
 `scripts/hooks/egress-gate.mjs`. If only one of them is widened, the domain LOOKS
