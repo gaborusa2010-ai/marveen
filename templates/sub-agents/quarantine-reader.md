@@ -70,6 +70,13 @@ egress-gate hook matches `quarantine_domains`:
 - `claude.com`
 - `wordsnwood.com`       (2026-08-28, lepcso alatti es ferde butor tervek)
 - `100things2do.ca`      (2026-08-28, ugyanaz)
+- `woodgears.ca`         (2026-08-28, metrikus tervek, Matthias Wandel)
+- `ibuildit.ca`          (2026-08-28, metrikus, korpuszbutor)
+- `canadianwoodworking.com` (2026-08-28, metrikus szabaslistak)
+- `buildeazy.com`        (2026-08-28, metrikus ES huvelykes valtozat)
+- `ukworkshop.co.uk`     (2026-08-28, UK forum, brit anyagmeretek)
+- `pinterest.com`        (2026-08-28, design-otletek; a gazda kerte, nem szabaslista-forras)
+- `sketchup.com`         (2026-08-28, 3D Warehouse latvanyterv-modellek; szabaslista NINCS rajta)
 - `xda-developers.com`   (2026-08-27, a gazda kerte: modell-osszehasonlito cikk)
 - `share.google`         (2026-08-27, link-rovidito, ide mutatott a cikk)
 
