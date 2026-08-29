@@ -200,6 +200,17 @@ def cmd_photo(a):
     return 0
 
 
+def _invoices_for(job_id):
+    """Ask invoice.py's register. Never let its absence break the job log: the
+    log has to keep working on a machine where no invoice was ever rendered."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import invoice
+        return invoice.issued_for(job_id)
+    except Exception:
+        return []
+
+
 def _state(r):
     """One place decides what a job's state is, so the list and the guards agree."""
     if r.get("stopped_at") is None:
@@ -352,17 +363,32 @@ def cmd_edit(a):
               f"dokumentumon a vevonek, ezert nem irom at: a rekord es a papir nem "
               f"terhet el egymastol. Jegyzet es helyesbito szamla a jo ut.")
         return 1
-    # A stopped job MIGHT already be on an invoice: invoice.py takes a JSON file
-    # and never records which job it came from, so nothing here can prove it
-    # either way. Refusing would be a guess dressed as a rule, and passing
-    # silently would be the same guess with the opposite sign. So it says what it
-    # does not know and asks. Measured 2026-08-28: the previous version leaned on
-    # `invoiced`, which no code ever writes.
+    # invoice.py now records every reference it spends against the job it came
+    # from, so this can look instead of guess. Two things it must NOT get wrong:
+    #
+    # Filter on kind. The register holds quotes as well, and a quote going out
+    # does not lock anything: the customer has a price, not a document that says
+    # what the work WAS. Reading the register without the filter would be the
+    # two-meanings-in-one-field mistake again, one level up.
+    #
+    # And an empty register is not proof. It only knows about invoices made
+    # through invoice.py from a job file carrying _job_id; a hand-written one
+    # leaves no trace. So "nothing found" stays a question, not a green light --
+    # it is just a much better informed question than it was an hour ago.
+    issued = [e for e in _invoices_for(r["id"]) if e.get("kind") == "invoice"]
+    if issued:
+        ref = issued[-1].get("reference")
+        r["invoice_ref"] = ref          # heal the record while we are here
+        _save(rows)
+        print(f"#{a.id} MAR SZAMLAZVA ({ref}), a szamla-nyilvantartas szerint. "
+              f"A leiras kiment a vevonek, ezert nem irom at. A rekordba is "
+              f"bevezettem a hivatkozast.")
+        return 1
     if r.get("stopped_at") is not None and not a.force:
-        print(f"#{a.id} LEZART munka. Nem tudom megallapitani, kiment-e mar rola "
-              f"szamla: az invoice.py nem jegyzi fel, melyik munkabol keszult. "
-              f"Ha biztos vagy benne hogy meg nem szamlaztad, ismeteld meg --force "
-              f"kapcsoloval.")
+        print(f"#{a.id} LEZART munka. A szamla-nyilvantartasban NINCS rola kiadott "
+              f"szamla, de az csak a jobs.py-bol keszult szamlakat ismeri: egy "
+              f"kezzel irt szamla-JSON nem hagy nyomot benne. Ha biztos vagy benne "
+              f"hogy meg nem szamlaztad, ismeteld meg --force kapcsoloval.")
         return 1
     changed = []
     if a.stop:
@@ -376,7 +402,7 @@ def cmd_edit(a):
             old_s = _local(r["stopped_at"]) if r.get("stopped_at") else "nyitva"
             changed.append(f"befejezes: {old_s} -> {_local(new_stop)}")
             r["stopped_at"] = new_stop
-    for field, new in (("client", a.client), ("job", a.job)):
+    for field, new in (("client", a.client), ("job", a.job), ("address", a.address)):
         if new is None or new == r.get(field):
             continue
         old = r.get(field, "")
@@ -476,6 +502,7 @@ def main(argv):
     p.set_defaults(fn=cmd_note)
     p = sub.add_parser("edit"); p.add_argument("id", type=int)
     p.add_argument("--job"); p.add_argument("--client")
+    p.add_argument("--address", help="a munkavegzes helye, ha utolag derult ki")
     p.add_argument("--stop", help="a befejezes idopontjanak javitasa, pl. 16:00")
     p.add_argument("--force", action="store_true",
                    help="lezart munkanal is, ha biztos hogy meg nincs szamlazva")
