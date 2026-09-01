@@ -23,6 +23,7 @@ import {
   detectsModelConsentDialog,
   detectsFeedbackDraftModal,
   detectsFeedbackOptOutPrompt,
+  firstRunAcceptKeys,
   type FirstRunGateKind,
 } from '../pane-state.js'
 import { agentDir, listAgentNames, readAgentModel, readAgentClaudeConfigDir, readAgentClaudePlan, readAgentChannelProvider, readAgentAuthMode, readAgentDisplayName, readAgentRemoteConfig, readAgentRemoteHost, readAgentMemoryIsolation } from './agent-config.js'
@@ -832,6 +833,68 @@ export function shSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+/**
+ * hu: A modell-azonosító alapján eldönti, melyik providerhez tartozik, és felépíti a shell
+ * export-láncot, ami a Claude Code CLI-t az adott provider Anthropic-kompatibilis végpontjára
+ * téríti. Tiszta függvény (nincs I/O) -- a titkot a hívó adja át `secretLookup`-on keresztül,
+ * hogy vault nélkül tesztelhető legyen.
+ * <br />
+ * en: Resolves which provider a model id belongs to and builds the shell export chain that
+ * redirects the Claude Code CLI to that provider's Anthropic-compatible endpoint. Pure function
+ * (no I/O) -- the caller supplies secrets via `secretLookup` so this is testable without a vault.
+ */
+export type ProviderKind = 'claude' | 'deepseek' | 'minimax' | 'openrouter' | 'ollama'
+
+export function resolveProviderEnv(
+  model: string,
+  secretLookup: (id: string) => string | null,
+): { provider: ProviderKind; exportsStr: string } {
+  const isClaude = model.startsWith('claude-')
+  const isDeepseek = model.startsWith('deepseek-')
+  const isMinimax = model.startsWith('minimax-')
+  // OpenRouter model ids are `provider/model` (contain '/'); Ollama tags use
+  // ':' and no '/'. This discriminator keeps OpenRouter ids off the Ollama path.
+  const isOpenRouter = !isClaude && !isDeepseek && !isMinimax && model.includes('/')
+  const isOllama = !isClaude && !isDeepseek && !isMinimax && !isOpenRouter
+
+  if (isDeepseek) {
+    const key = secretLookup('DEEPSEEK_API_KEY') ?? ''
+    return {
+      provider: 'deepseek',
+      exportsStr: `export ANTHROPIC_AUTH_TOKEN="${key}" && export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic && export ANTHROPIC_MODEL=${shSingleQuote(model)} && `,
+    }
+  }
+  if (isMinimax) {
+    const key = secretLookup('MINIMAX_API_KEY') ?? ''
+    // MiniMax's own /anthropic compat layer misreports a 200K context window in
+    // its model metadata instead of M3's real 1M (MiniMax-AI/MiniMax-M2.7#46,
+    // confirmed live 2026-08-19: two independently running fleet agents on
+    // minimax-m3 converged on a measured ~200-203k ceiling). Claude Code trusts
+    // that metadata and auto-compacts at ~167k as a result. This env var is the
+    // vendor-documented workaround -- it tells the CLI the real number instead
+    // of the compat layer's wrong one.
+    return {
+      provider: 'minimax',
+      exportsStr: `export ANTHROPIC_AUTH_TOKEN="${key}" && export ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic && export ANTHROPIC_MODEL=${shSingleQuote(model)} && export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000 && `,
+    }
+  }
+  if (isOpenRouter) {
+    // Anthropic-compatible endpoint at https://openrouter.ai/api (the SDK appends /v1/messages).
+    const key = secretLookup('openrouter-fleet-key') ?? ''
+    return {
+      provider: 'openrouter',
+      exportsStr: `export ANTHROPIC_AUTH_TOKEN="${key}" && export ANTHROPIC_BASE_URL=https://openrouter.ai/api && export ANTHROPIC_MODEL=${shSingleQuote(model)} && `,
+    }
+  }
+  if (isOllama) {
+    return {
+      provider: 'ollama',
+      exportsStr: `export ANTHROPIC_AUTH_TOKEN=ollama && export ANTHROPIC_BASE_URL=${OLLAMA_URL} && export ANTHROPIC_MODEL=${shSingleQuote(model)} && `,
+    }
+  }
+  return { provider: 'claude', exportsStr: '' }
+}
+
 // All tmux operations route through these two wrappers so the local-vs-remote
 // (ssh) decision and the quoting live in ONE place (ssh-tmux.ts). host=null is
 // byte-identical to the prior direct local tmux call. Remote calls get a larger
@@ -1084,11 +1147,6 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     const model = resolveOpenRouterModel(readAgentModel(name))
     const authMode = readAgentAuthMode(name)
     const isClaude = model.startsWith('claude-')
-    const isDeepseek = model.startsWith('deepseek-')
-    // OpenRouter model ids are `provider/model` (contain '/'); Ollama tags use
-    // ':' and no '/'. This discriminator keeps OpenRouter ids off the Ollama path.
-    const isOpenRouter = !isClaude && !isDeepseek && model.includes('/')
-    const isOllama = !isClaude && !isDeepseek && !isOpenRouter
     // ANTHROPIC_MODEL is REQUIRED for non-Claude models: the interactive TUI
     // validates the `--model` flag against known Anthropic models and silently
     // falls back to the built-in default (claude-opus-...) for an unrecognized
@@ -1096,13 +1154,9 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // the custom ANTHROPIC_BASE_URL ("model does not exist"). The env var is
     // authoritative and bypasses that validation. (`--print` honors --model, but
     // the agents run the TUI.) Single-quoted so a `:` in the tag is shell-safe.
-    const ollamaEnv = isOllama ? `export ANTHROPIC_AUTH_TOKEN=ollama && export ANTHROPIC_BASE_URL=${OLLAMA_URL} && export ANTHROPIC_MODEL=${shSingleQuote(model)} && ` : ''
-    const deepseekKey = isDeepseek ? (getSecret('DEEPSEEK_API_KEY') ?? '') : ''
-    const deepseekEnv = isDeepseek ? `export ANTHROPIC_AUTH_TOKEN="${deepseekKey}" && export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic && export ANTHROPIC_MODEL=${shSingleQuote(model)} && ` : ''
-    // OpenRouter: Anthropic-compatible endpoint at https://openrouter.ai/api
-    // (the SDK appends /v1/messages). Key from the vault (openrouter-fleet-key).
-    const openrouterKey = isOpenRouter ? (getSecret('openrouter-fleet-key') ?? '') : ''
-    const openrouterEnv = isOpenRouter ? `export ANTHROPIC_AUTH_TOKEN="${openrouterKey}" && export ANTHROPIC_BASE_URL=https://openrouter.ai/api && export ANTHROPIC_MODEL=${shSingleQuote(model)} && ` : ''
+    // Provider discriminator + env-export chain live in resolveProviderEnv (pure,
+    // unit-tested in agent-provider-env.test.ts) so a new provider is one branch there.
+    const { exportsStr: providerEnv } = resolveProviderEnv(model, getSecret)
     // When authMode is 'api', the agent uses its own ANTHROPIC_API_KEY from
     // the vault instead of the host's OAuth. The vault entry ID follows the
     // convention `agent-{name}-api-key`. We inject it as an env var so Claude
@@ -1378,7 +1432,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // values like `claude-opus-4-8[1m]` (1M-context suffix) from being glob-expanded AND makes a `'`
     // in the value inert rather than a quote-break -> command injection. Same escape at the three
     // ANTHROPIC_MODEL env sites above.
-    const cmd = `export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH" && ${unsetTokens} && ${autoUpdaterEnv}${promptSuggestionEnv}${mcpEnv}${channelSetup}${apiKeyEnv}${claudeConfigEnv}${oauthTokenEnv}${ollamaEnv}${deepseekEnv}${openrouterEnv}cd "${dir}" && ${claudeBin()} ${continueFlag}${skipFlag}--model ${shSingleQuote(model)} ${channelFlag}`.trimEnd()
+    const cmd = `export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH" && ${unsetTokens} && ${autoUpdaterEnv}${promptSuggestionEnv}${mcpEnv}${channelSetup}${apiKeyEnv}${claudeConfigEnv}${oauthTokenEnv}${providerEnv}cd "${dir}" && ${claudeBin()} ${continueFlag}${skipFlag}--model ${shSingleQuote(model)} ${channelFlag}`.trimEnd()
     runTmux(null, ['new-session', '-d', '-s', session, cmd], { timeout: 10000 })
 
     logger.info({ name, session, channelDir: agentChannelDir }, 'Agent tmux session started')
@@ -1623,7 +1677,7 @@ const FIRST_RUN_ANSWER_SETTLE_MS = 1500
 export async function answerFirstRunGates(
   session: string,
   host: string | null = null,
-): Promise<'cleared' | 'login' | 'unchanged'> {
+): Promise<'cleared' | 'login' | 'unchanged' | 'blocked'> {
   let acted = false
   for (let i = 0; i < FIRST_RUN_ANSWER_MAX_STEPS; i++) {
     const pane = capturePane(session, host)
@@ -1632,13 +1686,40 @@ export async function answerFirstRunGates(
     if (gate === 'login') return 'login'
     try {
       if (gate === 'trust') {
-        runTmux(host, ['send-keys', '-t', session, '1'], { timeout: 5000 })
-        await delay(150)
-        runTmux(host, ['send-keys', '-t', session, 'Enter'], { timeout: 5000 })
+        // TRUSTGATE901: never by number, never by default. 2.1.252 dropped the
+        // "1."/"2." prefixes AND put "No, exit" first as the highlighted
+        // option, so the old `1` + Enter typed nothing and then CONFIRMED the
+        // exit. The keys come from the pane instead.
+        // `pane` is non-null here (gate came from it), but the narrowing does
+        // not survive the intervening checks -- and a null capture is itself a
+        // reason to park rather than guess.
+        const keys = pane != null ? firstRunAcceptKeys(pane) : null
+        if (keys == null) {
+          // Unrecognised layout. Enter confirms whatever is highlighted and
+          // Escape is "No, exit" by the dialog's own footer, so there is no
+          // safe key to send: park and let the caller alert a human.
+          logger.warn({ session, gate },
+            'first-run trust dialog: no unambiguous "yes" option found -- parking, NO keystrokes sent')
+          return 'blocked'
+        }
+        for (const k of keys) {
+          runTmux(host, ['send-keys', '-t', session, k], { timeout: 5000 })
+          await delay(150)
+        }
       } else if (gate === 'bypass-permissions') {
-        runTmux(host, ['send-keys', '-t', session, '2'], { timeout: 5000 })
-        await delay(150)
-        runTmux(host, ['send-keys', '-t', session, 'Enter'], { timeout: 5000 })
+        // Same rule, same reason as 'trust' above: the accept row sits behind a
+        // first, highlighted "No, exit", so answering by number is one dropped
+        // prefix away from confirming the refusal.
+        const keys = pane != null ? firstRunAcceptKeys(pane) : null
+        if (keys == null) {
+          logger.warn({ session, gate },
+            'first-run bypass dialog: no unambiguous accept option found -- parking, NO keystrokes sent')
+          return 'blocked'
+        }
+        for (const k of keys) {
+          runTmux(host, ['send-keys', '-t', session, k], { timeout: 5000 })
+          await delay(150)
+        }
       } else {
         // theme / welcome: Enter accepts the highlighted default and moves on.
         runTmux(host, ['send-keys', '-t', session, 'Enter'], { timeout: 5000 })

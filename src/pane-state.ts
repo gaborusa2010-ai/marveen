@@ -532,18 +532,97 @@ export function detectsBlockingMenu(pane: string): boolean {
 // detectsBlockingMenu's discipline: a busy pane is never a gate, and a visible
 // idle footer means the real prompt is live (capture-pane -p sees only the
 // visible screen, so a quoted phrase always coexists with the live footer).
+// The tmux-visible selection marker Claude Code draws on the active option.
+const CURSOR_GLYPH = '\u276f'
+
 export type FirstRunGateKind = 'trust' | 'bypass-permissions' | 'login' | 'theme' | 'welcome'
 
 // Ordered: the login picker and theme screen render UNDER the "Welcome to
 // Claude Code" banner, so the more specific matches must win before the
 // generic welcome fallback.
 const FIRST_RUN_GATES: Array<{ kind: FirstRunGateKind; rx: RegExp }> = [
-  { kind: 'trust', rx: /Do you trust the files in this folder\?/ },
+  // TRUSTGATE901 (2026-09-01): ALTERNATION, not a replacement. Claude Code
+  // 2.1.246 rewrote this dialog -- the old question is GONE and the panel now
+  // opens with a marketing line ("Quick safety check: Is this a project you
+  // created or one you trust? ..."). Measured on the installed binary with a
+  // known-positive/known-negative control: "Do you trust the files in this
+  // folder" occurs ZERO times in 2.1.246, "Yes, I trust this folder" twice.
+  //
+  // The anchor is the OPTION TEXT, not the prose: the option is the functional
+  // element the dialog cannot drop, while the sentence above it is exactly the
+  // kind of copy a vendor rewrites (it just did). The old question stays for
+  // installs still on an older CLI -- note the old panel's option read
+  // "Yes, proceed", so neither string alone covers both versions.
+  //
+  // Why this mattered more than a missed classification: a null here does not
+  // merely skip the answer (answerFirstRunGates reports 'unchanged'), it hands
+  // the pane to the GENERIC blocking-menu recovery, which sends Escape -- and
+  // on this dialog Escape IS "No, exit". A fresh install quit on startup.
+  { kind: 'trust', rx: /Do you trust the files in this folder\?|Yes, I trust this folder/ },
   { kind: 'bypass-permissions', rx: /Bypass Permissions mode/ },
   { kind: 'login', rx: /Select login method/ },
   { kind: 'theme', rx: /Choose the text style/ },
   { kind: 'welcome', rx: /Welcome to Claude Code/ },
 ]
+
+/**
+ * Which keys select the ACCEPTING option on a first-run consent dialog
+ * (folder-trust, bypass-permissions), from wherever the cursor currently
+ * sits -- or null when the pane does not say clearly enough to act.
+ *
+ * TRUSTGATE901. Answering this dialog by NUMBER or by DEFAULT is not safe, and
+ * both assumptions broke inside six patch releases:
+ *   2.1.246: "❯ 1. Yes, I trust this folder" / "  2. No, exit"
+ *   2.1.252: "❯ No, exit"                    / "  Yes, I trust this folder"
+ * In 2.1.252 the numbering is GONE (so typing "1" selects nothing) and "No,
+ * exit" is both first AND the highlighted default (so the Enter that follows
+ * CONFIRMS the exit). The old code did exactly that: it typed 1, then Enter,
+ * and thereby chose "No, exit" on a fresh install.
+ *
+ * So the answer is derived from the pane instead of assumed: find the cursor,
+ * find the accepting option, and move the selection onto it.
+ *
+ * The bypass-permissions dialog is answered the same way and for the same
+ * reason. Its own accept row ("Yes, I accept") sits SECOND behind a first,
+ * highlighted "No, exit" -- so the previously used number ("2") was one
+ * dropped prefix away from the identical failure. Measured 2026-09-01: on
+ * an existing HOME the bypass panel does not appear at all, but that says
+ * nothing about a brand-new machine, which is exactly the fresh-install
+ * path this whole card is about.
+ *
+ * Returns null -- meaning PARK AND ALERT, send nothing -- when the layout is
+ * not understood. Neither Enter nor Escape is a safe default here: Escape is
+ * "No, exit" by the dialog's own footer, and Enter confirms whatever happens
+ * to be highlighted. On an unrecognised shape, not acting is the correct move.
+ */
+export function firstRunAcceptKeys(pane: string): string[] | null {
+  if (!pane || !pane.trim()) return null
+  const lines = pane.split('\n')
+  const cursorIdx = lines.findIndex(l => l.includes(CURSOR_GLYPH))
+  if (cursorIdx < 0) return null
+
+  // The options are the contiguous run of non-blank lines around the cursor.
+  // Anchoring on the run (rather than on line numbers or on a fixed distance)
+  // is what survives a layout change: boxed or unboxed, numbered or not.
+  let first = cursorIdx
+  while (first > 0 && lines[first - 1].trim() !== '') first--
+  let last = cursorIdx
+  while (last < lines.length - 1 && lines[last + 1].trim() !== '') last++
+  const block = lines.slice(first, last + 1)
+
+  // The target is the option that accepts. Match on "yes" and exclude the
+  // refusal explicitly, so a future "Yes, exit"-shaped wording cannot be
+  // mistaken for consent.
+  const yesIdx = block.findIndex(l => /\byes\b/i.test(l) && !/\bno,\s*exit\b/i.test(l))
+  if (yesIdx < 0) return null
+  // Ambiguity is a reason to stop, not to guess: two "yes"-looking rows mean
+  // the layout is not what this function models.
+  if (block.filter(l => /\byes\b/i.test(l) && !/\bno,\s*exit\b/i.test(l)).length !== 1) return null
+
+  const delta = yesIdx - (cursorIdx - first)
+  const move = delta === 0 ? [] : Array.from({ length: Math.abs(delta) }, () => (delta > 0 ? 'Down' : 'Up'))
+  return [...move, 'Enter']
+}
 
 /**
  * Classify the pane as a Claude Code first-run gate, or null when it is a
