@@ -3,12 +3,11 @@
  * `npm run skill -- <alparancs>` -- a marveen.io skill-parancs (MIOCLISKILL831).
  *
  * HAROM ALPARANCS:
- *   enroll   EGYSZERI bekotes: attest-kulcs kerese es HELYI tarolasa (0600).
- *            A skillek/szabalyok NEM innen jonnek: a telepitessel es a
- *            frissitessel erkeznek (seed-skills/), nem HTTP-n.
+ *   enroll   EGYSZERI bekotes: attest-kulcs kerese es HELYI tarolasa (0600),
+ *            majd a hasznalati szabalyok lehuzasa a szerverrol.
  *   upload   feltoltes: beolvas -> LEFUTTATJA A HELYI SZKENT -> talalatnal
  *            TAGAD -> ha tiszta: HMAC-alairas + felkuldes.
- *   update   tavoli skill-csomag ujrahuzasa, HA valaha lesz ilyen.
+ *   update   a skillek/szabalyok ujrahuzasa a szerverrol.
  *
  * MIERT A CLI SAJAT FOLYAMATABAN SZKENNEL (spec, msg 16930/b): a hatokor
  * MINDEN app.marveen.io-s regisztralo, nem csak a Claude Code alatt futo
@@ -54,11 +53,20 @@ function fail(uzenet: string): never {
 interface Args {
   parancs: string
   fajl?: string
+  /**
+   * HOVA kerulnek a letoltott skillek. AZ ALAPERTELMEZES A USER-HATOKOR, es ez
+   * termek-dontes, nem kenyelmi: az ugynok MUNKAKONYVTARA valtozik, ez a
+   * szabaly viszont MINDENHOL ervenyes kell legyen. Ha a projekt-hatokor lenne
+   * az alap, a szabaly csak abban az egy konyvtarban letezne, ahol a bekotes
+   * futott -- masutt az ugynok nem tudna rola, es HTTP-zne a parancs helyett.
+   * A projekt-hatokor kapcsolokent marad, ha valaki szandekosan egy repohoz
+   * akarja kotni.
+   */
   scope: 'project' | 'user'
   apiBase: string
   accessToken?: string
   rotate: boolean
-  /** (B) ut: a webfeluletrol beillesztett kulcs. Kapcsolo, nem alapertelmezes. */
+  /** (B) ut: MAS GEPEN mar kiadott kulcs atvitele. Kapcsolo, nem alapertelmezes. */
   keyId?: string
   attestKey?: string
   memberId?: string
@@ -67,7 +75,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     parancs: argv[0] || '',
-    scope: 'project',
+    scope: 'user',
     apiBase: ALAP_API,
     rotate: false,
     accessToken: process.env.MARVEEN_ACCESS_TOKEN,
@@ -91,20 +99,24 @@ function parseArgs(argv: string[]): Args {
 function sugo(): void {
   console.log(`marveen skill -- skillek es feltoltes a marveen.io kozossegbe
 
-  npm run skill -- enroll [--user|--project] [--rotate]
+  npm run skill -- enroll [--project] [--rotate]
       Egyszeri bekotes: attest-kulcs kerese es helyi tarolas (0600).
       Hitelesites: MARVEEN_ACCESS_TOKEN vagy --access-token; enelkul email+jelszo bekerese.
 
   npm run skill -- enroll --key-id <id> --attest-key <titok> --member-id <uuid>
-      Ugyanaz, de a webfeluletrol MASOLT kulccsal, szerver-hivas nelkul.
-      Akkor hasznos, ha a gepnek nincs bejelentkezese, csak a kulcs.
+      Ugyanaz, de egy MAR KIADOTT kulccsal, szerver-hivas nelkul.
+      Ez a kulcs atvitele: egy masik gepen az enroll paranccsal kiadatod,
+      majd ide beirod. Fej nelkuli gepnek, aminek nincs bejelentkezese.
 
   npm run skill -- upload <fajl>
       Helyi szken, majd tiszta eredmeny eseten alairt feltoltes.
 
-  npm run skill -- update [--user|--project]
-      Tavoli skill-csomag ujrahuzasa, HA van ilyen. A beepitett skillek es
-      szabalyok a telepitessel/frissitessel erkeznek, nem innen.
+  npm run skill -- update [--project]
+      A skillek es a hasznalati szabalyok ujrahuzasa a szerverrol.
+
+  A skillek alapbol a FELHASZNALOI mappaba kerulnek (~/.claude/skills), hogy a
+  szabaly minden munkakonyvtarban ervenyes legyen. A --project kapcsoloval az
+  aktualis konyvtar .claude/skills mappajaba irja oket.
 
   npm run skill -- status
       Mi van bekotve, hova, es milyen jogosultsaggal.`)
@@ -141,21 +153,49 @@ async function felhasznaloiToken(args: Args): Promise<string> {
   }
 }
 
+/**
+ * Az anon kulcs CSAK az interaktiv (email+jelszo) bejelentkezeshez kell -- a
+ * masik ket bekotesi ut nelkule is megy.
+ *
+ * MIERT NINCS BEEGETETT ALAPERTELMEZESE, holott a kulcs PUBLIKUS (megmerve:
+ * benne van a kiszolgalt kliens-bundle-ben): a repo secret-gate-jenek van
+ * JWT-mintaja, es az nem tudja megkulonboztetni alak alapjan a publikus anon
+ * kulcsot a service_role kulcstol. Egy beegetett default miatt EZT A
+ * PRODUCTION FAJLT kellene allowlistelni JWT-re -- vagyis pont ott nyitnank
+ * lyukat, ahova kesobb egy VALODI titok kerulhet eszrevetlenul. A kenyelem
+ * nem eri meg a vak foltot.
+ */
 function anonKulcs(): string {
   const k = process.env.MARVEEN_ANON_KEY
   if (!k) {
+    // NEM MONDJUK MEG, HOL TALALJA, MERT NEM TUDJUK. Megmerve: a
+    // MARVEEN_ANON_KEY sem a doksikban, sem a telepitokben, sem a
+    // dashboardon nem szerepel. Egy talalgatott hely rosszabb a hianynal:
+    // a tag keresne valamit, ami nincs ott. Helyette a ket ut, ami MA
+    // mukodik.
     fail(
-      'hianyzik a MARVEEN_ANON_KEY (a marveen.io publikus anon kulcsa).\n' +
-        '  A bekoteshez ez kell; a dashboardon vagy a telepitesi utmutatoban talalod.',
+      'az interaktiv bejelentkezeshez a MARVEEN_ANON_KEY kornyezeti valtozo kell,\n' +
+        '  es az ezen a gepen nincs beallitva. Ket ut mukodik nelkule:\n' +
+        '    npm run skill -- enroll --access-token <token>\n' +
+        '      (vagy MARVEEN_ACCESS_TOKEN kornyezeti valtozokent)\n' +
+        '    npm run skill -- enroll --key-id <id> --attest-key <titok> --member-id <uuid>\n' +
+        '      (egy MASIK gepen kiadott kulcs atvitele; a kulcsot ott az\n' +
+        '       `enroll --access-token` adja ki, egyszer)',
     )
   }
   return k
 }
 
 async function enroll(args: Args): Promise<void> {
-  // (B) UT: a tag a webfeluleten kapta a kulcsot es beilleszti. Nem
-  // alapertelmezes, hanem kapcsolo -- de valodi ut: egy gepnek lehet, hogy
-  // sosem lesz marveen.io-bejelentkezese, csak a kulcsa.
+  // (B) UT: EGY MAR KIADOTT KULCS ATVITELE MASIK GEPRE. Nem alapertelmezes,
+  // hanem kapcsolo -- de valodi ut: egy fej nelkuli gepnek lehet, hogy sosem
+  // lesz marveen.io-bejelentkezese, csak a kulcsa.
+  //
+  // ES NEM WEBFELULETROL JON. Megmerve (Samu leletebol, sajat kontrollal
+  // ismetelve): az `attest` szo 0 TALALAT az apps/app/src egeszeben,
+  // mikozben mas edge-fn-hivasok OT fajlban ott vannak -- tehat a mero nem
+  // vak, es attest-kulcs UI egyszeruen NINCS. A kulcsot ma KIZAROLAG az
+  // `enroll --access-token` ut adja ki, egyszer, plaintextben.
   if (args.attestKey || args.keyId || args.memberId) {
     if (!args.attestKey || !args.keyId || !args.memberId) {
       fail('a beillesztett bekoteshez MINDHAROM kell: --key-id, --attest-key, --member-id')
@@ -174,9 +214,12 @@ async function enroll(args: Args): Promise<void> {
     console.log(`Tarolva: ${ut} (0600)`)
     // A skilleket ezen az uton NEM toltjuk le: ahhoz felhasznaloi token kell,
     // es ez az ut epp azt kerulte meg. Ezt kimondjuk, nem hallgatjuk el.
-    // Ugyanaz a pontossag, mint a fenti agon: NEM kuldjuk a tagot egy
-    // parancsra, ami ma nem tud mit csinalni.
-    console.log('A hasznalati szabalyok es a skillek a telepitessel es a frissitessel erkeznek.')
+    // EZEN AZ UTON A SZABALYOK NEM JONNEK LE, es ezt ki kell mondani: a
+    // csomag lekerese felhasznaloi tokent igenyel, ez az ut viszont EPP azt
+    // kerulte meg (a gepnek nincs bejelentkezese). Ha van tokenje, az
+    // `update` lehuzza -- ez valodi ut, nem vigaszdij.
+    console.log('A hasznalati szabalyok ezen az uton NEM jonnek le: a lekeresukhoz bejelentkezes kell.')
+    console.log('Ha van hozzaferesi tokened: npm run skill -- update --access-token <token>')
     return
   }
 
@@ -233,27 +276,29 @@ async function skillekLetoltese(args: Args, token: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!res.ok) {
-    // NINCS TAVOLI SKILL-CSOMAG, ES EZT KI KELL MONDANI. Korabban ez a sor a
-    // `npm run skill -- update`-re kuldte a tagot -- egy parancsra, ami
-    // UGYANEZT a nem letezo vegpontot hivja, tehat garantaltan nem csinal
-    // semmit. Egy nem-letezo utra iranyitas rosszabb, mint a hiany
-    // kimondasa: a tag azt hiszi, van meg egy lepese.
-    //
-    // A hasznalati szabalyok es a skillek a TELEPITESSEL es a FRISSITESSEL
-    // erkeznek (seed-skills/), nem HTTP-n. A fetch-ag azert marad, mert ha
-    // valaha lesz kuratalt, koddal NEM utazo skill-csomag, ez a hely varja.
-    console.log('A bekotes kesz, feltoltesre keszen allsz.')
-    console.log('A hasznalati szabalyok es a skillek a telepitessel es a frissitessel erkeznek;')
-    console.log('tavoli skill-csomag jelenleg nincs.')
+    // A csomag LETEZIK, csak most nem jott le. Ezert itt VALODI kovetkezo
+    // lepes all, nem egy garantaltan hatastalan parancs: az `update` ugyanezt
+    // a vegpontot hivja ujra. (Korabban ez a sor a seedelt szabalyokra
+    // hivatkozott -- azok mar nem utaznak a koddal.)
+    console.log(`A bekotes kesz, feltoltesre keszen allsz. A hasznalati szabalyok most nem jottek le (HTTP ${res.status}).`)
+    console.log('Ujraprobalhatod barmikor: npm run skill -- update')
     return
   }
-  const body = (await res.json()) as { files?: Array<{ path: string; content: string }> }
+  const body = (await res.json()) as {
+    version?: string
+    files?: Array<{ path: string; content: string }>
+  }
   const cel = skillTargetDir(args.scope)
   const kiirt = writeSkillFiles(
     cel,
     (body.files ?? []).map((f) => ({ relPath: f.path, content: f.content })),
   )
-  console.log(`${kiirt.length} skill-fajl kiirva ide: ${cel}`)
+  // A VERZIO KIIRASA: enelkul a tag latja, hogy "3 fajl kiirva", de nem tudja
+  // MIT kapott -- egy ujrahuzas utan sem tudna megmondani, valtozott-e
+  // barmi. A szerver a csomag tartalmanak sha256-jat adja; a rovid alak eleg
+  // az osszevetesre, es ez az, ami egy hibajelentesbe is bekerulhet.
+  const verzio = body.version ? ` (csomag-verzio: ${body.version.slice(0, 8)})` : ''
+  console.log(`${kiirt.length} skill-fajl kiirva ide: ${cel}${verzio}`)
 }
 
 async function upload(args: Args): Promise<void> {

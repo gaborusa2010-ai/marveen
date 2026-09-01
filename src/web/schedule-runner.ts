@@ -47,6 +47,7 @@ import {
   sendEnterToSession,
   clearStaleParkedInput,
   resolveAgentProvider,
+  clearFeedbackModalAndRecheck,
 } from './agent-process.js'
 import { MAIN_CHANNELS_SESSION } from './main-agent.js'
 import { runCommandTask } from './command-task.js'
@@ -680,8 +681,19 @@ async function attemptFireTask(
       logger.warn({ task: task.name, agent: agentName, session, gate }, 'Schedule target session parked on a Claude Code first-run dialog, deferring to retry queue')
       return 'first-run'
     }
-    logger.warn({ task: task.name, agent: agentName, session }, 'Schedule target session busy or has pending input, will retry')
-    return 'busy'
+    // A self-drafted feedback modal reads as not-ready here, and the pre-flight
+    // dismissal in sendPromptToSession never gets the chance to clear it --
+    // this gate short-circuits first. Measured twice on 2026-08-31: agent-samu
+    // sat not-ready for 10 minutes with 10 queued messages while the modal held
+    // the pane, AFTER the pre-flight dismissal had already shipped. So the
+    // dismissal has to live on the refusal path too, the same way the first-run
+    // gate is answered above, and readiness is then re-read ONCE.
+    if (await clearFeedbackModalAndRecheck(session, host)) {
+      logger.info({ task: task.name, agent: agentName, session }, 'Feedback-draft modal cleared, session is ready -- proceeding')
+    } else {
+      logger.warn({ task: task.name, agent: agentName, session }, 'Schedule target session busy or has pending input, will retry')
+      return 'busy'
+    }
   }
 
   if (task.forceSend) {
