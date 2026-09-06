@@ -105,18 +105,38 @@ def next_number(kind, business, bump=True):
     like a whole year of invoices went missing. With no prefix configured the
     reference is the bare running number, which is what the old invoices used.
     """
-    counters = {}
-    if os.path.exists(COUNTERS):
-        with open(COUNTERS) as fh:
-            counters = json.load(fh)
-    year = date.today().year
-    key = f"{kind}_{year}"
-    n = int(counters.get(key, 0)) + 1
-    if bump:
-        counters[key] = n
-        os.makedirs(STORE, exist_ok=True)
-        with open(COUNTERS, "w") as fh:
-            json.dump(counters, fh, indent=2)
+    # A szamlalo a FOLYAMATOS sorszamozas egyetlen forrasa, tehat az irasa nem
+    # lehet reszleges. A regi alak `open(COUNTERS, "w")` volt: az AZONNAL csonkol,
+    # es egy elszallas a csonkolas es a kiiras kozott ures vagy fel fajlt hagy --
+    # onnan a kovetkezo szamla 1-tol indulna, ami HMRC-oldalrol egy eltunt ev.
+    # Ezert: lock a teljes read-modify-write koré, majd temp + os.replace, ami
+    # POSIX-on atomi. Cody merte fel 2026-09-06-an, az app-atvetel kapcsan, de a
+    # csonkolasi ag EGYETLEN folyamatnal is fennall, nem csak parhuzamosnal.
+    os.makedirs(STORE, exist_ok=True)
+    lock_path = COUNTERS + ".lock"
+    with open(lock_path, "a+") as lock:
+        try:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            # Zar nelkul is helyes marad az atomi iras; csak a parhuzamos
+            # hivasok kozotti versenyt nem zarja ki. Ezt nem hallgatjuk el.
+            pass
+        counters = {}
+        if os.path.exists(COUNTERS):
+            with open(COUNTERS) as fh:
+                counters = json.load(fh)
+        year = date.today().year
+        key = f"{kind}_{year}"
+        n = int(counters.get(key, 0)) + 1
+        if bump:
+            counters[key] = n
+            tmp = COUNTERS + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(counters, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, COUNTERS)
     prefix = (business.get(f"{kind}_prefix") or "").strip()
     if not prefix:
         return str(n)
@@ -344,9 +364,11 @@ def render(kind, job, business, out_path):
     if not vat_no:
         foot = (foot + "  " if foot else "") + "Not VAT registered."
     pg.text(L, 42, foot.strip(), size=7.5, colour=(0.5, 0.5, 0.5))
-    # UTR is normally kept off an invoice, but a CIS contractor needs it to
-    # verify the subcontractor with HMRC, so it goes on when CIS applies.
-    if business.get("utr") and is_invoice and (cis or job.get("show_utr")):
+    # UTR and NI go on every invoice by default: the old Express Invoice
+    # sheets carried them, Palmer expects them, and a CIS contractor needs the
+    # UTR to verify the subcontractor with HMRC. Pass "show_utr": false to
+    # leave them off a one-off invoice.
+    if business.get("utr") and is_invoice and job.get("show_utr", True):
         extra = f"UTR {business['utr']}"
         if business.get("ni_number"):
             extra += f"   NI {business['ni_number']}"
