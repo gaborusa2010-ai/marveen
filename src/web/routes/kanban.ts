@@ -25,7 +25,7 @@ import { isAgentRunning } from '../agent-process.js'
 import { resolveKanbanDispatchTarget } from '../../kanban-dispatch.js'
 import { generateBreakdown } from '../llm-breakdown.js'
 import { logger } from '../../logger.js'
-import { readBody, json, jsonMaybeGzip } from '../http-helpers.js'
+import { readBody, json, jsonMaybeGzip, rejectUnknownQueryParams } from '../http-helpers.js'
 import { getEffectiveSettingValue } from '../../settings-store.js'
 import type { RouteContext } from './types.js'
 
@@ -184,6 +184,14 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   const { req, res, path, method } = ctx
 
   if (path === '/api/kanban' && method === 'GET') {
+    // This handler reads NO query params -- it returns the whole board. That
+    // used to make `?assignee=cody` a 200 with all 47 cards: not an ignored
+    // extra, but a filter-shaped request answered as if it had been applied.
+    // The kanban is where task ownership lives, so that is the worst place for
+    // it. An empty known-set means any param here is a caller mistake.
+    // (Cody, 2026-09-01.)
+    if (rejectUnknownQueryParams(res, ctx.url, [],
+      'GET /api/kanban returns the whole board and takes no filters')) return true
     // Embed each card's labels in one extra JOIN query (getLabelsForAllCards)
     // instead of an N+1 per-card lookup, so the footer-pill UI gets
     // everything it needs in a single round trip.
@@ -418,6 +426,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/kanban/archived' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, ctx.url, ['q', 'project', 'label', 'from', 'to', 'limit'])) return true
     const sp      = ctx.url.searchParams
     const q       = sp.get('q')?.trim() || undefined
     const project = sp.get('project')?.trim() || undefined
@@ -440,9 +449,18 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     return true
   }
 
+  // A comment addressed to a card that does not exist is stored and then never
+  // seen again: no view lists it, and the caller gets a 200 with a fresh comment
+  // id, which is indistinguishable from success. Measured 2026-09-01 (card
+  // 223c2180): posting to 'NEMLETEZO' created rows 132-146, fifteen orphans.
+  // The sibling routes on this same path (/breakdown, /breakdown/accept) have
+  // always checked; comments was the one that did not. GET is checked too --
+  // an empty array for a mistyped id reads as "this card has no comments", and
+  // a wrong measurement that looks like a clean one is the house's oldest trap.
   const kanbanCommentsMatch = path.match(/^\/api\/kanban\/([^/]+)\/comments$/)
   if (kanbanCommentsMatch && method === 'GET') {
     const cardId = decodeURIComponent(kanbanCommentsMatch[1])
+    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
     json(res, getKanbanComments(cardId))
     return true
   }
@@ -451,6 +469,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const body = await readBody(req)
     const { author, content } = JSON.parse(body.toString())
     if (!author || !content) { json(res, { error: 'Szerző és tartalom kötelező' }, 400); return true }
+    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
     // Code-side kanban-ref enforcement: rewrite `#<hex8>` references that map
     // to a real card into the human-facing `#<seq>` form before persistence
     // (#75 Cuzcoo dispatch). Random hex / non-matching tokens pass through.
@@ -501,11 +520,21 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
       const ids: string[] = []
       for (const st of subtasks) {
         const id = randomUUID().slice(0, 8).toUpperCase()
+        // A bonto prompt SZANDEKOSAN engedi a null assignee-t ("assignee (string
+        // from the provided list, or null)"), tehat egy bizonytalan besorolas
+        // gazdatlan kartyat szul. Merve 2026-09-06: a munkanaplo-app bontasabol
+        // kilenc gyerek keletkezett egyetlen masodpercben, es NEGYNEK nem volt
+        // gazdaja -- a negyoras kanban-audit mindet "delegalatlan"-kent hozta fel.
+        // Ez nem egyszeri mulasztas volt, hanem allando forras: minden tovabbi
+        // bontas ugyanigy termelt volna.
+        // A szulo assignee-je szinte mindig helyes (a gyerek ugyanannak a munkanak
+        // a resze), es ha megsem, egy kattintassal atirhato -- egy GAZDATLAN kartya
+        // viszont nemán elvesz a tablan. Ezert oroklunk.
         createKanbanCard({
           id,
           title: st.title,
           description: st.description,
-          assignee: st.assignee ?? undefined,
+          assignee: st.assignee ?? parent.assignee ?? undefined,
           priority: (st.priority as any) ?? 'normal',
           project: parent.project ?? undefined,
           parent_id: parentId,
