@@ -7,7 +7,7 @@ import { MAIN_AGENT_ID, BOT_NAME, PROJECT_ROOT } from '../../config.js'
 import { listIdeas, createIdea, updateIdea, deleteIdea, listIdeaCategories, createKanbanCard, getDb, getIdeaComments, addIdeaComment, logIdeaStatusChange, getIdeaStatusLog, listIdeaAttachments, getIdeaAttachment, addIdeaAttachment, deleteIdeaAttachment } from '../../db.js'
 import { generateBreakdown } from '../llm-breakdown.js'
 import { logger } from '../../logger.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import { parseMultipart } from '../multipart.js'
 import { getEffectiveSettingValue } from '../../settings-store.js'
 import type { RouteContext } from './types.js'
@@ -128,6 +128,7 @@ export async function tryHandleIdeas(ctx: RouteContext): Promise<boolean> {
   const IDEA_STALE_DAYS = Math.max(1, Number(getEffectiveSettingValue('IDEA_STALE_DAYS')) || 7)
 
   if (path === '/api/ideas' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['status', 'category', 'scope'])) return true
     const status = url.searchParams.get('status') || undefined
     const category = url.searchParams.get('category') || undefined
     const scopeParam = url.searchParams.get('scope')

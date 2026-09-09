@@ -116,10 +116,41 @@ curl -s -X POST http://localhost:{{WEB_PORT}}/api/daily-log \
   -d '{"agent_id":"{{MAIN_AGENT_ID}}","content":"## HH:MM -- Téma\nMi történt, mi lett az eredmény"}'
 ```
 
+**A NAPLO APPEND-ONLY, TEHAT EGY RESZEREDMENY VEGEREDMENYNEK LATSZIK. Ird oda,
+hogy LEZART vagy FOLYAMATBAN.** (Forgacs szabalya, a sajat esetebol, 2026-09-04.)
+O delelott 10-kor azt naplozta, hogy egy szabaslista "all, nem kell ujraszamolni".
+Egy oraval kesobb a gazda sajat listaja alapjan az EGESZET at kellett irnia. A regi
+sor ott marad -- es onmagaban olvasva igaznak latszik, mert semmi nem jelzi, hogy
+kozben megdolt.
+Nem tobb ket szonal a bejegyzes elejen, es kulonben egy delelotti reszeredmeny ugy
+nez ki a naploban, mint egy vegeredmeny:
+
+    ## 10:00 -- [FOLYAMATBAN] Lyford Road szabaslista ellenorzes. Eddig egyezik.
+    ## 11:15 -- [LEZART] Lyford Road szabaslista ujraszamolva, a 10:00-as sor MEGDOLT.
+
+Ha egy korabbi sorod ervenyet veszti, ne torold (nem is lehet): az UJ sorban mondd
+ki, MELYIK sort irja felul. Egy naplo, amiben ket egymasnak ellentmondo bejegyzes
+all jeloles nelkul, nem tortenelem, hanem csapda.
+
+**ES AZ EMLEKNEL MEG FONTOSABB, MINT A NAPLONAL.** (Forgacs, ugyanaznap, a sajat
+esetebol.) Egy naplobejegyzes magaval hordja az idopontjat, tehat az olvasoja
+tortenelemnek veszi. **Egy emlek viszont pont attol emlek, hogy idotlennek latszik:
+nincs rajta, melyik pillanat merese volt.**
+O aznap beirt egy emlekbe, hogy "a waiting kartyak kora 0-3 nap, tehat beragadt kartya
+most nincs". Fel oran belul megdolt (a ket legregebbi ugyet epp aznap reggel mozgattam,
+attol lattak frissnek). Ha nem szolok, az a mondat holnap nem naplosorkent olvasodik
+vissza, hanem elo allitaskent, a sajat kezetol, tenynek.
+**Ezert: ha egy emlek MERESBOL jott es a meres PILLANATNYI allapotot rogzit, ird oda.**
+Ket szo, es olcsobb, mint egy hamis emlek.
+
+    "MERVE 2026-09-04 08:40-kor, pillanatnyi allapot: ..."   <- avulhat
+    "A mezo tipusa unix epoch integer."                      <- nem avul
+
+
 Keresés (mielőtt válaszolsz, nézd meg van-e releváns emlék):
 ```bash
 curl -s -H "Authorization: Bearer $(cat store/.dashboard-token)" \
-  "http://localhost:{{WEB_PORT}}/api/memories?agent={{MAIN_AGENT_ID}}&q=KULCSSZÓ&category=warm"
+  "http://localhost:{{WEB_PORT}}/api/memories?agent={{MAIN_AGENT_ID}}&q=KULCSSZÓ"
 ```
 
 ## Kanban tábla
@@ -224,6 +255,31 @@ A rendszer automatikusan:
 ### Fontos szabályok
 - Csak futó ágensnek lehet üzenni (tmux session kell hozzá)
 - Az elérhető ágensek listája: `curl -s -H "Authorization: Bearer $(cat store/.dashboard-token)" http://localhost:{{WEB_PORT}}/api/agents`
+
+### A feldolgozott sort le kell zárni
+
+A címzett zárja le, amit feldolgozott. A parancs KÖTELEZŐEN itt áll, mert a szabály
+önmagában kevés: 2026-09-01-en kiderült, hogy öt ágensből négynél a lezárt sorok száma
+PONTOSAN NULLA volt -- nem lustaságból, hanem mert a szabály le volt írva, a parancs nem,
+és senki nem ásta ki a forráskódból.
+
+```bash
+curl -s -X PUT "http://localhost:{{WEB_PORT}}/api/messages/<id>" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(cat store/.dashboard-token)" \
+  -d '{"status":"done","result":"mit csinaltal vele"}'
+```
+
+Ellenőrzés (a `sqlite3` NINCS telepítve, ezért python3, csak olvasásra):
+
+```bash
+python3 -c "import sqlite3;c=sqlite3.connect('file:{{PROJECT_ROOT}}/store/claudeclaw.db?mode=ro',uri=True);print(list(c.execute(\"SELECT status,COUNT(*) FROM agent_messages WHERE to_agent='<neved>' GROUP BY status\")))"
+```
+
+Amit lezársz, arról a küldő automatikus nyugtát kap (`[Eredmény] msg_id:N status:done`),
+és a nyugta ébreszti őt. Ezért a **két óránál régebbi sor lezárása csendes** -- ott a küldő
+már nem várja az eredményt. Nyugtát nem kötelező lezárni, és a lezárása szintén csendes:
+abból nem keletkezik újabb nyugta, nincs végtelen hurok. Mindkettő mérve.
 
 ### Sub-ágens ismeretlen-sender ping kezelése (auto-approval, default-deny)
 

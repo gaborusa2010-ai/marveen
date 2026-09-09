@@ -24,6 +24,21 @@ export async function tryHandleToolLog(ctx: RouteContext): Promise<boolean> {
   }
 
   // GET /api/tool-log -- recent tool calls
+  //
+  // WHAT `success` DOES AND DOES NOT MEASURE (measured 2026-09-06, card 93d5d846).
+  // Until today the column was all 1s across 691 rows, because a tool call that
+  // errored never reached the PostToolUse hook. The PostToolUseFailure event now
+  // feeds the failures in, so 0 is reachable -- verified live with a bare
+  // `exit 7` (Bash) and a missing-file Read.
+  //
+  // Two gaps remain, and they both bias an error rate computed from this table
+  // DOWNWARD, so do not present one as a health figure without saying so:
+  //   1. A call refused by a PreToolUse gate produces NO row at all -- not a
+  //      failure row, nothing. Measured the same afternoon: an egress-gate block
+  //      landed in store/egress-blocked.log and left this table untouched.
+  //   2. Only the main agent registers the capture hook; sub-agent tool calls,
+  //      successes included, are absent.
+  // Rows tagged `[interrupt] ` in input_summary are user stops, not tool errors.
   if (path === '/api/tool-log' && method === 'GET') {
     const since = parseInt(url.searchParams.get('since') || '3600')
     json(res, getRecentToolCalls(since))

@@ -41,6 +41,7 @@ import { readFileSync, appendFileSync, mkdirSync } from 'node:fs'
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { prefixAllows } from './lib/url-prefix.mjs'
 
 // Derive repo root from this script's location (scripts/hooks/egress-gate.mjs).
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -94,6 +95,18 @@ const ALLOWED_PREFIXES = [
   `http://localhost:${DASHBOARD_PORT}/`,
   `http://127.0.0.1:${DASHBOARD_PORT}/`,
 ]
+
+// Host form of the built-in list, for gates that can only judge a HOST rather
+// than a full prefix -- the Bash gate, where the fleet's own calls are written
+// `http://localhost:$PORT/...` and the port is a shell variable.
+// BASHEGRESS901: derived from ALLOWED_PREFIXES on purpose. A second hand-kept
+// list would drift, and a drifted allowlist is worse than none because it still
+// looks current.
+export const ALLOWED_HOSTS = [...new Set(
+  ALLOWED_PREFIXES.map((p) => {
+    try { return new URL(p).hostname.toLowerCase() } catch { return '' }
+  }).filter(Boolean),
+)]
 
 // The quarantine tier.
 //
@@ -202,11 +215,14 @@ export function egressDecision(
   //    includes the trailing slash so a prefix-extension attack is impossible,
   //    e.g. 'https://api.github.com.evil.com/' does not start with
   //    'https://api.github.com/').
-  if (ALLOWED_PREFIXES.some((prefix) => url.startsWith(prefix))) return { blocked: false, tier: 'builtin' }
+  // DOTSEG901: normalised, segment-boundary matching. The WebFetch gate had the
+  // same startsWith weakness as the Bash gate -- a `/../` in the path made a
+  // narrow prefix look like a match while the server received something else.
+  if (ALLOWED_PREFIXES.some((prefix) => prefixAllows(url, prefix))) return { blocked: false, tier: 'builtin' }
 
   // 2. Runtime prefix check.
   const rtPrefixes = runtimeList.prefixes ?? []
-  if (rtPrefixes.some((p) => url.startsWith(p))) return { blocked: false, tier: 'runtime-prefix' }
+  if (rtPrefixes.some((p) => prefixAllows(url, p))) return { blocked: false, tier: 'runtime-prefix' }
 
   // 3. Runtime domain check: parse the URL to extract a verified hostname.
   //    URL parsing fails on non-URLs -> block (fail-safe).

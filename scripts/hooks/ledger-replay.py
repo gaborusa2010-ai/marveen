@@ -112,7 +112,7 @@ def _snippet(text, limit):
     return s
 
 
-def _build_output(transcript, open_q, owner):
+def _build_output(transcript, open_q, owner, att_local_path=None):
     """Assemble the final SessionStart hook payload dict from the (already
     snippet-trimmed, oldest-first) transcript lines + optional open question.
 
@@ -153,7 +153,23 @@ def _build_output(transcript, open_q, owner):
             f'MOST a telegram reply tool (mcp__plugin_telegram_telegram__reply) '
             f'meghívásával a megfelelő chat_id-re, a lenti kontextusból folytatva.'
         )
-        if att_file_id:
+        # A LOCAL file beats a download instruction. PHOTOLEDGER901's second
+        # half: capture already saved photos to disk, so for those the replay
+        # can hand over the PATH and the fresh session just Reads it -- no Bot
+        # API round-trip, and it still works if the token has rotated or the
+        # file_id has aged out. Looked up by message_id through the additive
+        # attachment_path_for(), NOT by widening this tuple (HOOKARITAS821).
+        # `att_local_path` arrives ALREADY looked up, so this function stays a
+        # pure function of its inputs -- the byte-fit loop below rebuilds it
+        # repeatedly, and a DB query in here would run on every iteration.
+        local_path = att_local_path
+        if local_path:
+            parts.append(
+                f'A nyitott kérdés egy {att_kind or "csatolmány"}, és a fájl MEGVAN '
+                f'a gépen: "{local_path}". Olvasd be (Read tool) MIELŐTT válaszolsz. '
+                f'NE töltsd le újra, és NE kérd a küldőtől hogy ismételje meg.'
+            )
+        elif att_file_id:
             parts.append(
                 f'A nyitott kérdés egy {att_kind or "voice"} csatolmány, aminek '
                 f'a TARTALMA nem veszett el: töltsd le és írasd át MIELŐTT '
@@ -187,17 +203,17 @@ def _payload_bytes(out):
     return len(json.dumps(out, ensure_ascii=False).encode("utf-8"))
 
 
-def _fit_output(transcript, open_q, owner, byte_budget):
+def _fit_output(transcript, open_q, owner, byte_budget, att_local_path=None):
     """Build the payload and keep it under `byte_budget` by dropping the OLDEST
     turn and re-measuring, iteratively (build -> measure -> trim -> repeat). The
     freshest END survives, the oldest turns fall off first. At least one turn is
     kept when any exist (its snippet is already bounded by _max_snippet, so a
     lone freshest turn still fits)."""
     transcript = list(transcript)
-    out = _build_output(transcript, open_q, owner)
+    out = _build_output(transcript, open_q, owner, att_local_path)
     while len(transcript) > 1 and _payload_bytes(out) > byte_budget:
         transcript.pop(0)
-        out = _build_output(transcript, open_q, owner)
+        out = _build_output(transcript, open_q, owner, att_local_path)
     return out
 
 
@@ -243,7 +259,19 @@ def main():
     # Authoritative guard: keep the FINAL payload's real UTF-8 byte size under the
     # harness's injection cap, dropping oldest turns and re-measuring until it
     # fits (freshest END survives).
-    out = _fit_output(transcript, open_q, owner, _byte_budget())
+    # One lookup, before the fit loop: if the open question carried a photo, the
+    # file is already on disk (capture saves it) and the fresh session can Read
+    # it instead of downloading. Looked up by message_id -- deliberately NOT by
+    # widening open_question()'s tuple, which ledger_lib's HOOKARITAS821 note
+    # warns would break every caller silently, in the fail-open direction.
+    att_local_path = None
+    if open_q:
+        try:
+            att_local_path = ledger_lib.attachment_path_for(agent_id, open_q[1])
+        except Exception:
+            att_local_path = None  # an attachment must never kill the replay
+
+    out = _fit_output(transcript, open_q, owner, _byte_budget(), att_local_path)
 
     print(json.dumps(out, ensure_ascii=False))
     sys.exit(0)

@@ -124,7 +124,14 @@ describe('backfillEmbeddings', () => {
     const count = await backfillEmbeddings()
     expect(typeof count).toBe('number')
     expect(count).toBeGreaterThanOrEqual(0)
-  })
+    // FLAKY901 (2026-09-01): green on its own -- measured 3/3 in isolation, twice
+    // -- and red twice the same day inside the FULL suite. What it waits for is a
+    // connection attempt to an Ollama that is not there, and under parallel load
+    // that refusal plus scheduling occasionally passed the default 5s. The
+    // assertions are unchanged; only the clock is honest about what the test
+    // actually does. A suite that goes red at random teaches everyone to ignore
+    // red, which is a worse defect than the one it keeps not finding.
+  }, 20_000)
 
   it('processes rows without embeddings and updates them when Ollama responds', async () => {
     const BACKFILL_AGENT = 'backfill-test-agent'

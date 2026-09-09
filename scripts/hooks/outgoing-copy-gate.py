@@ -565,6 +565,21 @@ def _hit_context(prose: str, pos: int, length: int) -> str:
 # A maszk ezert kivagja a legalabb ket tagu, csupa kisbetus, kotojellel osszekotott
 # alakokat. Egy valodi magyar mondat nem all ilyen alakbol, es a NAGYBETUS kezdetu
 # osszetetelekre (Chrome-ot) mar van kulon, szigorubb szabaly folotte.
+# 2026-09-02, OTODIK a sorozatban, es ez a tulajdonnev-szabaly VAK FOLTJA: a
+# PONTOT TARTALMAZO azonosito ("gov.uk-ot"). A blokkolt mondat: "A csupasz
+# gov.uk-ot vettem fel". A diagnozis, ami kezenfekvo volt es TEVES: nem a
+# szobonto vagott a kotojelnel. A domain-alternativa (\w+\.[A-Za-z]{2,10})
+# ELOBB illeszkedik, es CSAK a "gov.uk"-ot nyeli le -- a "-ot" ott marad a
+# prozaban arvan, es a szobonto azt mar jogosan olvassa onallo szonak.
+# Merve 2026-09-04: a hiba-uzenet sajat kontextusa mutatta meg, hova lett a
+# domain: '...A csupasz - ot vettem fel az...' -- a "gov.uk" helyen szokoz all.
+# A tulajdonnev-szabaly ([A-ZÁÉÍÓÖŐÚÜŰ]...-[a-z]{1,4}) azert nem fogja meg, mert
+# az kisbetuvel kezdodik ES pontot tartalmaz.
+# Ezert a domain-alternativa maga kapja meg az opcionalis magyar toldalekot,
+# ugyanazzal a NEGY BETUS korlattal, ami a tulajdonnev-szabalyt is szuk tartja.
+# Miert szamit: a magyarban MINDEN idegen szo es rovidites kotojellel kap
+# toldalekot (a KDP-t, a PDF-et, a gov.uk-ot, a HMRC-nal), tehat ez nem egyszeri
+# eset, hanem visszatero alak -- es minden egyes alkalommal egy kikuldes-tiltas.
 # 2026-08-24-i talalat: a szambol es kotojeles magyar toldalekbol allo alak
 # ("8:09-es", "2-es", "17:06-kor") a szobontonal puszta "es"/"kor" tokenne esik
 # szet, amit a szotar hibanak lat -- pedig ott toldalek, nem szo. A javitas nem a szotarbol
@@ -575,7 +590,7 @@ TECHNICAL = re.compile(
       | [\w.+-]+@[\w-]+\.[\w.]+     # email
       | `[^`]*`                     # kod-span
       | \b\w+(?:_\w+)+\b            # snake_case azonosito
-      | \b\w+\.[A-Za-z]{2,10}\b     # fajlnev / domain (video.mp4, marveen.io)
+      | \b\w+\.[A-Za-z]{2,10}(?:-[a-záéíóöőúüű]{1,4})?\b   # fajlnev / domain, opcionalis magyar toldalekkal (video.mp4, marveen.io, gov.uk-ot)
       | \b[\w-]*/[\w/-]+            # utvonal / slug
       | \d+(?:[.:,]\d+)*-[^\W\d_]+   # szam + magyar toldalek (8:09-es, 2-es, 17:06-kor)
       | \b[A-ZÁÉÍÓÖŐÚÜŰ][^\W\d_]*-[a-záéíóöőúüű]{1,4}\b   # tulajdonnev + toldalek (Chrome-ot, Drive-ra)

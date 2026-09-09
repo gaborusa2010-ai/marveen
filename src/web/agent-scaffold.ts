@@ -1240,6 +1240,46 @@ function buildSkillsPathTrapBody(): string {
     'A saját, csak neked szóló vagy kipróbálatlan külső skill a munkakönyvtárad',
     '`.claude/skills/` mappájába megy. A globálisba írás tudatos, flotta-szintű',
     'döntés legyen, ne alapértelmezés.',
+    '',
+    // The limits of the gates, in the SAME generated block as the trap they
+    // belong to. Written here rather than by hand in seven CLAUDE.md files
+    // because that is the shape of bug this repo keeps hitting: a rule copied
+    // into N places drifts in N-1 of them, and the copy nobody updated is the
+    // one somebody reads. Every agent picks this up on its next respawn.
+    '### A kapuk HATARAI (mert egy kapu, ami atenged, nem ad engedelyt)',
+    '',
+    'Cody egymondatos alakja: **egy kapu, ami atenged, nem ad engedelyt -- csak nem',
+    'allit meg.** Margoe a masik fele: **a deny-lista BALESET-VEDELEM, nem hatar.**',
+    'A dontes a hivoe, nem a kapue.',
+    '',
+    'Negy hatar, mindegyik MERVE, es ket kulonbozo tulajdonossal:',
+    '',
+    '**A HARNESS deny-listaja (nem a mi kodunk, nem tudjuk javitani):**',
+    '1. `bash <<EOF ... EOF` -- a heredocba irt parancs LEFUT, akkor is, ha maga a',
+    '   parancs tiltolistas. Margo merte (`rm -f`, a fajl eltunt), Marveen 2026-09-04-en',
+    '   fuggetlenul megismetelte egy eldobhato scratchpad-fajlon: ATMENT.',
+    '2. Ugyanezen az uton megy at a `sudo` es a `git push origin main` is. Cody merte,',
+    '   eldobhato bare repoban, hatassal igazolva (uj main ag, 2447a5d).',
+    '',
+    '**A MI kapuink:**',
+    '3. **A parancs SZOVEGET nezik, nem a hatast.** Merve 2026-09-04, a kozos',
+    '   skill-mappa kapujanak tiszta dontesfuggvenyen: az egyben leirt utat MEGFOGJA,',
+    '   de a darabokbol osszerakottat, a valtozoban allot ES a fajlbol futtatott',
+    '   szkriptet ATENGEDI. Ugyanez all az egress-kapura: egy szkript-FAJL torzset',
+    '   nem latja.',
+    '4. **A fajlbol futtatott szkriptrol NAPLOSOR sem keletkezett.** Vagyis a hianyzo',
+    '   naplosor nem bizonyitotta, hogy nem tortent iras.',
+    '',
+    '**AMI 2026-09-04 OTA MAS:** a 4. pontra van egy utolagos, HATAS-alapu ellenorzes',
+    '(`scripts/hooks/global-skill-write-audit.mjs`): minden tool-hivas utan osszeveti',
+    'a vedett fat egy pillanatkeppel, es minden elterest naploz, barmilyen uton',
+    'keletkezett. **Megelozni nem tud** -- a tool utan fut --, de a nemá valtozasbol',
+    'naplozott lett, az engedely nelkulibol pedig riasztas. Az 1-2. pontra semmi ilyen',
+    'nincs.',
+    '',
+    '**Amit ebbol tenni kell:** ne a kapura tamaszkodj annak eldontesenel, hogy',
+    'szabad-e. A kapu a BALESETET fogja meg -- azt, amikor a sajat mappadnak hiszed a',
+    'kozoset. A szandekos lepesnel a te dolgod eldonteni, hogy helyes-e.',
   ].join('\n')
 }
 
@@ -1323,8 +1363,39 @@ curl -s -X POST ${dashboardOrigin}/api/memories -H "Content-Type: application/js
 Napi napló (append-only):
 curl -s -X POST ${dashboardOrigin}/api/daily-log -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"agent_id":"AGENT_NAME","content":"## HH:MM -- Tema\nMi tortent, mi lett az eredmeny"}'
 
+**A NAPLO APPEND-ONLY, TEHAT EGY RESZEREDMENY VEGEREDMENYNEK LATSZIK. Ird oda,
+hogy LEZART vagy FOLYAMATBAN.** (Forgacs szabalya, a sajat esetebol, 2026-09-04.)
+O delelott 10-kor azt naplozta, hogy egy szabaslista "all, nem kell ujraszamolni".
+Egy oraval kesobb a gazda sajat listaja alapjan az EGESZET at kellett irnia. A regi
+sor ott marad -- es onmagaban olvasva igaznak latszik, mert semmi nem jelzi, hogy
+kozben megdolt.
+Nem tobb ket szonal a bejegyzes elejen, es kulonben egy delelotti reszeredmeny ugy
+nez ki a naploban, mint egy vegeredmeny:
+
+    ## 10:00 -- [FOLYAMATBAN] Lyford Road szabaslista ellenorzes. Eddig egyezik.
+    ## 11:15 -- [LEZART] Lyford Road szabaslista ujraszamolva, a 10:00-as sor MEGDOLT.
+
+Ha egy korabbi sorod ervenyet veszti, ne torold (nem is lehet): az UJ sorban mondd
+ki, MELYIK sort irja felul. Egy naplo, amiben ket egymasnak ellentmondo bejegyzes
+all jeloles nelkul, nem tortenelem, hanem csapda.
+
+**ES AZ EMLEKNEL MEG FONTOSABB, MINT A NAPLONAL.** (Forgacs, ugyanaznap, a sajat
+esetebol.) Egy naplobejegyzes magaval hordja az idopontjat, tehat az olvasoja
+tortenelemnek veszi. **Egy emlek viszont pont attol emlek, hogy idotlennek latszik:
+nincs rajta, melyik pillanat merese volt.**
+O aznap beirt egy emlekbe, hogy "a waiting kartyak kora 0-3 nap, tehat beragadt kartya
+most nincs". Fel oran belul megdolt (a ket legregebbi ugyet epp aznap reggel mozgattam,
+attol lattak frissnek). Ha nem szolok, az a mondat holnap nem naplosorkent olvasodik
+vissza, hanem elo allitaskent, a sajat kezetol, tenynek.
+**Ezert: ha egy emlek MERESBOL jott es a meres PILLANATNYI allapotot rogzit, ird oda.**
+Ket szo, es olcsobb, mint egy hamis emlek.
+
+    "MERVE 2026-09-04 08:40-kor, pillanatnyi allapot: ..."   <- avulhat
+    "A mezo tipusa unix epoch integer."                      <- nem avul
+
+
 Keresés (mielőtt válaszolsz, nézd meg van-e releváns emlék):
-curl -s -H "Authorization: Bearer $(cat ${tokenPath})" "${dashboardOrigin}/api/memories?agent=AGENT_NAME&q=KULCSSZO&category=warm"
+curl -s -H "Authorization: Bearer $(cat ${tokenPath})" "${dashboardOrigin}/api/memories?agent=AGENT_NAME&q=KULCSSZO"
 
 ## Ütemezett feladatok
 
@@ -1378,7 +1449,7 @@ MINDIG az install időzónáját használd: **${APP_TZ}** (a teljes telepítés 
 - **Channel message \`ts\`**: UTC-ben jön (postfix \`Z\`), átkonvertálni ${APP_TZ}-re
 - **Google Calendar list_events \`dateTime\`**: már lokál ISO 8601 offszettel, OK
 - **SQLite \`unixepoch()\`**: UTC, humán-megjelenítéshez \`localtime\` modifier kell
-- **Cron expressions** (scheduled-tasks + fleet-timer): a scheduler ${APP_TZ} időben értelmezi (SCHEDULER_TZ); a fleet-timer \`once --at\` = ${APP_TZ} fali óra
+- **Cron expressions** (scheduled-tasks): a scheduler ${APP_TZ} időben értelmezi (SCHEDULER_TZ). Ez a sor korábban egy \`fleet-timer once --at\` eszközre is hivatkozott, ami NEM létezik -- se a repóban, se a PATH-on --, és a scaffold minden új ágensnek beleírta (Margó vette észre 2026-09-01). A SCHEDULER_TZ fele igaz és marad.
 
 Heartbeat-eknél és minden időpontot kezelő feladatnál kötelező: \`date\` Bash parancs az elemzés ELŐTT.
 

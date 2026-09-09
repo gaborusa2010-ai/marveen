@@ -9,15 +9,61 @@ vector rectangles, real selectable text, one A4 landscape page per sheet.
 Only the PDF operators needed for this job are implemented. It is not a general
 PDF library and does not try to be.
 """
+import os
 import zlib
 
 A4_LANDSCAPE = (842.0, 595.0)
 A4_PORTRAIT = (595.0, 842.0)
 
-# Helvetica's built-in encoding is WinAnsi, which has no o-double-acute or
-# u-double-acute. Hungarian text would render as garbage, so fold those two to
-# their single-acute neighbours rather than emit a broken glyph.
+# Text is drawn with a real embedded TrueType font (DejaVu Sans) addressed by
+# glyph id through /Identity-H. That is what makes o-double-acute and
+# u-double-acute come out right.
+#
+# Until 2026-09-02 this used Helvetica, a PDF base-14 font whose WinAnsi
+# encoding lacks those two letters, and folded them to o-umlaut and u-umlaut.
+# The owner spotted it on the first document that went to him. The fold is gone;
+# _FOLD survives only for the fallback path below.
 _FOLD = {"ő": "ö", "Ű": "Ö", "ű": "ü", "Ő": "Ü"}
+
+_FONT_CANDIDATES = {
+    "F1": ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+           "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+           "/mnt/c/Windows/Fonts/arial.ttf"),
+    "F2": ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+           "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+           "/mnt/c/Windows/Fonts/arialbd.ttf"),
+}
+_FONT_CACHE = {}
+
+
+def embedded_font(slot):
+    """The TrueType face for slot F1/F2, or None to fall back to Helvetica.
+
+    A missing font file must not take the whole PDF down: an invoice with
+    folded accents still beats no invoice. Callers check for None.
+    """
+    if slot in _FONT_CACHE:
+        return _FONT_CACHE[slot]
+    face = None
+    try:
+        from ttfsub import TrueTypeFont
+    except ImportError:
+        try:
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from ttfsub import TrueTypeFont
+        except ImportError:
+            TrueTypeFont = None
+    if TrueTypeFont is not None:
+        for path in _FONT_CANDIDATES.get(slot, ()):
+            if os.path.exists(path):
+                try:
+                    face = TrueTypeFont(path)
+                    break
+                except Exception:
+                    continue
+    _FONT_CACHE[slot] = face
+    return face
 
 
 def _enc(text):
@@ -71,6 +117,7 @@ class Page:
         self.h = height
         self.ops = []
         self.images = []      # (name, jpeg_bytes, px_w, px_h, colourspace)
+        self.used = {}        # font slot -> set of characters drawn on this page
 
     def image(self, path, x, y, w, h):
         """Place a JPEG at (x, y) with size w x h, in points.
@@ -109,15 +156,61 @@ class Page:
         else:
             self.ops.append("S")
 
+    def poly(self, pts, fill=None, stroke=None, lw=0.6, close=True):
+        """Filled and/or stroked polygon from [(x, y), ...].
+
+        `rect` only draws axis-aligned boxes, so an isometric face (a slanted
+        parallelogram) could not be filled at all. Added 2026-09-04 for the
+        part drawings, where each part is highlighted on a small 3D view of
+        the carcass. Additive: nothing that used this module before changes.
+        """
+        if not pts:
+            return
+        if fill:
+            self.ops.append("%.3f %.3f %.3f rg" % fill)
+        if stroke:
+            self.ops.append("%.3f %.3f %.3f RG" % stroke)
+            self.ops.append("%.2f w" % lw)
+        self.ops.append("%.2f %.2f m" % pts[0])
+        for x, y in pts[1:]:
+            self.ops.append("%.2f %.2f l" % (x, y))
+        if close:
+            self.ops.append("h")
+        if fill and stroke:
+            self.ops.append("B")
+        elif fill:
+            self.ops.append("f")
+        else:
+            self.ops.append("S")
+
+    def text_width(self, s, size=9, font="F1"):
+        """Width of `s` in points, from the font's real advance widths.
+
+        With an embedded face this is exact. Without one it falls back to the
+        old 0.5-em-per-character guess, which is what the Helvetica path always
+        used and is good enough for diagram labels.
+        """
+        face = embedded_font(font)
+        if face is None:
+            return 0.5 * size * len(str(s))
+        total = sum(face.advance(face.gid(ch)) for ch in str(s))
+        return total * size / 1000.0
+
     def text(self, x, y, s, size=9, colour=(0, 0, 0), align="left", font="F1"):
-        # Helvetica average advance is close enough to 0.5 em for centring
-        # labels inside a box; this is a diagram, not typesetting.
+        s = str(s)
         if align == "center":
-            x -= 0.25 * size * len(str(s))
+            x -= self.text_width(s, size, font) / 2.0
         elif align == "right":
-            x -= 0.5 * size * len(str(s))
-        self.ops.append("BT /%s %.1f Tf %.3f %.3f %.3f rg %.2f %.2f Td (%s) Tj ET"
-                        % (font, size, colour[0], colour[1], colour[2], x, y, _enc(s)))
+            x -= self.text_width(s, size, font)
+        face = embedded_font(font)
+        if face is None:
+            body = "(%s) Tj" % _enc(s)
+        else:
+            gids = [face.gid(ch) for ch in s]
+            self.used.setdefault(font, set()).update(s)
+            body = "<%s> Tj" % "".join("%04X" % g for g in gids)
+        self.ops.append("BT /%s %.1f Tf %.3f %.3f %.3f rg %.2f %.2f Td %s ET"
+                        % (font, size, colour[0], colour[1], colour[2], x, y, body))
 
     def line(self, x1, y1, x2, y2, colour=(0, 0, 0), lw=0.5, dash=None):
         self.ops.append("%.3f %.3f %.3f RG %.2f w" % (colour + (lw,)))
@@ -129,6 +222,78 @@ class Page:
         return "\n".join(self.ops).encode("latin-1", "replace")
 
 
+def _tounicode_cmap(pairs):
+    """A /ToUnicode CMap so the text stays selectable and searchable.
+
+    Identity-H puts glyph ids in the content stream, which no reader can turn
+    back into letters on its own. Without this the PDF looks right and copies
+    out as gibberish -- and our own pdftext.py could not read it back either.
+    """
+    lines = ["/CIDInit /ProcSet findresource begin",
+             "12 dict begin begincmap",
+             "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) "
+             "/Supplement 0 >> def",
+             "/CMapName /Adobe-Identity-UCS def",
+             "/CMapType 2 def",
+             "1 begincodespacerange <0000> <FFFF> endcodespacerange"]
+    pairs = sorted(pairs)
+    for i in range(0, len(pairs), 100):
+        chunk = pairs[i:i + 100]
+        lines.append("%d beginbfchar" % len(chunk))
+        for gid, ch in chunk:
+            utf16 = ch.encode("utf-16-be")
+            lines.append("<%04X> <%s>" % (gid, utf16.hex().upper()))
+        lines.append("endbfchar")
+    lines += ["endcmap", "CMapName currentdict /CMap defineresource pop",
+              "end", "end"]
+    return "\n".join(lines).encode("latin-1")
+
+
+def _emit_font(add, slot, chars, compress):
+    """Build the object graph for one embedded font. Returns the /Type0 body.
+
+    Four objects hang off it: the CIDFont, the descriptor, the subset font
+    program and the ToUnicode map.
+    """
+    face = embedded_font(slot)
+    name = "AAAAAA+" + os.path.basename(face.path).rsplit(".", 1)[0]
+    gid_of = {ch: face.gid(ch) for ch in chars}
+    gids = sorted(set(gid_of.values()) | {0})
+
+    program = face.subset(gids)
+    raw_len = len(program)
+    if compress:
+        program, extra = zlib.compress(program), b"/Filter /FlateDecode "
+    else:
+        extra = b""
+    file_id = add(b"<< " + extra + b"/Length " + str(len(program)).encode() +
+                  b" /Length1 " + str(raw_len).encode() + b" >>\nstream\n" +
+                  program + b"\nendstream")
+
+    desc_id = add(("<< /Type /FontDescriptor /FontName /%s /Flags 32 "
+                   "/FontBBox [%d %d %d %d] /ItalicAngle 0 /Ascent %d "
+                   "/Descent %d /CapHeight %d /StemV 80 /FontFile2 %d 0 R >>"
+                   % (name, face.scaled(face.bbox[0]), face.scaled(face.bbox[1]),
+                      face.scaled(face.bbox[2]), face.scaled(face.bbox[3]),
+                      face.scaled(face.ascent), face.scaled(face.descent),
+                      face.scaled(face.ascent), file_id)).encode())
+
+    # /W lists a width for every glyph used; /DW covers anything else.
+    widths = " ".join("%d [%d]" % (g, face.advance(g)) for g in gids if g)
+    cid_id = add(("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /%s "
+                  "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
+                  "/Supplement 0 >> /FontDescriptor %d 0 R /DW 1000 /W [%s] "
+                  "/CIDToGIDMap /Identity >>" % (name, desc_id, widths)).encode())
+
+    cmap = _tounicode_cmap([(gid_of[ch], ch) for ch in sorted(chars)])
+    tou_id = add(b"<< /Length " + str(len(cmap)).encode() + b" >>\nstream\n" +
+                 cmap + b"\nendstream")
+
+    return ("<< /Type /Font /Subtype /Type0 /BaseFont /%s /Encoding /Identity-H "
+            "/DescendantFonts [%d 0 R] /ToUnicode %d 0 R >>"
+            % (name, cid_id, tou_id)).encode()
+
+
 def write_pdf(path, pages, title="", compress=True):
     objs = []          # 1-indexed object bodies as bytes
 
@@ -136,10 +301,10 @@ def write_pdf(path, pages, title="", compress=True):
         objs.append(body)
         return len(objs)
 
-    font_regular = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
-                       b"/Encoding /WinAnsiEncoding >>")
-    font_bold = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold "
-                    b"/Encoding /WinAnsiEncoding >>")
+    # Reserved now, filled in after the pages are walked: the font subset can
+    # only be built once every glyph the document uses is known.
+    font_regular = add(b"")
+    font_bold = add(b"")
 
     pages_obj_id = add(b"")            # placeholder, filled in below
     page_ids = []
@@ -171,11 +336,31 @@ def write_pdf(path, pages, title="", compress=True):
                    ).encode())
         page_ids.append(pid)
 
+    for slot, top_id, fallback in (
+            ("F1", font_regular, b"<< /Type /Font /Subtype /Type1 "
+                                 b"/BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
+            ("F2", font_bold, b"<< /Type /Font /Subtype /Type1 "
+                              b"/BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")):
+        chars = set()
+        for pg in pages:
+            chars |= getattr(pg, "used", {}).get(slot, set())
+        if embedded_font(slot) is None or not chars:
+            objs[top_id - 1] = fallback
+        else:
+            objs[top_id - 1] = _emit_font(add, slot, chars, compress)
+
     kids = " ".join("%d 0 R" % i for i in page_ids)
     objs[pages_obj_id - 1] = ("<< /Type /Pages /Kids [%s] /Count %d >>"
                               % (kids, len(page_ids))).encode()
     catalog_id = add(("<< /Type /Catalog /Pages %d 0 R >>" % pages_obj_id).encode())
-    info_id = add(("<< /Title (%s) /Producer (marveen-muhely) >>" % _enc(title)).encode())
+    # A title with accents cannot ride in a plain PDF literal string; the
+    # UTF-16BE form with a byte-order mark is the encoding readers agree on.
+    if title and any(ord(c) > 126 for c in str(title)):
+        title_obj = "<FEFF%s>" % str(title).encode("utf-16-be").hex().upper()
+    else:
+        title_obj = "(%s)" % _enc(title)
+    info_id = add(("<< /Title %s /Producer (marveen-muhely) >>"
+                   % title_obj).encode())
 
     out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = [0]

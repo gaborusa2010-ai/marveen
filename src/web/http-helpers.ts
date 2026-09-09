@@ -53,6 +53,32 @@ export function readBody(
   })
 }
 
+// A filter param the route does not read is not a harmless extra: it changes
+// what the answer MEANS. `?agnet=cody` returns the whole fleet's memories, and
+// `?categoy=hot` returns every tier -- with HTTP 200, in the shape the caller
+// expects. That is the expensive direction to be wrong in. An empty list at
+// least invites suspicion; a full one never does, and a caller acting in good
+// faith reads other agents' data as its own filtered result.
+//
+// Measured on 2026-09-01 by Cody across /api/memories and /api/daily-log: a
+// single typo in a filter name silently widened every one of those queries.
+// /api/messages already failed loudly on the same mistake; the difference was
+// that its guard lived inline in one file with no shared helper to reuse.
+//
+// Returns true when it has written the 400 -- the caller returns true too.
+export function rejectUnknownQueryParams(
+  res: http.ServerResponse,
+  url: URL,
+  known: readonly string[],
+  hint?: string,
+): boolean {
+  const knownSet = new Set(known)
+  const unknown = [...url.searchParams.keys()].filter((k) => !knownSet.has(k))
+  if (!unknown.length) return false
+  json(res, { error: 'unknown query parameter', unknown, known: [...knownSet], ...(hint ? { hint } : {}) }, 400)
+  return true
+}
+
 export function json(res: http.ServerResponse, data: unknown, status = 200): void {
   // Cache-Control: private, no-store prevents CDN / proxy caching of API
   // responses that may contain user-specific data or session state. Without

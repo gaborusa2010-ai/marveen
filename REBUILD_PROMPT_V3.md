@@ -788,7 +788,7 @@ Napi naplo (append-only):
 curl -s -X POST http://localhost:3420/api/daily-log -H "Content-Type: application/json" -d '{"agent_id":"marveen","content":"## HH:MM -- Tema\nMi tortent, mi lett az eredmeny"}'
 
 Kereses:
-curl -s "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZO&tier=warm"
+curl -s "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZO"
 
 ## Kanban tabla
 

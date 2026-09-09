@@ -8,7 +8,7 @@ import {
 import { resolveFromPath } from '../../platform.js'
 import { APP_TZ } from '../../config.js'
 import { logger } from '../../logger.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
 const TMUX = resolveFromPath('tmux')
@@ -165,6 +165,7 @@ export async function tryHandleBackgroundTasks(ctx: RouteContext): Promise<boole
   }
 
   if (path === '/api/background-tasks' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['agent', 'all'])) return true
     const agentId = url.searchParams.get('agent') || undefined
     const all = url.searchParams.get('all') === 'true'
     const tasks = getBackgroundTasks(agentId, all)

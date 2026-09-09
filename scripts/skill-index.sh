@@ -11,8 +11,38 @@
 
 GLOBAL_SKILLS_DIR="$HOME/.claude/skills"
 
+# PWDDRIFT901 (Cody, 2026-09-01, merve). A hivo oldalon a dokumentalt alak `"$PWD"`, ami
+# felteszi, hogy az agens cwd-je az agens GYOKERE. Ez a session indulasakor igaz, kozben NEM
+# marad az: egy agens belep a sajat projekt-mappajaba (peldaul teszteket futtatni), es ha a
+# PreCompact eppen akkor sul el, akkor a projekt-mappa lesz az AGENT_DIR. A `mkdir -p` alabb
+# NEMAN letrehozza ott a .claude/skills szerkezetet, a VALODI index pedig nem frissul --
+# vagyis pontosan az az allapot all elo, amit ez a javitas megszuntetni akart.
+# Ugyanaz a hibaosztaly, mint a LEDGERCWD828 a ledgerben: a cwd valtozik a sessionon belul,
+# ezert identitast NEM vezetunk le belole. Egy helyen normalizalunk, hat szoveg helyett.
+normalize_agent_dir() {
+  local d
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || { printf '%s' "$1"; return; }
+  local install
+  install="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  case "$d/" in
+    "$install"/agents/*)
+      # <install>/agents/<id>[/barmi...] -> <install>/agents/<id>
+      local rest="${d#"$install"/agents/}"
+      printf '%s' "$install/agents/${rest%%/*}"
+      ;;
+    "$install"/*|"$install"/)
+      # a telepites gyokere alatt, de nem agens-mappaban -> a fo agens gyokere
+      printf '%s' "$install"
+      ;;
+    *) printf '%s' "$d" ;;
+  esac
+}
+
 if [ $# -ge 1 ]; then
-  AGENT_DIR="$1"
+  AGENT_DIR="$(normalize_agent_dir "$1")"
+  if [ "$AGENT_DIR" != "$1" ]; then
+    echo "skill-index: az utat normalizaltam: $1 -> $AGENT_DIR" >&2
+  fi
   AGENT_SKILLS_DIR="$AGENT_DIR/.claude/skills"
   OUTPUT="$AGENT_SKILLS_DIR/.skill-index.md"
   MERGED=1
@@ -28,6 +58,28 @@ if [ ! -d "$GLOBAL_SKILLS_DIR" ]; then
   echo "No global skills directory found at $GLOBAL_SKILLS_DIR"
   exit 0
 fi
+
+# IDEMPOTENCIA (2026-09-04, merve). A regeneralas eddig MINDIG felulirta a
+# celfajlt, mert az utolso sor egy `Generálva: <ido>` bélyeget hordozott -- tehát
+# minden futas megvaltoztatta a fajl tartalmat, akkor is, ha egyetlen skill sem
+# valtozott.
+#
+# Amig ez csak egy felesleges iras volt, nem szamitott. 2026-09-04 ota szamit: a
+# globalis index a VEDETT skill-mappaban all, es a PostToolUse audit minden
+# valtozasarol `TREE_CHANGE_UNGRANTED` riasztast kuld. A memoria-heartbeat SKILL.md
+# pedig MINDEN korben eloirja a globalis regent -- vagyis a sajat utemezett
+# feladatom orankent gyartott egy hamis biztonsagi riasztast. Az audit sajat
+# fejlec-kommentje pont errol ir: egy riasztas, ami farkast kialt, elobb-utobb
+# elnemul, es akkor a VALODI mellett is elmegyunk.
+#
+# Ezert a fajl ideiglenesbe epul, es csak akkor kerul a helyere, ha a TARTALMA
+# tenyleg mas. Az idobelyeg megmarad, de mostantol mast jelent, es tobbet: nem azt,
+# mikor futott a szkript, hanem azt, mikor valtozott utoljara a skill-keszlet.
+# Az osszevetes ezert hagyja figyelmen kivul magat a belyeget.
+SKILL_INDEX_TMP="$(mktemp)"
+trap 'rm -f "$SKILL_INDEX_TMP"' EXIT
+OUTPUT_FINAL="$OUTPUT"
+OUTPUT="$SKILL_INDEX_TMP"
 
 echo "# Skill Index (Level 0)" > "$OUTPUT"
 echo "" >> "$OUTPUT"
@@ -65,7 +117,15 @@ index_skills_dir() {
     fi
 
     local desc
-    desc=$(grep -m1 "^description:" "$skill_md" 2>/dev/null | sed 's/^description: *//' | tr -d '"' | tr -d "'" | cut -c1-120)
+    # UTF8CUT901 (2026-09-01): `cut -c` vag BAJTOT, nem karaktert -- egy 120. bajtnal
+    # kettevagott ekezetes betu ERVENYTELEN UTF-8-at hagy a fajlban. A kovetkezmenye nem
+    # kozmetikai: a `file` mar "Non-ISO extended-ASCII"-nak latja, es a rendszer grep-je
+    # (ugrep) BINARISKENT atugorja -- nulla talalat, exit 1, SEMMI kiiras. Ketszer hittem
+    # aznap, hogy egy frissen letrehozott skill nincs benne az indexben, holott benne volt.
+    # Egy indexfajl, amire nem lehet keresni, pontosan annyit er, mint egy ures index.
+    # python3 mindig van (a projekt sajat szabalya), es karakterre vag.
+    desc=$(grep -m1 "^description:" "$skill_md" 2>/dev/null | sed 's/^description: *//' | tr -d '"' | tr -d "'" \
+             | python3 -c 'import sys; sys.stdout.write(sys.stdin.read().rstrip("\n")[:120])')
     if [ -z "$desc" ]; then
       desc="(nincs leírás)"
     fi
@@ -88,4 +148,13 @@ fi
 echo "" >> "$OUTPUT"
 echo "_${SKILL_COUNT} skill indexelve. Generálva: $(date '+%Y-%m-%d %H:%M')_" >> "$OUTPUT"
 
-echo "Skill index generated: $OUTPUT ($SKILL_COUNT skills)"
+# A belyeg nelkuli alak a dontes alapja. `Generálva:` utan mindent levagunk, tehat
+# a darabszam (`_29 skill indexelve.`) SZAMIT -- az a keszlet resze --, az ido nem.
+strip_stamp() { sed 's/\(Generálva:\).*/\1/' "$1"; }
+
+if [ -f "$OUTPUT_FINAL" ] && strip_stamp "$OUTPUT" | cmp -s - <(strip_stamp "$OUTPUT_FINAL"); then
+  echo "Skill index unchanged: $OUTPUT_FINAL ($SKILL_COUNT skills)"
+else
+  cat "$OUTPUT" > "$OUTPUT_FINAL"
+  echo "Skill index generated: $OUTPUT_FINAL ($SKILL_COUNT skills)"
+fi

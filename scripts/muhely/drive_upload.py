@@ -15,10 +15,10 @@ import json
 import mimetypes
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import google_auth as g  # noqa: E402
@@ -39,37 +39,129 @@ def find_or_create_folder(name, token):
     return made["id"]
 
 
-def upload(path, folder_id, token):
-    """Multipart upload. urlencode/json helpers cannot do this: the body is a
-    MIME envelope with a binary part, so it is built by hand."""
-    name = os.path.basename(path)
-    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
-    meta = {"name": name, "parents": [folder_id]}
-    boundary = f"================{uuid.uuid4().hex}=="
-    with open(path, "rb") as fh:
-        payload = fh.read()
-    body = b"".join([
-        f"--{boundary}\r\n".encode(),
-        b"Content-Type: application/json; charset=UTF-8\r\n\r\n",
-        json.dumps(meta).encode(), b"\r\n",
-        f"--{boundary}\r\n".encode(),
-        f"Content-Type: {ctype}\r\n\r\n".encode(),
-        payload, b"\r\n",
-        f"--{boundary}--\r\n".encode(),
-    ])
+# 32 MB. Drive megkoveteli, hogy a nem-utolso darab 256 kB tobbszorose legyen.
+# Miert nem nagyobb: egy megszakadt darabot ujra kell kuldeni, tehat a darab merete
+# az, amit egy halozati hiba visszavet. Miert nem kisebb: minden darab egy kulon
+# HTTP-kor.
+CHUNK = 32 * 1024 * 1024
+
+
+def _start_resumable(name, ctype, size, folder_id, token):
+    """Megnyit egy feltoltesi sessiont, es visszaadja a session URI-t."""
+    body = json.dumps({"name": name, "parents": [folder_id]}).encode()
     req = urllib.request.Request(
-        f"{UPLOAD}?uploadType=multipart&fields=id,name,size",
+        f"{UPLOAD}?uploadType=resumable&fields=id,name,size",
         data=body, method="POST", headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": f"multipart/related; boundary={boundary}",
-            "Content-Length": str(len(body)),
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Type": ctype,
+            "X-Upload-Content-Length": str(size),
         })
     try:
-        with urllib.request.urlopen(req, timeout=300) as r:
-            return json.loads(r.read())
+        with urllib.request.urlopen(req, timeout=120) as r:
+            loc = r.headers.get("Location")
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"Drive feltoltes hiba {e.code}:\n"
+        raise SystemExit(f"Drive session-nyitas hiba {e.code}:\n"
                          f"{e.read().decode('utf-8', 'replace')[:600]}")
+    if not loc:
+        raise SystemExit("Drive: a session-nyitas nem adott Location fejlecet")
+    return loc
+
+
+def _received(session, total, token):
+    """Megkerdezi a Drive-tol, hany bajtja van MAR meg. Nulla hosszu PUT
+    'bytes */total' tartomannyal -- ez a dokumentalt mod. A 308 azt jelenti,
+    hogy a session el, es a Range fejlec mondja meg az utolso megkapott bajtot.
+    Visszateres: (kovetkezo_kezdet, kesz_valasz_vagy_None)."""
+    req = urllib.request.Request(session, data=b"", method="PUT", headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Length": "0",
+        "Content-Range": f"bytes */{total}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return total, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 308:
+            rng = e.headers.get("Range")
+            return (int(rng.split("-")[1]) + 1 if rng else 0), None
+        raise SystemExit(f"Drive session-lekerdezes hiba {e.code}:\n"
+                         f"{e.read().decode('utf-8', 'replace')[:600]}")
+
+
+def upload(path, folder_id, token, chunk=CHUNK, verbose=True):
+    """Resumable (darabolt) feltoltes.
+
+    MIERT NEM MULTIPART, ahogy 2026-09-08-ig volt: a regi valtozat az EGESZ
+    fajlt beolvasta a memoriaba es egyetlen POST-ban kuldte el, 300 masodperces
+    korlattal. Merve 2026-09-08 20:37: az 1,4 GB-os esti archivumon
+    "URLError: The write operation timed out", es a mentes gepen kivuli masolat
+    nelkul maradt. Az archivum reggel 833 MB volt, este 1,4 GB -- vagyis nem
+    egyszeri kiugras, hanem a novekedes ert utol egy fix korlatot.
+
+    A darabolas harom dolgot old meg egyszerre: nincs teljes fajl a memoriaban,
+    egy darab hatarideje nem az egesz fajle, es egy megszakadt feltoltes ott
+    folytatodik, ahol abbamaradt (a Drive megmondja, mennyit kapott meg)."""
+    name = os.path.basename(path)
+    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    total = os.path.getsize(path)
+    session = _start_resumable(name, ctype, total, folder_id, token)
+
+    start = 0
+    hibak = 0
+    with open(path, "rb") as fh:
+        while start < total:
+            fh.seek(start)
+            data = fh.read(min(chunk, total - start))
+            end = start + len(data) - 1
+            req = urllib.request.Request(session, data=data, method="PUT",
+                                         headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Length": str(len(data)),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=600) as r:
+                    kesz = json.loads(r.read() or b"{}")
+                if kesz:
+                    return kesz
+                start = end + 1
+            except urllib.error.HTTPError as e:
+                if e.code == 308:
+                    rng = e.headers.get("Range")
+                    start = int(rng.split("-")[1]) + 1 if rng else end + 1
+                elif e.code in (500, 502, 503, 504):
+                    hibak += 1
+                    if hibak > 5:
+                        raise SystemExit(f"Drive feltoltes hiba {e.code}, "
+                                         f"{hibak} probalkozas utan feladom")
+                    time.sleep(2 ** hibak)
+                    start, kesz = _received(session, total, token)
+                    if kesz:
+                        return kesz
+                else:
+                    raise SystemExit(f"Drive feltoltes hiba {e.code}:\n"
+                                     f"{e.read().decode('utf-8', 'replace')[:600]}")
+            except urllib.error.URLError:
+                # Idotullepes vagy megszakadt kapcsolat: megkerdezzuk, meddig
+                # jutott, es onnan folytatjuk. EZ az az ag, ami a 2026-09-08-i
+                # bukast megfogja.
+                hibak += 1
+                if hibak > 5:
+                    raise SystemExit("Drive feltoltes: halozati hiba, "
+                                     f"{hibak} probalkozas utan feladom")
+                time.sleep(2 ** hibak)
+                start, kesz = _received(session, total, token)
+                if kesz:
+                    return kesz
+            if verbose:
+                print(f"  ... {start / 1048576:.0f} / {total / 1048576:.0f} MB",
+                      flush=True)
+    # Ha a ciklus ugy ert veget, hogy nem kaptunk kesz valaszt, kerdezzuk meg.
+    _, kesz = _received(session, total, token)
+    if not kesz:
+        raise SystemExit("Drive: a feltoltes vegen sem jott kesz valasz")
+    return kesz
 
 
 def prune(folder_id, keep, token):

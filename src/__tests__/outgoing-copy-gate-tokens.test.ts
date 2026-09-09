@@ -38,6 +38,35 @@ describe('outgoing-copy gate tokenization: prose vs identifier (GATEKOTOJEL817/G
     expect(auditAccent('A neve Video átalakítás, ott találod, hogy már ne kelljen külön keresni.')).toEqual([])
   })
 
+  // 2026-09-02: the same class, one alternative further along, and the obvious
+  // diagnosis was wrong. `gov.uk-ot` does NOT fail because the word splitter cuts
+  // at the hyphen -- it fails because strip_technical's domain alternative
+  // matches `gov.uk` and stops there, leaving a bare `-ot` behind in the prose
+  // for the splitter to read as a standalone word (ot -> öt). The gate's own
+  // error context gave it away: "...A csupasz - ot vettem fel..." -- a space
+  // where the domain had been. The proper-noun rule (Chrome-ot) cannot cover it:
+  // that one requires an initial capital and no dot.
+  //
+  // It matters because in Hungarian EVERY foreign word and abbreviation takes its
+  // suffix with a hyphen (a KDP-t, a PDF-et, a gov.uk-ot, a HMRC-nal), so this is
+  // a recurring shape, and each occurrence is a blocked outgoing message.
+  it('a dotted identifier with a Hungarian suffix passes', () => {
+    // Marveen's real blocked sentence. `kerdes` is a genuine error and must
+    // still be reported -- the point is that `ot` must not be.
+    const probs = auditAccent('A csupasz gov.uk-ot vettem fel, mert a kerdes ott dol el.')
+    expect(probs.length).toBe(1)
+    expect(probs[0]).toContain('kerdes')
+    expect(probs[0]).not.toContain('ot -> öt')
+  })
+
+  it('the loosening does not reach past the hyphen: real "ot" in prose still fails', () => {
+    // The negative control the card asked for by name. If this ever goes green,
+    // the domain rule has started eating prose.
+    const probs = auditAccent('Az ot perc alatt kesz lett.')
+    expect(probs.length).toBe(1)
+    expect(probs[0]).toContain('ot -> öt')
+  })
+
   it('lowercase prose "video" still fails -- the fix must not widen into a whitelist', () => {
     const probs = auditAccent('Szia, a video nagyon jól sikerült, köszönöm, hogy átküldted.')
     expect(probs.length).toBe(1)

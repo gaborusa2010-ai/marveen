@@ -102,6 +102,33 @@ add_if "${REPOLIST}" "${REPO_ROOT}" scripts
 # settings.json bekerult lentebb. A muhely-invoice-log a FOLYAMATOS
 # szamla-sorszamozas nyilvantartasa, tehat HMRC-adat, nem konfig.
 # Egyutt 100 kB. A `store/` egesze 81 MB, annak nagyja log es .bak.
+# A CLAUDE-APPBOL ATHOZOTT PROJEKTEK NYERSANYAGA. A gazda 2026-09-06-i dontese szerint
+# hetente egy projekt jon at, csak hetvegen -- a forrasuk a Claude appban van, ahonnan
+# nekunk NINCS hozzaferesunk, tehat ha ez a masolat elvesz, csak O tudja ujra eloallitani.
+# Az elso: creating-ai-agents (6 fajl, 112 kB), 2026-09-06.
+add_if "${REPOLIST}" "${REPO_ROOT}" store/projekt-athozatal
+# A YOUTUBE-MUNKA NYERSANYAGA ES LELETE (Anorak ejszakai muszakjai).
+# Felvetel oka, merve 2026-09-08 08:1x a backup-coverage.py-vel: harom mappa TELJESEN
+# fedetlen volt -- sem mentesben, sem tiszta git-allapotban egyetlen fajl sem.
+#   store/yt-nyers-sandeep  144 fajl  17 MB   (2026-09-06 22:12)
+#   store/yt-nyers-0723      62 fajl  12 MB   (2026-09-06 21:34)
+#   store/yt-lelet            3 fajl 276 kB   (2026-09-07 23:16)
+# ES A LENYEG: az elso ketto MAR LETEZETT a 2026-09-07 20:00-as mentes idejen, megis
+# kimaradt. Nem idozites-kerdes volt, hanem az, hogy a `store/` blokk NEVSZERINTI
+# engedelylista -- pontosan az a hibaosztaly, amit ez a fajl az `agents/`-nel maga ir le
+# nehany sorral lentebb: "az allowlist minden UJ mappat lathatatlanna tesz
+# alapertelmezesben, es semmi nem jelzi".
+# MIERT ERDEMES MENTENI: a nyersanyag ELVILEG ujraletolthető, de a fetch-budget szerint
+# a darabszam a kotoelem, nem a sebesseg (a learn.kregtool.com 140 oldal utan KIZARTA a
+# flottat, es egy kizart forras nem visszavonhato). A `yt-lelet` ennel is egyszerubb eset:
+# az mar a feldolgozas EREDMENYE, nem a nyersanyag -- 276 kB, es sehol maskepp nem all elo.
+# ES A JAVITAS ALAKJA, mert az elso valtozat MAR KEVES VOLT -- ket perc alatt kiderult:
+# harom mappat nevesitettem, es a kovetkezo lefedettseg-meres AZONNAL ket ujat mutatott
+# (yt-nyers-joshua 66 fajl, yt-nyers-mindennapok 11 fajl, mindketto 2026-09-07 23:1x).
+# A store-ban ma HET `yt-*` mappa all. Ha egyenkent sorolom fel oket, ugyanabba a
+# csapdaba estem volna, amit a fenti bekezdes leir: a nyolcadik mappa megint kimaradna.
+# Ezert MINTA, nem nevsor. Ugyanaz az ervelés, amivel az `agents/` blokk inverz lett.
+find store -maxdepth 1 -type d -name 'yt-*' -print >> "${REPOLIST}" 2>/dev/null || true
 # A GIT-TORTENET MAGA. A gazda dontese 2026-09-06 09:45 ("b"), es ez az elso alkalom,
 # hogy a mentes nem fajlokat vesz be, hanem a TORTENETUKET.
 # A meres, ami a dontest kivaltotta (2026-09-06 09:40): 58 commit letezett KIZAROLAG
@@ -207,7 +234,33 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/briefs
 #                               .claude/channels as a permanent gap, and a checker
 #                               that is always red is a checker nobody reads.
 #   __pycache__, node_modules -- build output
-#   *.bak-*                  -- copies of files that are themselves taken
+#   .venv                    -- egy agens sajat Python-kornyezete. Margo
+#                               agents/margo/.venv-je MERVE 2026-09-08 20:3x:
+#                               826 MB es 15 080 fajl, vagyis az agents/ alol
+#                               vitt 17 378 fajl 87 SZAZALEKA. Kizarhato, mert
+#                               UJRAEPITHETO: a mellette allo requirements.txt
+#                               (32 sor) BENNE MARAD a mentesben, es abbol a
+#                               kornyezet egy paranccsal visszaall. A Drive-on
+#                               8 peldanyt tartunk (drive_upload.py --keep
+#                               alapertelmezese; SENKI nem ad neki mast, ez
+#                               megmerve), tehat kb. 6,6 GB, ami semmivel nem
+#                               tobb tudas. Margo jelezte.
+#   (*.bak-* MAR NEM)         -- MEGSZUNT 2026-09-08 21:2x. Az indoka az volt, hogy egy
+#                               .bak eldobhato masolat egy fajlrol, amit amugy is
+#                               viszunk. A store/ alatt ez all. ITT NEM: az egesz
+#                               agents/ fa GITIGNORE-olt (.gitignore 19. sor, es a
+#                               `git ls-files agents/` NULLA fajlt ad), tehat a hat
+#                               agens CLAUDE.md-jenek es SOUL.md-jenek NINCS tortenete
+#                               sehol -- a .bak lett az EGYETLEN tortenet-hordozo,
+#                               es epp azt zartuk ki. Margo vette eszre, ket kulon
+#                               meresembol, amiket en nem tettem ossze.
+#                               AZ ARA MERVE ugyanakkor, es a KETTo NEM UGYANAZ:
+#                               32 ilyen fajl all az agents/ fan, de csak 27 kerul
+#                               be (382 561 bajt = 0,36 MB) -- a masik ot a
+#                               .claude-config/ alatt van, amit sajat, ervenyes
+#                               indokkal zarunk ki. A tar mar amugy is 1,4 GB.
+#                               Ha a `agents/*/CLAUDE.md` valaha gitbe kerul (kartya
+#                               94883820), ez a kizaras VISSZATEHETO.
 if [[ -d agents ]]; then
   find agents -type f \
     -not -path '*/.claude-config/*' \
@@ -215,7 +268,7 @@ if [[ -d agents ]]; then
     -not -path '*/progress/*' \
     -not -path '*/__pycache__/*' \
     -not -path '*/node_modules/*' \
-    -not -name '*.bak-*' \
+    -not -path '*/.venv/*' \
     -not -name '*.pid' \
     -print >> "${REPOLIST}"
 fi
@@ -225,9 +278,70 @@ fi
 # (~/.claude/settings.json) has a backup line below and this one had none --
 # the same "two settings.json files, one of them forgotten" shape the fleet has
 # already been bitten by once. 13 files, 180 kB, in no backup and in no git.
+#
+# A `*.bak-*` KIZARASA ITT IS MEGSZUNT, 2026-09-08 21:3x, ugyanazzal az ervvel, mint
+# az agents/ blokknal -- es Margo talalta meg ezt a MASODIK peldanyt, miutan az elsot
+# bezartuk. MERVE: a .claude fa 20 fajlbol EGYET tart a gitben (a settings.json-t, egy
+# gitignore-negacio miatt), tehat a benne allo 14 projekt-skillnek NINCS tortenete
+# sehol -- a .bak az egyetlen. AZ ARA: 2 fajl, 10 681 bajt.
+# A gyoker-blokkban (lentebb) a kizaras HELYES MARAD: az altala fedett mappak
+# (scripts 181, src 581, docs 51, templates 15 kovetett fajl) mind gitben vannak,
+# ott a .bak valoban eldobhato masolat.
 if [[ -d .claude ]]; then
-  find .claude -type f -not -name '*.bak-*' -print >> "${REPOLIST}"
+  find .claude -type f -print >> "${REPOLIST}"
 fi
+
+# EVERYTHING ELSE IN THE REPO ROOT, inverted the same way agents/ is above.
+#
+# The block above agents/ already argues this: an allowlist makes every NEW
+# directory invisible by default. That argument was applied one level down and
+# not at the root, so the root stayed a list of names -- and the names that were
+# never on it were the product's own source. Measured 2026-09-06 15:25 with
+# scripts/backup-coverage.py, against the 09:46 archive:
+#   src   -- 38 files in NO copy at all (16 of them brand-new test files that
+#            have never been committed either), 594 files total
+#   docs  -- 3 files in no copy, including docs/marveen-agent-reference.md,
+#            the command reference every agent in the fleet reads
+#   seed-skills -- 3 files in no copy, two of them whole skills written this week
+# Roughly 800 kB of work that existed on exactly one disk. The daily sentinel
+# (mentes-lemaradas-ellenorzes, 08:15) has been printing these same three lines
+# every morning; its own instructions say an unchanged list is not news, so the
+# report was correct and inert at the same time.
+#
+# WHY IT IS A SWEEP AND NOT FOUR MORE add_if LINES: 2026-09-03 the fix for
+# scripts/ was "take the whole tree, not another named subdirectory, because the
+# next new directory would be missed again". Naming src, docs and seed-skills
+# here would repeat exactly the mistake that comment was written about.
+#
+# Exclusions are decisions, so each one carries its reason:
+#   node_modules, dist, dist.bak-*  -- build output and copies of it
+#   backups                          -- the archives themselves
+#   coverage, logs, .venv, venv      -- test output and runtime noise
+#                                       (same set as backup-coverage.py SKIP_REPO)
+#   .git, store, agents, .claude,    -- ALREADY TAKEN ABOVE, whole or selectively.
+#   scripts, templates, CLAUDE.md,      Repeating them here would re-copy ~590 MB.
+#   SOUL.md, .env, scheduled-tasks.json
+# Cost MEASURED the day it was written, by running this very block against the
+# live repo: 768 files, 24.2 MB, on a 575 MB archive -- plus 4.2%. The two big
+# shares are web/ (17.3 MB, mostly the fleet avatars) and src/ (4.8 MB).
+while IFS= read -r rootentry; do
+  case "${rootentry}" in
+    node_modules|dist|backups|coverage|.venv|venv|logs) continue ;;
+    dist.bak-*) continue ;;
+    .git|store|agents|.claude|scripts|templates) continue ;;
+    CLAUDE.md|SOUL.md|.env|scheduled-tasks.json) continue ;;
+  esac
+  if [[ -d "${rootentry}" ]]; then
+    find "${rootentry}" -type f \
+      -not -path '*/__pycache__/*' \
+      -not -path '*/node_modules/*' \
+      -not -name '*.bak-*' \
+      -not -name '*.pid' \
+      -print >> "${REPOLIST}"
+  else
+    printf '%s\n' "${rootentry}" >> "${REPOLIST}"
+  fi
+done < <(find . -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort)
 
 # home/ group (relative to $HOME)
 add_if "${HOMELIST}" "${HOME}" .claude/skills
@@ -287,6 +401,15 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
 fi
 if [[ -d "${HOME}/Library/LaunchAgents" ]]; then
   ( cd "${HOME}" && find Library/LaunchAgents -maxdepth 1 -name "com.${MAIN_AGENT_ID}.*.plist" -print ) >> "${HOMELIST}"
+fi
+
+# The sweep over the repo root can name a path one of the add_if lines above
+# already took. Duplicates are harmless to the copy (it just runs twice) but they
+# would show up twice in the manifest, and the manifest is what backup-coverage.py
+# reads -- a checker should not have to guess whether two identical lines mean two
+# files. First occurrence wins, so the grouped, commented order above is kept.
+if [[ -s "${REPOLIST}" ]]; then
+  awk '!seen[$0]++' "${REPOLIST}" > "${REPOLIST}.dedup" && mv "${REPOLIST}.dedup" "${REPOLIST}"
 fi
 
 if [[ ! -s "${REPOLIST}" && ! -s "${HOMELIST}" ]]; then

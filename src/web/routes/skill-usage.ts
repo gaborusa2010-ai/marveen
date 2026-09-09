@@ -1,5 +1,5 @@
 import { logSkillUsage, getSkillUsageRows, getSkillUsageStats } from '../../db.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
 export async function tryHandleSkillUsage(ctx: RouteContext): Promise<boolean> {
@@ -29,6 +29,7 @@ export async function tryHandleSkillUsage(ctx: RouteContext): Promise<boolean> {
 
   // GET /api/skill-usage/stats -- aggregated counts per skill (for dream-engine health)
   if (path === '/api/skill-usage/stats' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['since'])) return true
     const since = url.searchParams.get('since') ? parseInt(url.searchParams.get('since')!) : undefined
     json(res, getSkillUsageStats(since))
     return true
@@ -36,6 +37,8 @@ export async function tryHandleSkillUsage(ctx: RouteContext): Promise<boolean> {
 
   // GET /api/skill-usage -- recent usage rows (with optional filters)
   if (path === '/api/skill-usage' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['since', 'agent_id', 'skill_name', 'limit'],
+      'the agent filter on this route is "agent_id"')) return true
     const since = url.searchParams.get('since') ? parseInt(url.searchParams.get('since')!) : undefined
     const agentId = url.searchParams.get('agent_id') ?? undefined
     const skillName = url.searchParams.get('skill_name') ?? undefined

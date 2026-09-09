@@ -68,9 +68,12 @@ def check(text):
 
 
 def main(argv):
-    if len(argv) < 2:
+    # `--help` used to fall through to open(argv[1]) and die with a traceback
+    # naming "--help" as a missing file. The usage text was always here; only
+    # the flag that everyone tries first was not wired to it.
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
-        return 2
+        return 2 if len(argv) < 2 else 0
     text = sys.stdin.read() if argv[1] == "-" else open(argv[1], encoding="utf-8").read()
     problems = check(text)
     if not problems:

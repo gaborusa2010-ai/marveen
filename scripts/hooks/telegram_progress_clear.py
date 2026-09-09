@@ -28,6 +28,8 @@ decision JSON when blocking. Token/state dir resolution mirrors the plugin
 """
 import sys, os, json, glob, urllib.request
 
+MAX_FALLBACK_ATTEMPTS = 5
+
 INSTRUCTION = (
     "KÖTELEZŐ: erre a Telegram-üzenetre még NEM küldtél választ a Telegram "
     "`reply` tool-lal (chat_id=%s). A CLI/transzkript szöveget a felhasználó a "
@@ -64,16 +66,33 @@ def token(sd):
     return None
 
 
+class TelegramApiError(Exception):
+    """The Bot API answered, and the answer was a refusal."""
+
+
 def api(tok, method, payload):
     # Base is overridable (TELEGRAM_API_BASE) so tests can point it at a local
     # stub; defaults to the real Bot API, so production is unchanged.
+    #
+    # FALLBACKVAK901: urlopen only raises on an HTTP-level error, and Telegram
+    # refuses with HTTP 200 + {"ok":false} (chat not found, bot blocked, message
+    # too long, chat not allowlisted). Returning that body as if it were a
+    # success is the python spelling of the `curl exit 0` trap this project's
+    # own CLAUDE.md names -- and here it silently ate the owner's final answer.
+    # A refusal must raise, so the one caller that can retry gets to know.
     base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
     url = f"{base}/bot{tok}/{method}"
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=8) as r:
-        return json.loads(r.read().decode())
+        body = json.loads(r.read().decode())
+    if not isinstance(body, dict) or not body.get("ok"):
+        desc = ""
+        if isinstance(body, dict):
+            desc = str(body.get("description") or body)
+        raise TelegramApiError(f"{method} rejected: {desc}"[:300])
+    return body
 
 
 def last_assistant_text(transcript_path):
@@ -164,25 +183,66 @@ def main():
     # fallback: deliver the agent's final answer to the chat, then clear.
     answer = last_assistant_text(transcript)
     tok = token(sd)
+    sent = failed = 0
     if tok:
         for p in pend:
             cid, mid = p.get("chat_id"), p.get("message_id")
+            delivered_here = True
             if answer:
                 try:
                     api(tok, "sendMessage", {"chat_id": cid, "text": answer[:4000]})
+                    sent += 1
                 except Exception as e:
-                    log(sd, f"[enforce] fallback send failed: {e}")
+                    delivered_here = False
+                    failed += 1
+                    log(sd, f"[enforce] fallback send FAILED chat={cid}: {e}")
+            # The placeholder is only noise once the real answer landed. If the
+            # send failed, leave it up: it is the only thing the user can see.
+            # Per chat, not per batch -- with two chats the first success must
+            # not strip the second chat's placeholder.
+            if delivered_here:
+                try:
+                    api(tok, "deleteMessage", {"chat_id": cid, "message_id": mid})
+                except Exception as e:
+                    log(sd, f"[stop] delete failed: {e}")
+    elif answer:
+        failed = len(pend)
+        log(sd, "[enforce] fallback send FAILED: no bot token")
+
+    # FALLBACKVAK901: the state files used to be removed unconditionally, so a
+    # refused send destroyed the only record that anything was owed -- the
+    # answer was gone for good and the log still said delivered. Keep the state
+    # when delivery failed so the watchdog's orphan sweep retries it, but keep
+    # it BOUNDED: a permanently refusing chat (bot blocked) must not wedge the
+    # session forever. The guard file is kept alongside so the retry goes
+    # straight back to this branch instead of nudging the agent again.
+    attempts_path = os.path.join(pdir, f"fallback-attempts-{sid}")
+    if failed:
+        try:
+            attempts = int(open(attempts_path).read().strip())
+        except Exception:
+            attempts = 0
+        attempts += 1
+        if attempts < MAX_FALLBACK_ATTEMPTS:
             try:
-                api(tok, "deleteMessage", {"chat_id": cid, "message_id": mid})
-            except Exception as e:
-                log(sd, f"[stop] delete failed: {e}")
-    for f in (path, guard):
+                with open(attempts_path, "w") as f:
+                    f.write(str(attempts))
+            except Exception:
+                pass
+            log(sd, f"[enforce] fallback-delivered={sent} FAILED={failed} "
+                    f"state KEPT for retry (attempt {attempts}/"
+                    f"{MAX_FALLBACK_ATTEMPTS}) sid={sid}")
+            return
+        log(sd, f"[enforce] fallback-delivered={sent} FAILED={failed} "
+                f"GIVING UP after {attempts} attempts -- THE ANSWER IS LOST "
+                f"sid={sid}")
+    for f in (path, guard, attempts_path):
         try:
             os.remove(f)
         except Exception:
             pass
-    log(sd, f"[enforce] fallback-delivered={bool(answer)} cleared {len(pend)} "
-            f"placeholder(s) sid={sid}")
+    log(sd, f"[enforce] fallback-delivered={sent} failed={failed} "
+            f"cleared {len(pend)} placeholder(s) sid={sid}")
 
 
 if __name__ == "__main__":

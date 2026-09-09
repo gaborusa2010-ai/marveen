@@ -6,7 +6,7 @@ import {
 } from '../../db.js'
 import { MAIN_AGENT_ID, ALLOWED_CHAT_ID, OLLAMA_URL, APP_TZ } from '../../config.js'
 import { logger } from '../../logger.js'
-import { readBody, json, jsonMaybeGzip } from '../http-helpers.js'
+import { readBody, json, jsonMaybeGzip, rejectUnknownQueryParams } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
 // Canonical memory categories. Kept in sync with the DB CHECK constraint in
@@ -62,6 +62,11 @@ export async function tryHandleMemories(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/memories' && method === 'GET') {
+    // Every agent's CLAUDE.md tells it to search its memories before answering,
+    // so this is the most-called filter in the fleet -- and a typo here used to
+    // widen the query instead of failing it. See rejectUnknownQueryParams.
+    if (rejectUnknownQueryParams(res, url, ['q', 'agent', 'agent_id', 'tier', 'category', 'limit', 'mode'],
+      'the agent filter is "agent" ("agent_id" is a deprecated alias); the tier filter is "tier" or "category"')) return true
     const q = url.searchParams.get('q')?.trim() || ''
     const agentIdAlias = url.searchParams.get('agent_id')
     if (agentIdAlias && !url.searchParams.get('agent')) {
@@ -239,6 +244,18 @@ Respond ONLY with JSON, nothing else:
     const id = parseInt(memUpdateMatch[1], 10)
     const body = await readBody(req)
     const { content, category, tier, agent_id, keywords } = JSON.parse(body.toString()) as { content: string; category?: string; tier?: string; agent_id?: string; keywords?: string }
+    // PUT500901 (2026-09-01, hit while retiring a stale hot memory): `content` was
+    // typed as required and never checked, so a PARTIAL update -- the natural
+    // `{"category":"cold"}` when only the tier changes -- passed undefined down to
+    // a NOT NULL column and came back as an opaque 500. The caller cannot tell a
+    // server fault from its own bad request, which is the same shape of failure
+    // this whole day was spent removing: a message that says nothing useful.
+    // Say what is missing. (A true partial update is a separate, deliberate
+    // change; refusing clearly is the honest half of it.)
+    if (typeof content !== 'string' || !content.trim()) {
+      json(res, { error: 'content is required (a partial update without content is not supported)' }, 400)
+      return true
+    }
     if (updateMemory(id, content, tier || category, agent_id, keywords)) { json(res, { ok: true }); return true }
     json(res, { error: 'Memory not found' }, 404)
     return true

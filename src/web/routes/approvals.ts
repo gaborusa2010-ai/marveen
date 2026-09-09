@@ -8,7 +8,7 @@ import {
   type Approval,
 } from '../../db.js'
 import { logger } from '../../logger.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import { resolveOwnerChatId } from '../../owner-chat.js'
 import { sendTelegramMessage } from '../telegram.js'
 import type { RouteContext } from './types.js'
@@ -76,16 +76,37 @@ export function buildOwnerApprovalText(approval: Approval): string {
 // main-requester-only. The marker names the reason so the reader knows this
 // is a degraded delivery, not the normal path.
 function fallbackInBand(approval: Approval, reason: string): void {
-  if (approval.agent_id !== MAIN_AGENT_ID) return
+  // OWNERUNREACHED901 (Margo, 2026-09-01, measured): this used to return early
+  // for every SUB-agent requester, so the marker only ever reached the main
+  // agent when the main agent had asked. For a sub-agent the main agent still
+  // got a notification -- notifyMainAgent()'s plain `[APPROVAL_REQUEST]`, with
+  // nothing to say the owner never saw it. The main agent then reasonably
+  // believed the request was on the owner's phone, while the sub-agent polled
+  // to its timeout (24h by default). The warning was missing exactly for the
+  // party who cannot check the dashboard.
+  //
+  // A sub-agent's request details already went out in notifyMainAgent(), so this
+  // is a SHORT follow-up keyed by id rather than a second copy of everything.
+  const fromMain = approval.agent_id === MAIN_AGENT_ID
   try {
-    const content = [
-      `[APPROVAL_REQUEST][OWNER_UNREACHED ${reason}]`,
-      `id=${approval.id}`,
-      `agent=${approval.agent_id}`,
-      `category=${approval.category}`,
-      `action=${approval.action_description}`,
-      `timeout_at=${approval.timeout_at ?? 'null'}`,
-    ].join(' ')
+    const content = fromMain
+      ? [
+          `[APPROVAL_REQUEST][OWNER_UNREACHED ${reason}]`,
+          `id=${approval.id}`,
+          `agent=${approval.agent_id}`,
+          `category=${approval.category}`,
+          `action=${approval.action_description}`,
+          `timeout_at=${approval.timeout_at ?? 'null'}`,
+        ].join(' ')
+      : [
+          `[APPROVAL_OWNER_UNREACHED ${reason}]`,
+          `id=${approval.id}`,
+          `agent=${approval.agent_id}`,
+          `category=${approval.category}`,
+          `timeout_at=${approval.timeout_at ?? 'null'}`,
+          '-- a kerés NEM jutott el a gazdahoz. A kero varakozik a timeoutig;',
+          'add at neki te, vagy zard le a kérést.',
+        ].join(' ')
     createAgentMessage('system', MAIN_AGENT_ID, content)
   } catch (err) {
     logger.warn({ err, approvalId: approval.id }, 'approval in-band fallback failed too -- the request is only visible on the dashboard')
@@ -162,7 +183,7 @@ export async function tryHandleApprovals(ctx: RouteContext): Promise<boolean> {
 
   // POST /api/approvals -- create new approval request
   if (path === '/api/approvals' && method === 'POST') {
-    let body: { agent_id?: unknown; category?: unknown; action_description?: unknown; action_payload?: unknown; timeout_seconds?: unknown }
+    let body: { agent_id?: unknown; category?: unknown; action_description?: unknown; action_payload?: unknown; timeout_seconds?: unknown; pre_approved_by?: unknown }
     try {
       body = JSON.parse((await readBody(req)).toString())
     } catch {
@@ -170,7 +191,7 @@ export async function tryHandleApprovals(ctx: RouteContext): Promise<boolean> {
       return true
     }
 
-    const { agent_id, category, action_description, action_payload, timeout_seconds } = body
+    const { agent_id, category, action_description, action_payload, timeout_seconds, pre_approved_by } = body
     if (typeof agent_id !== 'string' || !agent_id.trim()) {
       json(res, { error: 'agent_id is required' }, 400)
       return true
@@ -199,6 +220,35 @@ export async function tryHandleApprovals(ctx: RouteContext): Promise<boolean> {
       timeout_at,
     })
 
+    // `pre_approved_by`: the action is ALREADY covered by a standing permission
+    // the owner gave earlier, so this row is an audit entry, not a question.
+    // It is recorded resolved, and the owner is NOT notified.
+    //
+    // WHY (2026-09-01): the owner said, twice in one day, that re-asking for
+    // permission he has already given wastes his time. Twenty minutes after he
+    // said it the second time, he got a full "[JÓVÁHAGYÁS KELL]" push for an
+    // action I resolved myself one second later -- the notification had already
+    // gone out on POST. The audit trail was the only thing I wanted; the ping
+    // was pure noise, and exactly the noise he had just complained about.
+    //
+    // The value must name the permission it leans on (e.g.
+    // "standing_authorization:1304"), never the owner's name: a log that says
+    // he decided something he never saw is worse than no log. Same rule as the
+    // PATCH path's self-approval guard, one step earlier.
+    if (typeof pre_approved_by === 'string' && pre_approved_by.trim()) {
+      const by = pre_approved_by.trim()
+      if (by === approval.agent_id) {
+        json(res, { error: 'pre_approved_by cannot be the requesting agent -- name the standing permission, not yourself' }, 403)
+        return true
+      }
+      resolveApproval(id, 'approved', by, null)
+      const settled = getApproval(id)
+      notifyMainAgent(approval)
+      logger.info({ id, agent_id, category, pre_approved_by: by }, 'Approval recorded as pre-approved (owner not notified)')
+      json(res, settled ?? approval, 201)
+      return true
+    }
+
     notifyOwner(approval)
     notifyMainAgent(approval)
     logger.info({ id, agent_id, category }, 'Approval request created')
@@ -208,7 +258,16 @@ export async function tryHandleApprovals(ctx: RouteContext): Promise<boolean> {
 
   // GET /api/approvals -- list with filters
   if (path === '/api/approvals' && method === 'GET') {
-    const agent_id = url.searchParams.get('agent') ?? undefined
+    // The alias fixed `agent`; `category` and `status` had the same hole, and
+    // widening THIS list is how an agent concludes "nothing is waiting on the
+    // owner" from a query that never filtered.
+    if (rejectUnknownQueryParams(res, url, ['agent', 'agent_id', 'category', 'status', 'limit'],
+      'the agent filter is "agent" ("agent_id" is an alias)')) return true
+    // `agent_id` alias: the POST body uses agent_id, so callers reuse it here.
+    // Without the alias an unknown param was ignored and the list came back
+    // UNFILTERED with a 200 -- an agent asking for its own approvals got the
+    // whole fleet's and had no way to tell. (Margo, 2026-09-01.)
+    const agent_id = url.searchParams.get('agent') ?? url.searchParams.get('agent_id') ?? undefined
     const category = url.searchParams.get('category') ?? undefined
     const status = url.searchParams.get('status') ?? undefined
     const limitRaw = url.searchParams.get('limit')

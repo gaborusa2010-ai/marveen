@@ -388,10 +388,51 @@ def render(kind, job, business, out_path):
     # Past the collision check, so the number on the PDF is the number the
     # ledger agrees was spent. Only now is there something true to write down.
     record_issued(kind, ref, job, out_path)
+    save_source(job, ref, out_path)
     return {"reference": ref, "subtotal": round(subtotal, 2), "vat": vat,
             "cis_rate": cis_rate, "cis_base": cis_base, "cis": cis,
             "total": total, "deposit": deposit, "balance": balance,
             "vat_registered": bool(vat_no), "pdf": out_path}
+
+
+def save_source(job, ref, out_path):
+    """Keep the job file that produced this PDF, next to the PDF.
+
+    WHY, and it is a closed loop rather than a convenience: on 2026-09-07 the
+    owner asked for two corrections to one invoice, and neither time was there a
+    source to correct. The lines had to be read back out of the PDF that had
+    already been issued -- so the input to the fix was our own output. That
+    catches a mistake made DURING the fix, and misses one that was already in
+    what we read. The result would be an official invoice, under the same
+    number, carrying a number that merely looks right; and a wrong figure on a
+    sent invoice is the most expensive kind of mistake on this side of the work.
+
+    Written AFTER record_issued for the same reason that one runs last: nothing
+    is recorded about a document until the document exists. And it must never
+    interfere with what came before it -- the numbering is written to survive a
+    crash mid-write, so a failure here is REPORTED and then dropped. The PDF is
+    on disk and the number is spent; refusing at this point would help nobody.
+
+    The reference is stored explicitly, so re-rendering this file reproduces the
+    same invoice number instead of consuming a new one.
+
+    Not backfilled for documents issued before this existed: a source
+    reconstructed from a finished PDF is not a source, it is a reading of one,
+    and it would sit in the folder looking exactly like the real thing.
+    """
+    saved = dict(job)
+    saved["reference"] = str(ref)
+    path = os.path.splitext(out_path)[0] + ".json"
+    try:
+        with open(path, "w") as fh:
+            json.dump(saved, fh, indent=2, ensure_ascii=False)
+    except (OSError, TypeError, ValueError) as e:
+        # Loud, because a silent miss here is invisible until the day someone
+        # needs the file. Not fatal, because the invoice itself is fine.
+        print(f"FIGYELEM: a szamla forrasa nem mentodott el ({path}): {e}",
+              file=sys.stderr)
+        return None
+    return path
 
 
 def main(argv):

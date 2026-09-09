@@ -30,13 +30,46 @@ DB="$(cd "$(dirname "$0")/.." && pwd)/store/claudeclaw.db"
 NAME="${1:-}"
 HOURS="${2:-}"
 
+# --- sqlite3 CLI shim -------------------------------------------------------
+# Ezen a gepen NINCS sqlite3 CLI (sem jq). A hivas exit 127-tel elhal, es
+# `set -e` alatt a szkript a jelentes KOZEPEN all meg -- vagyis pont az a
+# "ures halmaz = nem futott" tevedes all elo, ami ellen ez a szkript keszult.
+# python3 mindig van, a beepitett sqlite3 modulja ugyanazt a motort hasznalja.
+# Hasznalat: sq header "<SQL>"  /  sq raw "<SQL>"
+sq() {
+  MARV_DB="$DB" MARV_MODE="$1" MARV_SQL="$2" python3 - <<'PYSQ'
+import os, sqlite3, sys
+db, mode, sql = os.environ['MARV_DB'], os.environ['MARV_MODE'], os.environ['MARV_SQL']
+if not os.path.exists(db):
+    sys.stderr.write(f'task-last-run: nincs adatbazis: {db}\n'); sys.exit(1)
+con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+cur = con.execute(sql)
+rows = cur.fetchall()
+cols = [d[0] for d in cur.description] if cur.description else []
+f = lambda v: '' if v is None else str(v)
+if mode == 'raw':
+    for r in rows:
+        print('|'.join(f(v) for v in r))
+else:
+    w = [len(c) for c in cols]
+    for r in rows:
+        for i, v in enumerate(r):
+            w[i] = max(w[i], len(f(v)))
+    print('  '.join(c.ljust(w[i]) for i, c in enumerate(cols)))
+    print('  '.join('-' * w[i] for i in range(len(cols))))
+    for r in rows:
+        print('  '.join(f(v).ljust(w[i]) for i, v in enumerate(r)))
+PYSQ
+}
+# ---------------------------------------------------------------------------
+
 if [ "$NAME" = "--stats" ]; then
   # Kimaradasi rata task-onkent. Az ablak relativ epoch-on, a ts/1000 osztas
   # KOTELEZO -- nelkule minden sor atmegy a szuron, es a szam a tabla eleteben
   # mert osszeget adja vissza az ablak helyett.
   W="${HOURS:-24}"
   echo "-- ablak: utolso ${W} ora | MA=$(date '+%Y-%m-%d %H:%M:%S') --"
-  sqlite3 -header -column "$DB" "
+  sq header "
     SELECT name,
            sum(status='fired')   AS fired,
            sum(status='skipped') AS skipped,
@@ -49,7 +82,7 @@ if [ "$NAME" = "--stats" ]; then
      ORDER BY skipped DESC, name;"
   echo
   echo "-- pozitiv kontroll: az ablakon KIVULI sorok szama (ha 0, az ablak gyanusan tag) --"
-  sqlite3 "$DB" "SELECT count(*) FROM task_runs WHERE ts/1000 <= strftime('%s','now') - ($W * 3600);"
+  sq raw "SELECT count(*) FROM task_runs WHERE ts/1000 <= strftime('%s','now') - ($W * 3600);"
   exit 0
 fi
 
@@ -57,7 +90,7 @@ if [ -z "$NAME" ]; then
   # Minden task utolso futasa. A rendezes az epoch-on tortenik, a kiiras
   # localtime-ban -- a datum MINDIG benne van, hogy a frissesseg-itelet ne
   # egy csupasz ora-percbol szulessen.
-  sqlite3 -header -column "$DB" "
+  sq header "
     SELECT name,
            agent,
            datetime(max(ts)/1000,'unixepoch','localtime') AS utolso_futas,
@@ -75,7 +108,7 @@ if [ -n "$HOURS" ]; then
   WHERE="$WHERE AND ts/1000 > strftime('%s','now') - ($HOURS * 3600)"
 fi
 
-sqlite3 -header -column "$DB" "
+sq header "
   SELECT datetime(ts/1000,'unixepoch','localtime') AS futas,
          status,
          agent
@@ -89,7 +122,7 @@ sqlite3 -header -column "$DB" "
 # nem letezik a tablaban.
 echo
 echo "-- pozitiv kontroll (szuro nelkul, ugyanerre a nevre) --"
-sqlite3 -header -column "$DB" "
+sq header "
   SELECT count(*) AS osszes_futas,
          datetime(max(ts)/1000,'unixepoch','localtime') AS legutolso
     FROM task_runs WHERE name = '$NAME';"

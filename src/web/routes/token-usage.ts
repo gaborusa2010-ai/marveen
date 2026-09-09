@@ -7,7 +7,7 @@ import {
   getToolStats,
   correlateWithKanban,
 } from '../token-usage.js'
-import { json, jsonMaybeGzip } from '../http-helpers.js'
+import { json, jsonMaybeGzip, rejectUnknownQueryParams } from '../http-helpers.js'
 import { logger } from '../../logger.js'
 import type { RouteContext } from './types.js'
 
@@ -27,6 +27,7 @@ export async function tryHandleTokenUsage(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/token-usage/summary' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['from', 'to'])) return true
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')
     const summary = getTokenSummary(
@@ -38,6 +39,7 @@ export async function tryHandleTokenUsage(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/token-usage/timeline' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['bucket', 'from', 'to', 'agent'])) return true
     const bucketMinutes = parseInt(url.searchParams.get('bucket') || '60')
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')
@@ -53,6 +55,7 @@ export async function tryHandleTokenUsage(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/token-usage/model-dist' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['from', 'to', 'agent'])) return true
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')
     const agent = url.searchParams.get('agent') || undefined
@@ -65,6 +68,7 @@ export async function tryHandleTokenUsage(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/token-usage/tool-stats' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['from', 'to', 'agent'])) return true
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')
     const agent = url.searchParams.get('agent') || undefined
@@ -77,6 +81,7 @@ export async function tryHandleTokenUsage(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/token-usage' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['agent', 'from', 'to', 'limit', 'offset', 'min_tokens', 'q'])) return true
     const agent = url.searchParams.get('agent') || undefined
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')

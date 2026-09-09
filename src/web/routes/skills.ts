@@ -9,7 +9,7 @@ import { AGENTS_BASE_DIR, listAgentNames, readFileOr, agentDir } from '../agent-
 import { MAIN_AGENT_ID, PROJECT_ROOT } from '../../config.js'
 import { generateSkillMd } from '../agent-scaffold.js'
 import { parseMultipart } from '../multipart.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import { sanitizeSkillName, shellEscape } from '../sanitize.js'
 import type { RouteContext } from './types.js'
 
@@ -247,6 +247,11 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
 
   const globalSkillDetailMatch = path.match(/^\/api\/skills\/([^/]+)$/)
   if (globalSkillDetailMatch && method === 'GET') {
+    // A typo'd `?agnet=roxy` used to be ignored, so a request for ONE agent's
+    // local skill quietly answered with the GLOBAL skill of the same name --
+    // 200, plausible body, wrong file. On the PUT below it is worse: the write
+    // lands in the fleet-wide skills dir instead of the agent's own.
+    if (rejectUnknownQueryParams(res, ctx.url, ['agent'])) return true
     const skillName = decodeURIComponent(globalSkillDetailMatch[1])
 
     // When ?agent=<id> is supplied, resolve from that agent's local skills dir.
@@ -524,6 +529,7 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
       return true
     }
 
+    if (rejectUnknownQueryParams(res, ctx.url, ['agent'])) return true
     const agentPutParam = ctx.url.searchParams.get('agent')
     if (agentPutParam) {
       const validPutAgentIds = new Set([MAIN_AGENT_ID, ...listAgentNames()])

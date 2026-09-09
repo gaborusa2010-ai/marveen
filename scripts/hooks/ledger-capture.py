@@ -55,11 +55,18 @@ def main():
         # carries the transcript in the body instead, so nothing is stored then).
         att_kind = _attr(attrs, "attachment_kind")
         att_file_id = _attr(attrs, "attachment_file_id")
+        # PHOTOLEDGER901: a photo carries neither of the two above -- it comes as
+        # `image_path`, a file already on disk. Without this the ledger recorded
+        # the caption and forgot the picture.
+        att_path = _attr(attrs, "image_path")
+        if att_path and not att_kind:
+            att_kind = "photo"
         if chat_id and message_id:
             try:
                 ledger_lib.log_inbound(
                     agent_id, chat_id, message_id, text.strip(), ts,
                     attachment_kind=att_kind, attachment_file_id=att_file_id,
+                    attachment_path=att_path,
                 )
             except Exception:
                 pass  # never block the prompt on a ledger error

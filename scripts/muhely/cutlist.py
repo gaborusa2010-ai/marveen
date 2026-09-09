@@ -316,11 +316,27 @@ def _stock_table(job, parts):
     Accepts a single dict (applies to every part), or a list of dicts each
     carrying a `material` key. A part whose material has no stock entry falls
     back to the first entry, and that substitution is reported, never silent.
+
+    STOCKLABEL901 (2026-09-01): the single-dict branch WAS silent, and that is
+    the whole bug. One stock entry spread over SEVERAL materials copied the
+    size, the price and the LABEL to each of them, so a 6 mm back panel printed
+    under an "18mm lap" heading -- which is exactly how a back gets cut from the
+    wrong board. The spread is a guess about which board the caller meant, not a
+    fact, so it now drops the label (the heading then names the material itself)
+    and reports itself like any other substitution. A genuinely single-material
+    job is unaffected: nothing is dropped and nothing is reported.
     """
     raw = job["stock"]
     if isinstance(raw, dict) and "material" not in raw:
         mats = sorted({p.get("material", "default") for p in parts})
-        return {m: dict(raw) for m in mats}, []
+        if len(mats) < 2:
+            return {m: dict(raw) for m in mats}, []
+        table = {}
+        for m in mats:
+            e = dict(raw)
+            e.pop("label", None)
+            table[m] = e
+        return table, mats
     entries = raw if isinstance(raw, list) else [raw]
     table = {}
     for e in entries:
@@ -335,9 +351,12 @@ def _stock_table(job, parts):
 
 
 def main(argv):
-    if len(argv) < 2:
+    # `--help` used to fall through to open(argv[1]) and die with a traceback
+    # naming "--help" as a missing file. The usage text was always here; only
+    # the flag that everyone tries first was not wired to it.
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
-        return 2
+        return 2 if len(argv) < 2 else 0
     path = argv[1]
     svg_prefix = None
     as_json = "--json" in argv
@@ -415,8 +434,9 @@ def main(argv):
     print(f"MUNKA: {result['job']}")
     print(f"Furreszres: {kerf} mm")
     if substituted:
-        print(f"FIGYELEM: nincs megadva tabla ezekhez az anyagokhoz, az elso tablat "
-              f"hasznaltam helyettuk: {', '.join(substituted)}")
+        print(f"FIGYELEM: ezekhez az anyagokhoz nincs sajat tabla megadva, a MERET "
+              f"es az AR egyetlen tablabol jon: {', '.join(substituted)}. "
+              f"Ellenorizd a tablameretet es az arat, mielott anyagkoltseget mondasz.")
     print()
     for e in result["materials"]:
         print(f"=== {e['label']} ({e['material']}) ===")

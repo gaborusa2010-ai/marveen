@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: log every tool call to /api/tool-log for the activity dashboard."""
+"""Tool-call logger for the activity dashboard.
+
+Registered on TWO hook events, because one of them alone only ever sees wins:
+
+  PostToolUse         -- fires when a tool call returns normally.
+  PostToolUseFailure  -- fires when a tool call errors out or is interrupted.
+
+Measured 2026-09-05/09-06: a Bash call that exits non-zero never reaches
+PostToolUse at all, so for months the `success` column held 691 rows and not a
+single 0. A column that cannot take the value 0 looks like a check and checks
+nothing. PostToolUseFailure is the harness event that does see those calls; its
+payload carries `error` and `is_interrupt` instead of `tool_response`.
+"""
 import sys
 import os
 import json
@@ -80,6 +92,32 @@ def _input_summary(tool_input: dict, tool_name: str) -> str:
     return ''
 
 
+def _success_from_payload(payload: dict) -> bool:
+    """True only for a call that actually returned normally.
+
+    PostToolUseFailure exists only for calls that did not succeed, so there the
+    verdict comes from the event name -- that payload has no `tool_response` to
+    inspect, and reading a missing key as "no error" is exactly how this column
+    ended up unable to hold a 0.
+    """
+    if (payload.get('hook_event_name') or '') == 'PostToolUseFailure':
+        return False
+    resp = payload.get('tool_response')
+    return not bool(resp.get('is_error')) if isinstance(resp, dict) else True
+
+
+def _summary_for(payload: dict) -> str:
+    """Input summary for the row, with interrupts tagged rather than dropped."""
+    tool_name = payload.get('tool_name') or ''
+    summary = _input_summary(payload.get('tool_input') or {}, tool_name)
+    if (payload.get('hook_event_name') or '') == 'PostToolUseFailure' and payload.get('is_interrupt'):
+        # An interrupt is not the tool failing, it is the user stopping it. Kept
+        # in the table so the call count stays right, tagged so it can never be
+        # counted as a tool error on its own.
+        summary = f'[interrupt] {summary}'[:200]
+    return summary
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -97,7 +135,7 @@ def main():
     duration_ms = payload.get('duration_ms')
     if not isinstance(duration_ms, int):
         duration_ms = None
-    success = not bool(payload.get('tool_response', {}).get('is_error') if isinstance(payload.get('tool_response'), dict) else False)
+    success = _success_from_payload(payload)
 
     if not session_id or not tool_name:
         sys.exit(0)
@@ -109,10 +147,12 @@ def main():
     port = _web_port()
     base_url = f'http://localhost:{port}/api'
 
+    summary = _summary_for(payload)
+
     body = json.dumps({
         'session_id': session_id,
         'tool_name': tool_name,
-        'input_summary': _input_summary(tool_input, tool_name),
+        'input_summary': summary,
         'success': success,
         'agent_id': ledger_lib.agent_id_from_payload(payload),
         # trace_id holds the CC-native tool_use_id: stable, unique per call,

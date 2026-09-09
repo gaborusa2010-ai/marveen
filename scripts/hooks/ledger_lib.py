@@ -41,6 +41,14 @@ INDEX = "CREATE INDEX IF NOT EXISTS idx_convlog_agent ON conversation_log(agent_
 _MIGRATION_COLUMNS = (
     ("attachment_kind", "TEXT"),
     ("attachment_file_id", "TEXT"),
+    # PHOTOLEDGER901 (Roxy, 2026-09-01, measured): of 325 inbound rows, ZERO had
+    # attachment_kind='photo' while ten images sat in the inbox and their texts
+    # read "(photo)". A photo does not arrive as attachment_file_id -- it arrives
+    # as `image_path`, which ledger-capture.py never read. So a picture sent while
+    # no session was alive had its TEXT replayed and the image silently dropped,
+    # even though the file was on disk the whole time. Voice already handled this;
+    # photo did not.
+    ("attachment_path", "TEXT"),
 )
 
 RECENT_LIMIT = 20
@@ -245,21 +253,38 @@ def connect():
 
 
 def log_inbound(agent_id, chat_id, message_id, text, ts,
-                attachment_kind=None, attachment_file_id=None):
+                attachment_kind=None, attachment_file_id=None,
+                attachment_path=None, created_at=None):
     """Record an inbound user message. Idempotent on (agent_id, chat_id, in, message_id).
 
     attachment_kind/file_id: set for voice / video_note messages that arrived
     WITHOUT a transcript, so a respawned session can still download and
-    transcribe the audio instead of losing the message content forever."""
+    transcribe the audio instead of losing the message content forever.
+
+    attachment_path: an ALREADY-DOWNLOADED file on disk -- how a photo arrives
+    (`image_path`). Kept as a keyword with a default so no existing caller
+    changes shape. The read side still returns the old tuples on purpose: this
+    half stops the LOSS, and widening those tuples is the deliberate change that
+    the HOOKARITAS821 comment below warns must not be done casually.
+
+    created_at: the row's ORDERING key, defaulting to now. A BACK-FILL must pass
+    the message's real arrival time (MIDTURN901). Caught before shipping: the
+    mid-turn back-fill first stamped rows with the back-fill time, which put a
+    two-hour-old message AFTER the reply that had already answered it -- so the
+    ledger read as "newest inbound, unanswered" and the drain would have raised
+    an already-handled message. Ordering is what this table is FOR; a row with
+    the wrong created_at is worse than a missing row, because it makes the
+    watchdog lie in the confident direction."""
     con = connect()
     try:
         con.execute(
             "INSERT OR IGNORE INTO conversation_log"
             " (agent_id, chat_id, direction, message_id, text, ts, created_at,"
-            "  attachment_kind, attachment_file_id)"
-            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?)",
-            (str(agent_id), str(chat_id), str(message_id), text, ts, int(time.time()),
-             attachment_kind, attachment_file_id),
+            "  attachment_kind, attachment_file_id, attachment_path)"
+            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?)",
+            (str(agent_id), str(chat_id), str(message_id), text, ts,
+             int(created_at) if created_at else int(time.time()),
+             attachment_kind, attachment_file_id, attachment_path),
         )
         con.commit()
     finally:
@@ -338,6 +363,48 @@ def open_question_with_age(agent_id):
         return (chat_id, message_id, text, ts, created_at, att_kind, att_file_id)
     finally:
         con.close()
+
+
+def attachment_path_for(agent_id, message_id):
+    """The LOCAL file path of a logged attachment, or None.
+
+    PHOTOLEDGER901, second half. Capture already stores `attachment_path` for
+    photos; what was missing is the way BACK -- and the obvious way to add it
+    (widen the tuples that recent() and open_question() return) is the one thing
+    ledger_lib's own HOOKARITAS821 note says not to do casually: every caller
+    that wraps only the call in try/except would read the resulting ValueError
+    as "ledger unavailable" and carry on fail-open, in silence.
+    
+    So this is an ADDITIVE lookup keyed by message_id instead. Existing tuples
+    keep their exact shape, no caller changes arity, and a hook that does not
+    know about this function is simply unaffected. The cost is one extra query
+    on the path that actually needs the file -- a fair trade for not touching a
+    contract five hooks depend on.
+
+    Returns None for a missing row, an empty path, or a path that no longer
+    exists on disk: a replayed message pointing at a deleted file is worse than
+    no pointer, because the reader would go looking for it.
+    """
+    if message_id in (None, ""):
+        return None
+    con = connect()
+    try:
+        row = con.execute(
+            "SELECT attachment_path FROM conversation_log"
+            " WHERE agent_id=? AND message_id=? AND attachment_path IS NOT NULL"
+            "   AND attachment_path != ''"
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (str(agent_id), str(message_id)),
+        ).fetchone()
+    except Exception:
+        # An older DB without the column must not take the caller down with it.
+        return None
+    finally:
+        con.close()
+    if not row or not row[0]:
+        return None
+    path = row[0]
+    return path if os.path.exists(path) else None
 
 
 def open_question(agent_id):

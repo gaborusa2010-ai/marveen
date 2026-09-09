@@ -1,6 +1,6 @@
 import { recallByDateRange, recallSearch, getDailyLogDates } from '../../db.js'
 import { MAIN_AGENT_ID, APP_TZ } from '../../config.js'
-import { json } from '../http-helpers.js'
+import { json, rejectUnknownQueryParams } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
 const TZ = APP_TZ  // install zone (config.APP_TZ); was hardcoded Europe/Budapest
@@ -184,6 +184,7 @@ export async function tryHandleRecall(ctx: RouteContext): Promise<boolean> {
   const { res, path, method, url } = ctx
 
   if (path === '/api/recall' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['date', 'q', 'agent', 'limit'])) return true
     const dateExpr = url.searchParams.get('date') || ''
     const query = url.searchParams.get('q') || ''
     const agent = url.searchParams.get('agent') || undefined
@@ -216,6 +217,7 @@ export async function tryHandleRecall(ctx: RouteContext): Promise<boolean> {
   }
 
   if (path === '/api/recall/dates' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['agent', 'limit'])) return true
     const agent = url.searchParams.get('agent') || MAIN_AGENT_ID
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '90', 10), 365)
     json(res, getDailyLogDates(agent, limit))

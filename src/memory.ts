@@ -9,9 +9,11 @@ import {
   decayMemories as dbDecay,
   pruneAuditLogs,
   pruneTokenUsage,
-  getMemoriesForChat,
+  getMemoriesCreatedSince,
+  appendDailyLog,
   type Memory,
 } from './db.js'
+import { MAIN_AGENT_ID } from './config.js'
 import { runAgent } from './agent.js'
 import { logger } from './logger.js'
 import { wrapUntrusted, UNTRUSTED_PREAMBLE } from './prompt-safety.js'
@@ -139,10 +141,17 @@ export function runDecaySweep(): void {
 // --- Daily digest ---
 
 export async function runDailyDigest(chatId: string): Promise<string | null> {
-  // Collect today's episodic memories (last 24h)
+  // Collect today's episodic memories (last 24h).
+  //
+  // ORDER MATTERS, and it was wrong until 2026-09-04. The old form asked for
+  // the 50 most recently ACCESSED memories and only then kept the ones from
+  // today -- so the limit trimmed a TIME SLICE rather than a count, and which
+  // slice survived depended on what happened to be read lately. Measured by
+  // Anorak that night: 12 of the day's 37 memories reached the digest, 10 of
+  // them from a single agent, and the day's two most consequential events
+  // never appeared in the fleet's only daily summary.
   const oneDayAgo = Math.floor(Date.now() / 1000) - 86400
-  const allRecent = getMemoriesForChat(chatId, 50)
-  const todayMemories = allRecent.filter((m) => m.created_at >= oneDayAgo)
+  const todayMemories = getMemoriesCreatedSince(chatId, oneDayAgo, 200)
 
   if (todayMemories.length < 2) {
     logger.info({ chatId, count: todayMemories.length }, 'Napi naplo: tul keves emlek, kihagyjuk')
@@ -152,16 +161,34 @@ export async function runDailyDigest(chatId: string): Promise<string | null> {
   // Each memory is wrapped individually: the stored content originated in
   // Telegram messages that could have come through the assistant from a third
   // party (a forwarded message, a quoted email). Treat every record as data.
+  // EVERY LINE CARRIES ITS AUTHOR. Without this the prompt received six
+  // agents' memories as if they were one assistant's, and the model wrote the
+  // summary in the first person from whichever agent supplied most of the
+  // sample. Measured 2026-09-04 23:00:36 on Marveen's own log: the entry said
+  // "I measured the Hungarian subtitle timing (agents/roxy/scripts/...)" and
+  // referred to Marveen in the third person. The work was Roxy's; the log was
+  // Marveen's. Same family as the second-person circular letter: the speaker
+  // is invented by the surrounding text when nothing states who acted.
   const memoryLines = todayMemories
-    .map((m) => `- ${wrapUntrusted('memory-record', m.content.slice(0, 200))}`)
+    .map((m) => `- [${m.agent_id || 'ismeretlen'}] ${wrapUntrusted('memory-record', m.content.slice(0, 200))}`)
     .join('\n')
 
   const prompt = `${UNTRUSTED_PREAMBLE}
-Az alabbi egy AI asszisztens mai emlekei egy felhasznaloval folytatott beszelgetesekbol.
+Az alabbi egy TOBB AGENSBOL allo csapat mai emlekei. Minden sor elejen szogletes
+zarojelben all, MELYIK AGENS irta.
+
 Irj egy tomor napi osszefoglalot (max 5-8 mondat), ami megragadja:
 1. Milyen feladatokon dolgoztak
 2. Milyen fontos dontesek szulettek
 3. Mi maradt nyitva / mi a kovetkezo lepes
+
+KOTELEZO FORMAI SZABALYOK:
+- HARMADIK SZEMELYBEN irj. Soha ne hasznalj egyes szam elso szemelyt ("kimertem",
+  "megirtam"), mert az emlekek hat kulonbozo agenstol szarmaznak, es nem tudod
+  eldonteni, ki az "en".
+- Minden allitas mellett NEVEZD MEG, melyik agens csinalta, a sor eleji jeloles
+  szerint. Ha egy allitas tobb agenshez kotheto, mondd ki mind a kettot.
+- Ne hasznalj gondolatjelet. Kettospont, zarojel vagy uj mondat helyette.
 
 Csak az osszefoglalot add vissza, semmi mast. Magyarul irj.
 
@@ -177,9 +204,27 @@ ${memoryLines}`
     if (!text) return null
 
     const digest = text.trim()
-    const today = new Date().toLocaleDateString('hu-HU')
-    saveMemory(chatId, `[Napi naplo ${today}] ${digest}`, 'episodic')
-    logger.info({ chatId, digestCwd, digestConfigDir }, `Napi naplo mentve: ${today}`)
+    // ONE place for "what happened today", and it is daily_logs.
+    //
+    // DIARYSPLIT901 (2026-09-04). This used to write the digest into the
+    // `memories` table with a `[Napi naplo ...]` prefix, while every agent --
+    // and the dashboard, and /api/daily-log/dates -- used the `daily_logs`
+    // table for the same question. Two records, one name. It produced a false
+    // statement the same night: the endpoint reported ZERO diary entries for
+    // marveen on 09-03, an agent reported that as "the manual fix did not last a
+    // day", and I passed it on confirmed. The entry existed. It was 1500
+    // characters long. It was simply in the other table.
+    //
+    // Measured then: 13 nights of digests in `memories` (all marveen, all
+    // ~23:00, since 08-22) against 117 rows in `daily_logs`. The digest was the
+    // only thing writing to the wrong side, so the digest is what moves.
+    //
+    // The old rows are LEFT WHERE THEY ARE on purpose. Copying them across
+    // would put every one of those nights into the recall index twice -- recall
+    // reads both tables -- and duplicated history is the same class of bug as
+    // the split itself. The gap is stated on card ef4e9830 instead.
+    appendDailyLog(MAIN_AGENT_ID, digest)
+    logger.info({ chatId, agentId: MAIN_AGENT_ID, digestCwd, digestConfigDir }, 'Napi naplo mentve a daily_logs tablaba')
     return digest
   } catch (err) {
     logger.error({ err }, 'Napi naplo generalas hiba')

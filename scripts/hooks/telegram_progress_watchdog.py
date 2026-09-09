@@ -38,6 +38,8 @@ via TELEGRAM_API_BASE (tests point it at a local stub).
 """
 import os, glob, json, time, subprocess, urllib.request
 
+MAX_DELIVER_ATTEMPTS = 5
+
 # State dirs to scan: per-agent dirs under the fleet, plus the default dir.
 # No hardcoded user paths -- derive from $HOME (override with MARVEEN_ROOT).
 FLEET_ROOT = os.environ.get("MARVEEN_ROOT") or os.path.expanduser("~/marveen")
@@ -82,14 +84,28 @@ def token(state_dir):
     return None
 
 
+class TelegramApiError(Exception):
+    """The Bot API answered, and the answer was a refusal."""
+
+
 def api(tok, method, payload):
+    # FALLBACKVAK901: see the same note in telegram_progress_clear.py. urlopen
+    # raises only on an HTTP-level error; Telegram refuses with HTTP 200 +
+    # {"ok":false}. Without this check deliver() would report "real-answer" for
+    # a message that was never accepted.
     base = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
     url = f"{base}/bot{tok}/{method}"
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=8) as r:
-        return json.loads(r.read().decode())
+        body = json.loads(r.read().decode())
+    if not isinstance(body, dict) or not body.get("ok"):
+        desc = ""
+        if isinstance(body, dict):
+            desc = str(body.get("description") or body)
+        raise TelegramApiError(f"{method} rejected: {desc}"[:300])
+    return body
 
 
 def agent_name_from(progress_dir):
@@ -271,10 +287,38 @@ def handle_dir(progress_dir):
         for p in pend:
             modes.append(deliver(tok, p.get("chat_id"), p.get("message_id"),
                                  answer, progress_dir))
-        try:
-            os.remove(path)
-        except Exception:
-            pass
+        # FALLBACKVAK901: deliver() has always computed "send-failed" correctly
+        # and the caller threw it away -- os.remove ran unconditionally, so a
+        # refused send deleted the only record that an answer was owed. Keep the
+        # state so the next sweep retries, bounded by an attempt counter so a
+        # permanently refusing chat cannot pile up forever.
+        attempts_path = path + ".attempts"
+        if "send-failed" in modes:
+            try:
+                attempts = int(open(attempts_path).read().strip())
+            except Exception:
+                attempts = 0
+            attempts += 1
+            if attempts < MAX_DELIVER_ATTEMPTS:
+                try:
+                    with open(attempts_path, "w") as f:
+                        f.write(str(attempts))
+                except Exception:
+                    pass
+                log(progress_dir,
+                    f"orphan KEPT for retry ({reason}): {os.path.basename(path)} "
+                    f"agent_up={agent_up} age={int(age)}s "
+                    f"delivered={','.join(modes)} "
+                    f"attempt={attempts}/{MAX_DELIVER_ATTEMPTS}")
+                continue
+            log(progress_dir,
+                f"orphan GIVING UP after {attempts} attempts -- THE ANSWER IS "
+                f"LOST: {os.path.basename(path)} delivered={','.join(modes)}")
+        for f in (path, attempts_path):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
         log(progress_dir, f"orphan handled ({reason}): {os.path.basename(path)} "
                           f"agent_up={agent_up} age={int(age)}s "
                           f"delivered={','.join(modes)}")

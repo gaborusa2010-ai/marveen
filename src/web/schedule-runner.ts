@@ -14,6 +14,8 @@ import {
 import { resolveOwnerChatId, configuredOwnerChatFor } from '../owner-chat.js'
 import {
   appendTaskRun,
+  countConsecutiveSkips,
+  createAgentMessage,
   listPendingTaskRetries,
   deletePendingTaskRetry,
   updatePendingTaskRetry,
@@ -1046,6 +1048,86 @@ export function resolveSchedulerAlertToken(
 // Slack install) and the paired fallback from slack/access.json (the live
 // CHANNEL_PROVIDER=slack install has no telegram access.json at all, so the
 // default path returned null and every scheduler alert was suppressed).
+/**
+ * Record a skipped tick WITH its reason, and speak up if the task is starving.
+ *
+ * STARVATION901 (card a8f8aa54). The memoria-heartbeat was skipped 101 times
+ * over FIVE DAYS in complete silence. Every individual skip was correct --
+ * skipIfBusy drops a short-cadence tick on purpose, because queueing 30-minute
+ * heartbeats produces spurious "waiting 60 minutes" alerts during a live
+ * conversation. Nothing was wrong with any one decision. What was missing is
+ * that nobody counted them, and a task that never runs looks exactly like a
+ * task with nothing to report.
+ *
+ * The alert deliberately needs BOTH conditions:
+ *   - enough consecutive skips (a task that missed three ticks is fine), and
+ *   - enough elapsed time since it last actually ran.
+ * Skips alone would page about a per-minute task after ten harmless minutes;
+ * elapsed time alone would page about a weekly task that is simply not due.
+ * A daily schedule reaches the time bar long before the count bar, a
+ * half-hourly one the other way round -- which is the point of requiring both.
+ *
+ * Repeat protection is exponential rather than a one-shot flag: it fires at the
+ * threshold and then only at doublings (10, 20, 40, 80...). A flag would need
+ * clearing and would go stale; a once-only alert would let a still-starving
+ * task fall silent again, which is the original bug wearing a different hat.
+ */
+const STARVE_SKIPS = 10
+const STARVE_SILENT_MS = 6 * 60 * 60 * 1000
+
+export function isStarvationAlertPoint(skips: number, threshold = STARVE_SKIPS): boolean {
+  if (skips < threshold) return false
+  let n = threshold
+  while (n < skips) n *= 2
+  return n === skips
+}
+
+function recordSkip(taskName: string, agentName: string, reason: string): void {
+  appendTaskRun(taskName, agentName, 'skipped', reason)
+  try {
+    const { skips, lastFiredTs, reasons } = countConsecutiveSkips(taskName, agentName)
+    if (!isStarvationAlertPoint(skips)) return
+    // No successful run in the window reads as "very stale", never as "new".
+    const silentMs = lastFiredTs === null ? Number.POSITIVE_INFINITY : Date.now() - lastFiredTs
+    if (silentMs < STARVE_SILENT_MS) return
+    const hours = Number.isFinite(silentMs) ? Math.round(silentMs / 3_600_000) : null
+    const since = hours === null ? 'a megfigyelt ablakban egyaltalan nem' : `${hours} oraja nem`
+    logger.warn({ task: taskName, agent: agentName, skips, reasons, silentMs }, 'Scheduled task starving')
+    notifyStarvation(taskName, agentName, skips, since, reasons)
+  } catch (err) {
+    // A failed starvation check must never break the scheduler tick.
+    logger.warn({ err, task: taskName }, 'starvation check failed')
+  }
+}
+
+/**
+ * Tell the main agent, not the owner directly.
+ *
+ * A starving scheduled task is OUR problem to diagnose -- which task, which
+ * collision, whether the schedule needs moving -- and the owner only needs to
+ * hear about it if it turns out to affect him. Routing it through the inter-
+ * agent queue also means it survives a channel outage, and it cannot arrive at
+ * 03:00 as a phone notification about a heartbeat.
+ */
+function notifyStarvation(taskName: string, agentName: string, skips: number, since: string, reasons: string[]): void {
+  const text =
+    `[UTEMEZETT FELADAT KIEHEZES] A(z) "${taskName}" feladat ${agentName} agensnel ` +
+    `${skips} EGYMAS UTANI ticken kimaradt, es ${since} futott le sikeresen. ` +
+    `Okok a naplo szerint: ${reasons.join(', ') || 'ismeretlen'}. ` +
+    `Minden egyes kihagyas onmagaban szabalyos lehet (a skipIfBusy szandekosan ejt ticket); ` +
+    `a baj az, hogy egyutt mar egy nem futo feladatot jelentenek, es ez eddig nemán tortent. ` +
+    `Nezd meg, mivel utkozik, es kell-e athelyezni a menetrendjet.`
+  try {
+    // The shared writer, not a hand-rolled INSERT: agent_messages carries
+    // origin/trace columns the router and the delegation ack path both read,
+    // and a second insert statement here would drift from them the first time
+    // either changes.
+    createAgentMessage(agentName, MAIN_AGENT_ID, text, 'scheduler:starvation')
+  } catch (err) {
+    logger.warn({ err, task: taskName }, 'starvation alert could not be queued')
+  }
+}
+
 function resolveSchedulerOwnerChat(): string | null {
   return resolveOwnerChatId(undefined, configuredOwnerChatFor(CHANNEL_PROVIDER), CHANNEL_PROVIDER)
 }
@@ -1393,7 +1475,7 @@ export function startScheduleRunner(): NodeJS.Timeout {
       const retryPc = runPreCheck(taskDef)
       if (retryPc.skip) {
         deletePendingTaskRetry(row.task_name, row.agent_name)
-        appendTaskRun(row.task_name, row.agent_name, 'skipped')
+        recordSkip(row.task_name, row.agent_name, 'pre-check-retry')
         continue
       }
 
@@ -1533,7 +1615,7 @@ export function startScheduleRunner(): NodeJS.Timeout {
         )
         scheduleLastRun.set(task.name, now)
         persistScheduleLastRun()
-        for (const agentName of targetAgents) appendTaskRun(task.name, agentName, 'skipped')
+        for (const agentName of targetAgents) recordSkip(task.name, agentName, `quota-defer:${quota.reason}`)
         continue
       }
 
@@ -1544,7 +1626,7 @@ export function startScheduleRunner(): NodeJS.Timeout {
         scheduleLastRun.set(task.name, now)
         persistScheduleLastRun()
         for (const agentName of targetAgents) {
-          appendTaskRun(task.name, agentName, 'skipped')
+          recordSkip(task.name, agentName, 'pre-check')
         }
         continue
       }
@@ -1577,7 +1659,7 @@ export function startScheduleRunner(): NodeJS.Timeout {
             // Daily/weekly schedules keep skipIfBusy=false so the queue
             // + alert path catches a long-running busy state.
             logger.info({ task: task.name, agent: agentName }, 'Schedule busy, skipIfBusy=true: dropping tick silently')
-            appendTaskRun(task.name, agentName, 'skipped')
+            recordSkip(task.name, agentName, 'busy-skipIfBusy')
             continue
           }
           // First encounter -- insert a new pending row. If somehow a

@@ -11,7 +11,7 @@ ledger-live-drain) and re-surfaces the still-unanswered inbound so the running
 agent answers it WITHOUT waiting for a respawn.
 
 Deterministic + safe:
-- GRACE: only surface an open question older than NOW-60s, so we never fight an
+- GRACE: only surface an open question older than NOW-180s, so we never fight an
   in-flight reply the agent is composing right this moment.
 - DEDUP: a statefile next to the ledger DB holds the last surfaced message_id;
   re-surfacing the same id is suppressed (backstop for the surface->reply window,
@@ -33,7 +33,20 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ledger_lib  # noqa: E402
 
-GRACE_SECONDS = 60
+# GRACE901 (Roxy, 2026-09-01, measured on nine real raises). At 60s the drain
+# was RIGHT every time -- nine raises, nine distinct message ids, zero repeats --
+# but in three of them the answer went out 13-34 seconds AFTER the raise, so by
+# the time the notice was read it described a solved problem. A correct alert
+# that arrives stale trains the reader to skip alerts, and then the real lost
+# message goes past too.
+# Her numbers, response delay measured from arrival:
+#   1m51, 2m33, 2m46, 2m51  <- these were being answered anyway
+#   4m33, 5m25, 6m51, 8m02, 8m44  <- here the raise actually mattered
+# 180s drops all four of the near-misses and keeps all five that counted.
+# STATED UNCERTAINTY, hers and worth keeping: for the 13-34s cases we cannot
+# tell whether the answer was already being typed or whether the RAISE prompted
+# it. The five cases past four minutes carry no such doubt.
+GRACE_SECONDS = 180
 
 
 def _statefile(agent_id):
@@ -60,7 +73,25 @@ def _record_surfaced(path, message_id):
 
 
 def main():
+    # --peek / --commit exist for the STANDALONE runner (systemd timer +
+    # scripts/ledger-drain-notify.sh), which prints in one process and delivers
+    # in another. Recording "surfaced" at print time is right for the heartbeat
+    # -- there, printing IS the agent seeing it -- but wrong for the standalone
+    # path: if the delivery then fails, the only unanswered question is marked
+    # handled and is never surfaced again. Same rule as auction-closing-watch:
+    # a failed send is not committed. No flags = the old behaviour, unchanged.
+    peek = "--peek" in sys.argv
+    commit_id = None
+    if "--commit" in sys.argv:
+        i = sys.argv.index("--commit")
+        if i + 1 < len(sys.argv):
+            commit_id = sys.argv[i + 1]
+
     agent_id = ledger_lib.agent_id_from_cwd(os.getcwd())
+
+    if commit_id is not None:
+        _record_surfaced(_statefile(agent_id), commit_id)
+        sys.exit(0)
 
     try:
         oq = ledger_lib.open_question_with_age(agent_id)
@@ -95,7 +126,8 @@ def main():
             f'attachment_file_id="{att_file_id}") mielőtt válaszolsz.]'
         )
     sys.stdout.write(f"OPEN_QUESTION chat_id={chat_id} message_id={message_id}\n{snippet}\n")
-    _record_surfaced(path, message_id)
+    if not peek:
+        _record_surfaced(path, message_id)
     sys.exit(0)
 
 

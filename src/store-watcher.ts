@@ -1,4 +1,5 @@
-import { watch, statSync, readdirSync } from 'node:fs'
+import { watch, statSync, readdirSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { STORE_DIR } from './config.js'
 import { logStoreFileEvent } from './db.js'
@@ -32,6 +33,63 @@ const SYSTEM_FILES = new Set([
   'dashboard.log', 'dashboard.error.log',
   'update.log',
 ])
+
+// --- Governance-critical files ---
+// AUTONOMYVAK901: these files define the fleet's own boundaries, so a change to
+// them is exactly the change worth auditing -- and it was the one change that
+// left no trace. Two separate reasons, both real:
+//   1. autonomy-config.json is on SYSTEM_FILES above, so it was filtered out.
+//   2. Even off that list it would still not have been logged, because the
+//      watcher records CREATIONS only: `change` events return early and a
+//      rewrite of an existing path is dropped by the knownFiles check. Taking
+//      the file off the denylist alone would have looked like a fix and
+//      changed nothing.
+// So these paths get their own branch, before the denylist, keyed on a content
+// hash: a real edit is logged as 'modify', a touch or a duplicate fs event is
+// not. Routine dashboard writes go through the route handlers, which set the
+// actor slot, so an API change is attributed and a direct disk edit is stored
+// with a null agent ("ismeretlen") -- which is itself the signal.
+const GOVERNANCE_FILES = new Set(['autonomy-config.json'])
+
+// rel path -> sha256 of the last content we logged. Seeded at watcher start.
+const governanceHashes = new Map<string, string>()
+
+function hashOf(rel: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(join(STORE_DIR, rel))).digest('hex')
+  } catch {
+    return null
+  }
+}
+
+function isGovernanceFile(rel: string): boolean {
+  return GOVERNANCE_FILES.has(basename(rel))
+}
+
+function logGovernanceChange(rel: string, agent: string | null): void {
+  const hash = hashOf(rel)
+  if (hash === null) {
+    // Gone. Only report it if we were tracking it, so a delete is logged once.
+    if (governanceHashes.delete(rel)) {
+      try {
+        logStoreFileEvent(rel, 'delete', 0, null, agent)
+      } catch (err) {
+        logger.warn({ err, rel }, 'store-watcher: failed to log governance delete')
+      }
+    }
+    return
+  }
+  const prev = governanceHashes.get(rel)
+  if (prev === hash) return   // touch, chmod, or a repeated fs event: no content change
+  governanceHashes.set(rel, hash)
+  let size: number | null = null
+  try { size = statSync(join(STORE_DIR, rel)).size } catch { size = null }
+  try {
+    logStoreFileEvent(rel, prev === undefined ? 'create' : 'modify', 0, size, agent)
+  } catch (err) {
+    logger.warn({ err, rel }, 'store-watcher: failed to log governance change')
+  }
+}
 
 // Regex for system-generated filename patterns.
 // Also covers atomic-write temp files (keep in sync with settings-store.ts).
@@ -95,6 +153,15 @@ export function startStoreWatcher(): void {
   knownFiles = new Set<string>()
   scanStore(STORE_DIR)
 
+  // Seed the governance hashes so the first post-start edit is reported as a
+  // modification, not as a creation of something that was already there.
+  governanceHashes.clear()
+  for (const rel of knownFiles) {
+    if (!isGovernanceFile(rel)) continue
+    const h = hashOf(rel)
+    if (h !== null) governanceHashes.set(rel, h)
+  }
+
   try {
     watcher = watch(STORE_DIR, { recursive: true }, (eventType, filename) => {
       if (!filename) return
@@ -105,6 +172,13 @@ export function startStoreWatcher(): void {
       // next unrelated event.
       const agent = currentWriteActor
       currentWriteActor = null
+
+      // Governance files first: they are on the denylist below, and their
+      // modifications (not just creations) are the point.
+      if (isGovernanceFile(rel)) {
+        logGovernanceChange(rel, agent)
+        return
+      }
 
       // Only rename events can indicate a new file. change = modification.
       if (eventType !== 'rename') return

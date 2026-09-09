@@ -651,6 +651,16 @@ export function initDatabase(dbPathOverride?: string): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_task_runs_ts ON task_runs(ts)`)
   // Migration: add status column to task_runs (introduced 2026-06-13)
   try { db.exec(`ALTER TABLE task_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'fired'`) } catch { /* already present */ }
+  // Migration: add reason column (2026-09-04, card a8f8aa54).
+  //
+  // `status` says WHETHER a tick ran; it does not say WHY one did not. Four
+  // different situations all wrote the same 'skipped': a quota deferral, a
+  // pre-check skip on the cron path, a pre-check skip on the retry path, and a
+  // deliberate skipIfBusy drop. That made the memoria-heartbeat's 101-skip,
+  // five-day silence unreadable from the table -- the rows were all there and
+  // all identical, so nothing distinguished "the gate held it back on purpose"
+  // from "it collided with another task every single time".
+  try { db.exec(`ALTER TABLE task_runs ADD COLUMN reason TEXT`) } catch { /* already present */ }
 
   // --- Pending Scheduled Task Retries ---
   // Busy-skipped scheduled tasks used to live in an in-memory Map. On a
@@ -1352,6 +1362,32 @@ export function getMemoriesForChat(chatId: string, limit = 10): Memory[] {
     .all(chatId, limit) as Memory[]
 }
 
+/**
+ * Memories CREATED inside a time window, newest first.
+ *
+ * Exists because the daily digest used getMemoriesForChat(chatId, 50) and then
+ * filtered the result by `created_at`. Those two steps are in the wrong order:
+ * the LIMIT is applied over `accessed_at`, so the window is cut by which
+ * memories were READ recently, and only what survives that cut is then checked
+ * for being from today. The limit therefore trims a TIME SLICE, not a count.
+ *
+ * Measured by Anorak, 2026-09-04 23:1x: of 37 memories written that day, 12
+ * reached the digest, and 10 of those 12 belonged to one agent. Two of the
+ * day's most consequential events (a worklog decision and a 422-file install
+ * into the shared skill folder) never appeared in the fleet's only daily
+ * summary -- the words "Cody", "worklog", "KDP" and "Anorak" are absent from
+ * the generated text.
+ *
+ * Same failure shape as the message-list cap fixed earlier the same day: a
+ * limit that looks like a quantity is really a window, and it always drops the
+ * same end of the range.
+ */
+export function getMemoriesCreatedSince(chatId: string, sinceTs: number, limit = 200): Memory[] {
+  return db
+    .prepare('SELECT * FROM memories WHERE chat_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?')
+    .all(chatId, sinceTs, limit) as Memory[]
+}
+
 // --- In-process memory cache (TTL-based) ---
 //
 // Avoids a SQLite round-trip on every context-fetch by keeping the most
@@ -1513,11 +1549,22 @@ export function updateMemory(id: number, content: string, category?: string, age
 
 export function appendDailyLog(agentId: string, content: string): void {
   const now = Math.floor(Date.now() / 1000)
-  // Budapest calendar day, not UTC -- otherwise an entry written 00:00-02:00
-  // local time lands on the previous day and the "ma" recall query misses it.
-  // en-CA formats as YYYY-MM-DD.
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: APP_TZ })
+  const today = localCalendarDay()
   db.prepare('INSERT INTO daily_logs (agent_id, date, content, created_at) VALUES (?, ?, ?, ?)').run(agentId, today, content, now)
+}
+
+/**
+ * The LOCAL calendar day as YYYY-MM-DD (en-CA formats that way).
+ *
+ * DAYSPLIT901: this used to be an inline expression in the writer only, with the
+ * reason in a comment beside it -- and the READER then computed a UTC day of its
+ * own. Between midnight and 01:00 BST the two disagreed, so a plain GET answered
+ * 200 with the previous day while that hour's entries were already filed under
+ * the new one. One function, called by both, is the only version that cannot
+ * drift apart again.
+ */
+export function localCalendarDay(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: APP_TZ })
 }
 
 export function getDailyLog(agentId: string, date: string): { id: number; content: string; created_at: number }[] {
@@ -2515,8 +2562,40 @@ export function markPendingFederatedFailed(id: number, error: string): boolean {
   return db.prepare("UPDATE agent_messages SET status = 'failed', result = ?, completed_at = ? WHERE id = ? AND status = 'pending'").run(error, now, id).changes > 0
 }
 
-export function listAgentMessages(limit = 50): AgentMessage[] {
-  return db.prepare('SELECT * FROM agent_messages ORDER BY created_at DESC LIMIT ?').all(limit) as AgentMessage[]
+export function listAgentMessages(
+  limit = 50,
+  status?: AgentMessage['status'],
+  beforeId?: number,
+): AgentMessage[] {
+  // The global list takes the same status filter as the per-agent one, so a
+  // caller cannot get "filtered-looking but unfiltered" by leaving out ?agent=.
+  //
+  // `beforeId` was added 2026-09-04 (card c1fa4c60). The route has ALWAYS
+  // accepted a `before` query param -- rejectUnknownQueryParams lists it -- but
+  // on this, the fleet-wide path, it was parsed and then never passed here. So
+  // ?limit=200&before=1600 returned bit-for-bit the same rows as ?limit=200:
+  // a parameter whose NAME was known and whose VALUE reached nothing. The
+  // per-agent path (getAgentConversation) has had the cursor all along, which
+  // is why paging "worked" whenever anyone happened to test it with ?agent=.
+  //
+  // The consequence was not a missing feature but a wrong number: with a hard
+  // 200-row cap and no way to page past it, every fleet-wide traffic count
+  // silently became "the last 200 rows", and the part dropped is ALWAYS the
+  // start of the day. Measured 2026-09-03: 18 of 218 rows, 8.3%, all from
+  // before 08:12, and the result looked like a complete day.
+  //
+  // ORDER BY gained `, id DESC` for the same reason: rows written in the same
+  // second tie on created_at, and a cursor over an unstable order can repeat or
+  // skip rows at every page boundary. The per-agent query already ordered this
+  // way; the two are now the same shape.
+  const statusClause = status ? ' status = ?' : ''
+  const statusArg = status ? [status] : []
+  const useCursor = beforeId !== undefined && Number.isFinite(beforeId)
+  const cursorClause = useCursor ? ' id < ?' : ''
+  const cursorArg = useCursor ? [beforeId] : []
+  const where = [statusClause, cursorClause].filter(Boolean).join(' AND')
+  const sql = `SELECT * FROM agent_messages${where ? ` WHERE${where}` : ''} ORDER BY created_at DESC, id DESC LIMIT ?`
+  return db.prepare(sql).all(...statusArg, ...cursorArg, limit) as AgentMessage[]
 }
 
 // --- Context-restart gate helpers -------------------------------------------
@@ -2613,16 +2692,26 @@ const AGENT_MESSAGE_LIMIT_CAP = 200
 // then JS-filter -- that starved rarely-active agents' threads, dashboard bug
 // 2026-06-03). `beforeId` pages older: pass the oldest id you already have to
 // fetch the next-older batch (scroll-up pagination). Newest-first.
-export function getAgentConversation(agent: string, limit = 50, beforeId?: number): AgentMessage[] {
+// `status` filters on the column of the same name. WHY it is a parameter at all
+// (Roxy, 2026-09-01): the route accepted ?status=<anything> and honoured only
+// 'pending' -- every other value, valid or nonsense alike, fell through to the
+// unfiltered conversation and came back as a full 200. So ?status=unread looked
+// like an inbox query and answered with the last N messages regardless of state,
+// which reads as "you have dozens waiting" when the true pending count is zero.
+// The route now rejects a status outside the CHECK-constraint set; this function
+// makes the accepted ones actually filter.
+export function getAgentConversation(agent: string, limit = 50, beforeId?: number, status?: AgentMessage['status']): AgentMessage[] {
   const cap = Math.min(Math.max(1, Math.floor(limit) || 1), AGENT_MESSAGE_LIMIT_CAP)
+  const statusClause = status ? ' AND status = ?' : ''
+  const statusArg = status ? [status] : []
   if (beforeId !== undefined && Number.isFinite(beforeId)) {
     return db.prepare(
-      'SELECT * FROM agent_messages WHERE (from_agent = ? OR to_agent = ?) AND id < ? ORDER BY created_at DESC, id DESC LIMIT ?'
-    ).all(agent, agent, beforeId, cap) as AgentMessage[]
+      `SELECT * FROM agent_messages WHERE (from_agent = ? OR to_agent = ?)${statusClause} AND id < ? ORDER BY created_at DESC, id DESC LIMIT ?`
+    ).all(agent, agent, ...statusArg, beforeId, cap) as AgentMessage[]
   }
   return db.prepare(
-    'SELECT * FROM agent_messages WHERE (from_agent = ? OR to_agent = ?) ORDER BY created_at DESC, id DESC LIMIT ?'
-  ).all(agent, agent, cap) as AgentMessage[]
+    `SELECT * FROM agent_messages WHERE (from_agent = ? OR to_agent = ?)${statusClause} ORDER BY created_at DESC, id DESC LIMIT ?`
+  ).all(agent, agent, ...statusArg, cap) as AgentMessage[]
 }
 
 export interface AgentThread {
@@ -2676,11 +2765,50 @@ export interface TaskRunHistoryEntry { ts: number; status: string; tokens_est: n
 
 const TASK_RUN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-export function appendTaskRun(name: string, agent: string, status = 'fired'): void {
+export function appendTaskRun(name: string, agent: string, status = 'fired', reason: string | null = null): void {
   const now = Date.now()
-  db.prepare('INSERT INTO task_runs (name, agent, ts, status) VALUES (?, ?, ?, ?)').run(name, agent, now, status)
+  db.prepare('INSERT INTO task_runs (name, agent, ts, status, reason) VALUES (?, ?, ?, ?, ?)').run(name, agent, now, status, reason)
   // Opportunistic TTL prune: cheap indexed DELETE, keeps the table bounded.
   db.prepare('DELETE FROM task_runs WHERE ts < ?').run(now - TASK_RUN_TTL_MS)
+}
+
+/**
+ * How many ticks in a row this task/agent pair has been skipped, and when it
+ * last actually ran.
+ *
+ * STARVATION901 (card a8f8aa54). The memoria-heartbeat was skipped 101 times
+ * across FIVE DAYS without a single word anywhere: it stood in permanent
+ * collision with another task, and skipIfBusy drops a tick silently by design
+ * (that design is right -- a queued 30-minute heartbeat produces spurious
+ * "waiting 60 minutes" alerts). What was missing is not a louder skip; it is
+ * anyone counting them. A silence that means "nothing to report" and a silence
+ * that means "this has not run since Tuesday" look identical from outside.
+ *
+ * Counting stops at the first non-skip row, so ONE successful run resets it.
+ * `lastFiredTs` is null when the window holds no successful run at all, which
+ * the caller must treat as "very stale", never as "just started".
+ */
+export function countConsecutiveSkips(name: string, agent: string, window = 400): {
+  skips: number
+  lastFiredTs: number | null
+  reasons: string[]
+} {
+  const rows = db.prepare(
+    'SELECT ts, status, reason FROM task_runs WHERE name = ? AND agent = ? ORDER BY ts DESC LIMIT ?'
+  ).all(name, agent, window) as { ts: number; status: string; reason: string | null }[]
+  let skips = 0
+  const reasons = new Set<string>()
+  let lastFiredTs: number | null = null
+  for (const r of rows) {
+    if (r.status === 'skipped') {
+      skips++
+      if (r.reason) reasons.add(r.reason)
+      continue
+    }
+    lastFiredTs = r.ts
+    break
+  }
+  return { skips, lastFiredTs, reasons: [...reasons].sort() }
 }
 
 export function listTaskRunHistory(name: string, limit: number): TaskRunHistoryEntry[] {
@@ -3179,6 +3307,15 @@ export interface ToolCallLogRow {
   session_id: string
   tool_name: string
   input_summary: string | null
+  /**
+   * 1 = the call returned normally, 0 = it errored or was interrupted.
+   *
+   * Fed by two hook events, because PostToolUse alone only ever sees wins: a
+   * non-zero-exit Bash call does not reach it. See the note above the
+   * GET /api/tool-log handler for what an error rate computed from this column
+   * still misses (gate-blocked calls, sub-agents) -- both omissions push the
+   * rate down, never up.
+   */
   success: number
   created_at: number
   agent_id: string | null

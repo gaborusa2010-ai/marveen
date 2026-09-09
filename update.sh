@@ -336,7 +336,22 @@ OLD_VERSION_FULL=$(git rev-parse HEAD 2>/dev/null || echo "")
 # upstream, and the updater still would not run -- no build, no migration, no
 # restart, on a tree that was in fact current. Only ahead AND behind together
 # mean the histories have parted and a human has to reconcile them.
+#
+# The counts below are only as fresh as the last fetch, and NOTHING in this
+# script fetched before this point. So the gate judged the checkout against a
+# remote-tracking ref that could be days old, waved through a tree it believed
+# was "ahead, 0 behind", and left the pull to discover the truth -- which it
+# reported as "divergencia vagy halozati hiba", naming the wrong cause half the
+# time and burning three retries on a state that no retry can change.
+# Measured 2026-08-31 13:52: the gate printed "lemaradas nincs, a frissites
+# folytatodik" and the pull then failed on a 55/41 divergence.
+# Fetching first costs one network round-trip and makes the gate answer the
+# question it claims to answer. A fetch failure is not fatal here: it is left
+# to the pull below, which already retries and reports a network error.
 RESULT_PHASE="pull"
+echo -e "  Tavoli allapot lekerdezese (origin/${CURRENT_BRANCH})..."
+git fetch --quiet origin "$CURRENT_BRANCH" 2>/dev/null || \
+  echo -e "  ${ORANGE}Megjegyzes:${NC} a fetch nem sikerult, a lenti szamok a korabbi allapotbol valok."
 AHEAD=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
 BEHIND=$(git rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
 if [ "${AHEAD:-0}" -gt 0 ] && [ "${BEHIND:-0}" -gt 0 ]; then

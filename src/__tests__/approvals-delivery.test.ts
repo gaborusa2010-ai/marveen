@@ -85,11 +85,33 @@ describe('buildOwnerApprovalText (leg 1: what the owner reads)', () => {
 
 describe('wiring contracts on the route source', () => {
   it('the POST handler notifies the OWNER, not only the main agent', () => {
+    // Scoped to the ASKING path. Since 2026-09-01 the handler has a second
+    // branch (`pre_approved_by`) that records an audit row for an action a
+    // standing permission already covers -- that one notifies the main agent
+    // and deliberately NOT the owner, so a plain first-indexOf would read the
+    // wrong call. Cut the pre-approved branch off before measuring order.
+    // The asking path is the handler's tail, so lastIndexOf pins it without
+    // having to guess where the pre-approved branch ends -- an earlier attempt
+    // sliced at its first `return true` (the 403 guard's) and still swallowed
+    // the branch's own notifyMainAgent call.
     const post = ROUTE.slice(ROUTE.indexOf("path === '/api/approvals' && method === 'POST'"))
-    const owner = post.indexOf('notifyOwner(approval)')
-    const main = post.indexOf('notifyMainAgent(approval)')
+    const owner = post.lastIndexOf('notifyOwner(approval)')
+    const main = post.lastIndexOf('notifyMainAgent(approval)')
     expect(owner).toBeGreaterThan(0)
     expect(main).toBeGreaterThan(owner)
+  })
+
+  it('the pre-approved branch does NOT notify the owner', () => {
+    // The whole point of the branch: the owner already gave this permission,
+    // so re-pinging him is the noise he asked us to stop. If a later edit adds
+    // notifyOwner here, this fails.
+    const post = ROUTE.slice(ROUTE.indexOf("path === '/api/approvals' && method === 'POST'"))
+    const start = post.indexOf('if (typeof pre_approved_by')
+    expect(start).toBeGreaterThan(0)
+    const branch = post.slice(start, post.indexOf('notifyOwner(approval)', start))
+    expect(branch).toContain('resolveApproval(id')
+    expect(branch).toContain('notifyMainAgent(approval)')
+    expect(branch).not.toContain('notifyOwner(')
   })
 
   it('a successful owner send stamps telegram_message_id onto the row', () => {
@@ -126,12 +148,15 @@ describe('degraded-delivery fallback (review finding on #1026)', () => {
     }
   })
 
-  it('the fallback is main-requester-only and carries the OWNER_UNREACHED marker', () => {
+  it('the fallback reaches the main agent for EVERY requester, marked either way (OWNERUNREACHED901)', () => {
+    // It used to bail out for sub-agent requesters. The main agent then saw the
+    // plain `[APPROVAL_REQUEST]` from notifyMainAgent() with no hint that the
+    // owner never got it, and the sub-agent waited out its 24h timeout. The
+    // warning was missing precisely for the party that cannot read the dashboard.
     const fn = ROUTE.slice(ROUTE.indexOf('function fallbackInBand('), ROUTE.indexOf('function notifyOwner('))
-    const guard = fn.indexOf('approval.agent_id !== MAIN_AGENT_ID')
-    const send = fn.indexOf('createAgentMessage')
-    expect(guard).toBeGreaterThan(0)
-    expect(send).toBeGreaterThan(guard)
+    expect(fn).not.toContain('if (approval.agent_id !== MAIN_AGENT_ID) return')
+    expect(fn).toContain('createAgentMessage')
     expect(fn).toContain('[OWNER_UNREACHED')
+    expect(fn).toContain('[APPROVAL_OWNER_UNREACHED')
   })
 })

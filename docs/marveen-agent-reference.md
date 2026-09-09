@@ -30,7 +30,52 @@ curl -s -X POST http://localhost:3420/api/memories \
 
 # keresés (válasz előtt: van-e releváns emlék?)
 curl -s -H "Authorization: Bearer $T" \
-  "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZÓ&category=warm"
+  "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZÓ"
+
+# HARMADIK CSAPDA, mérve 2026-09-04: NE tedd a keresés mellé a `&category=warm`-ot.
+# Ez a példa nyolc helyen állt így (mind az öt ágens CLAUDE.md-je, ez a fájl, a
+# CLAUDE.md sablon és a scaffold, ami minden ÚJ ágensnek beleírja), és rossz
+# eredményt ad: a kategória POST-FILTER a keresés után (src/web/routes/memories.ts),
+# tehát a találatokból kidobja a `cold` és `shared` sorokat. A cold épp a TANULSÁGOK
+# helye -- amit egy válasz előtt a leginkább tudni akarsz.
+# Élő eset: Forgács `jobs.py` emléke `cold`. A `q=jobs.py` 2 találatot ad,
+# a `q=jobs.py&category=warm` NULLÁT. Ugyanaz a kérdés, 200-as válasz, üres lista.
+# Kategóriára szűrni akkor van értelme, ha NEM keresel: `?agent=X&category=warm`
+# a warm listát adja. A kettőt együtt ne.
+
+# keresés ÚGY, HOGY MŰKÖDIK ÉS LÁTSZIK A SOR GAZDÁJA (mérve 2026-09-01 éjjel)
+# KÉT csapda van benne, mindkettő mérve:
+# 1. ÉKEZETES KULCSSZÓT NYERSEN AZ URL-BE TENNI NEM SZABAD. A szerver 400-at ad ÜRES
+#    törzzsel: "q=mérés" -> 400, "q=meres" -> 200. Egy üres törzs a legtöbb parszolóban
+#    "nincs találat"-tá válik, tehát a felidézés NÉMÁN elnémul. Ezért kell a quote().
+# 2. A válasz LISTA, nem {"memories": [...]} objektum. A .get('memories') itt AttributeError.
+KULCS="mérés"
+Q=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$KULCS")
+curl -s -H "Authorization: Bearer $T" "http://localhost:3420/api/memories?agent=marveen&q=$Q" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+rows=d.get('memories') if isinstance(d,dict) else d
+me='marveen'
+mine=[r for r in rows if r.get('agent_id')==me]
+shared=[r for r in rows if r.get('agent_id')!=me]
+print('-- A TIED (' + str(len(mine)) + ') --')
+for r in mine: print('  [' + str(r.get('category')) + '] ' + str(r.get('content'))[:100])
+print('-- MEGOSZTOTT, MASTOL (' + str(len(shared)) + ') --')
+for r in shared: print('  [' + str(r.get('agent_id')) + '] ' + str(r.get('content'))[:100])
+"
+# 3. A KERESÉS MAGA VISZONT MÁR ÉKEZET-FÜGGETLEN, tehát ha egyszer átment a kérés,
+#    mindegy hogyan írod. Mérve (marveen, limit=500): q=meres 61 sor, q=mérés 61 sor,
+#    metszet 61; ellenorzes/ellenőrzés 48 = 48; merte/mérte 21 = 21. Kontroll, hogy a
+#    szűrő tényleg szűr: q nélkül 200 sor, q=xyzzyfoobar123 -> 0 sor. Vagyis NEM kell
+#    találgatni, hogy az adat ékezettel van-e eltárolva (vegyes: a saját emlékeim 34
+#    százaléka ékezetes) -- a szerver mindkét irányban összeejti. A gond KIZÁRÓLAG az
+#    átvitel: nyers ékezet az URL-ben nálam 400 üres törzzsel, Margónál a python urllib
+#    UnicodeEncodeError-ral áll meg még küldés előtt. Ezért a quote(), és semmi más.
+
+# Miért kell a szétválasztás: a szűrő szerződése (agent_id = ? OR category = 'shared'),
+# tehát mások megosztott sorai azonos súllyal állnak a sajátjaid mellett. Margó mérése
+# szerint ez témafüggően elnyom: a q=meres keresésénél 25 sorból 20 volt idegen, és az
+# első öt MIND másé. FIGYELEM: az alapértelmezett limit 50, némán vág (Margó mérése).
 
 # napi napló (append-only)
 curl -s -X POST http://localhost:3420/api/daily-log \
@@ -63,8 +108,71 @@ curl -s -X POST http://localhost:3420/api/kanban/ID/comments \
 curl -s -X POST -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/ID/archive
 ```
 
+- **A kártya IDŐBÉLYEGEI UNIX EPOCH INTEGEREK, nem ISO stringek.** (Forgács mérése,
+  2026-09-04, visszamérve.) A `created_at`, `updated_at` és `last_status_at` `int`;
+  a `due_date`, `dispatched_at`, `description`, `project`, `parent_id` és
+  `archived_at` lehet `None`.
+  Aki `fromisoformat()`-tal próbálja, annál **minden sor egyformán bukik el**, és
+  Forgács pontosan erre a csapdára hívja fel a figyelmet: az EGYENLETES hiba adatnak
+  látszik, nem hibának. Nála mind a 11 waiting kártya ugyanazt a hamis kort kapta, és
+  majdnem azt állította, hogy a tábla nem tárol időbélyeget.
+  Helyesen: `datetime.fromtimestamp(c["updated_at"])`, vagy egyszerűen
+  `(time.time() - c["updated_at"]) / 86400` a napokhoz.
+
+- **AZ `updated_at` A MOZGATÁS IDEJE, NEM A MUNKA KORA. Egyik mező sem mondja meg,
+  mióta áll egy ügy.** Ez a fenti mérés folytatása, és a következtetést érinti, nem a
+  típusokat. 2026-09-04-en a waiting kártyák kora 0 és 3,7 nap között volt, amiből
+  az következne, hogy beragadt kártya nincs. Csakhogy két 0,0 napos kártya
+  (`200e4013`, `d048ba1e`) aznap reggel **azért** lett friss, mert ÉN tettem át őket
+  waiting-be -- a tartalmuk 9,5 napja nem mozdult, és a gazda kifejezetten félretette
+  őket.
+  A `last_status_at` sem elég: az a státuszváltásé (egy komment csak az `updated_at`-et
+  tolja, lásd `8539d215`: updated 1,9 nap, last_status 3,7 nap), és egy áthelyezés
+  mindkettőt nullázza.
+  **ES A KET MEZO EGYMAS ELLENTETET MONDJA -- ez a lelet elesebb fele, Forgacse.**
+  Ugyanaz a 11 waiting kartya, ugyanaz a pillanat, 2026-09-04 08:40, ket mezo:
+
+      created_at szerint:  0,0 0,4 0,4 0,4 1,9 2,0 8,9 9,5 9,5 9,7 9,7
+      updated_at szerint:  0,0 0,0 0,0 0,4 0,4 0,4 1,6 1,6 1,9 1,9 3,7
+
+  Az egyik szerint OT kartya legalabb 8,9 napja all; a masik szerint a legidosebb
+  3,7 napos, es beragadt kartya nincs. (Fuggetlenul visszamerve: a szigoru "> 8,9"
+  negyet ad, a "legalabb 8,9" otot -- a kep ettol nem valtozik.)
+  **Forgacs megfogalmazasa, es ez a hasznalhato resz:** *"Egy hianyzo adat feltunik.
+  Ket egymasnak ellentmondo adat kozul viszont az valasztodik ki, amelyik eloszor ad
+  kesz valaszt, es a mero ott abbahagyja."* O maga is ott hagyta abba -- a masodik
+  szamsort a scriptje amugy is kiirta, csak nem nezte meg, mit jelent.
+  Tehat a kerdes elott dontsd el, MELYIK kort kerdezed: a kartya letezeset
+  (`created_at`) vagy a legutobbi hozzanyulast (`updated_at`). A ketto kozul egyik sem
+  a MUNKA kora.
+
+  Meg egy technikai reszlet ugyanonnan: kor-szamitasnal a `timedelta.days` LEFELE
+  CSONKOL (3,7 nap -> 3). Hasznalj `total_seconds() / 86400`-at, egy tizedessel.
+
+  **Ha azt kérdezed, mióta áll egy ügy, a kártya időbélyegei nem válaszolnak rá.** A
+  kommentek és a leírás igen. Rokon: a "waiting oszlop vak folt" -- a 48 órás
+  riasztás csak ÚJ blokkolót jelez, a legrégebbi kártyák örökre némák maradnak.
+
 - Az `actor` mezőt **minden mozgatásnál** küldd el, különben nem derül ki ki mozdította.
+- **A `POST /api/kanban` VÁLASZA CSAK `{"ok":true,"id":"..."}`** -- a beállított mezőket
+  NEM adja vissza. (Anorak mérése, 2026-09-09: a válaszból `parent=None assignee=None
+  status=None` jött, közben MIND A NÉGY mező átment; a kód `json(res, { ok: true, id })`,
+  `src/web/routes/kanban.ts:381`.) Aki a POST válaszából ellenőriz, **hamis negatívot kap**.
+  Az ellenőrzés a tábla újra-lekérdezése, nem a válasz. Ez nem hiba a kódban: a végpont
+  szerződése ennyi, csak könnyű többet olvasni bele.
+- **A `parent_id` ÁTMEGY a sima POST-on**, nem kell hozzá a breakdown-végpont. A kezelő a
+  teljes body-t továbbadja (`kanban.ts:380`), és a `createKanbanCard` ismeri a mezőt
+  (`db.ts:1882`, és az INSERT oszlopai között `db.ts:1893`). Mérve 2026-09-09 két kártyán
+  (65c4da11, 14cef90d, mindkettő `parent_id=53925c5f`). Alkártyát tehát így is lehet
+  csinálni -- és ez a helyes alak, ha egy ügy egy MÁSIK ágens kártyájának a kommentjében
+  ülne: a komment nem nyilvántartás (nincs státusza, nem lezárható, egyetlen lekérdezés
+  sem látja).
 - Egy-kártya lekérdezés (`GET /api/kanban/ID`) **nincs**. A teljes listát kérd le és szűrd.
+- **A `GET /api/kanban` SEMMILYEN query paramétert nem fogad.** Nem csak a szűrőket: mérve
+  (2026-09-02) a `?limit=`, a `?status=` és egy kitalált `?foo=1` is egyformán `400`-at ad,
+  a válaszban `known: []`. A szűrés a hívó dolga, Pythonban, a teljes listán.
+  Ez a kapu a JÓ irányba téved: az elgépelt szűrő itt hibát ad, nem némán több sort
+  (ellentétben a `/api/memories` esetével). A `400` tehát nem üzemzavar, hanem a válasz.
 - **Öregedés és beakadás mérésére a `last_status_at` mezőt használd, SOHA az `updated_at`-ot.**
   Az `updated_at`-ot egy puszta komment is átírja.
 
@@ -97,15 +205,100 @@ echo "hosszú szöveg" | bash scripts/agent-msg.sh marveen CELPONT -
 curl -s -H "Authorization: Bearer $T" http://localhost:3420/api/agents   # kik érhetők el
 ```
 
-Feldolgozás után a sor nem záródik magától, és a nyitott sor ismételt ébresztést okoz:
+**A `GET /api/agents` sorában az ágens neve a `name` mező, NEM `id` és nem `agent_id`.**
+A futás-állapot a `running` (bool) és a `runState`. 2026-09-06 16:03 két hívást
+költöttem arra, hogy ezt kiderítsem: az `a.get('id')` mindenkire `None`-t ad, és egy
+f-stringben ez `TypeError: unsupported format string passed to NoneType` -- a hibaüzenet
+tehát a formázásra mutat, nem a rossz mezőnévre. Egy kész sor, ami működik:
+
+```bash
+python3 -c "
+import json,urllib.request
+t=open('/home/gabor/marveen/store/.dashboard-token').read().strip()
+r=urllib.request.Request('http://localhost:3420/api/agents',headers={'Authorization':'Bearer '+t})
+for a in json.load(urllib.request.urlopen(r)):
+    print(a['name'], 'running=', a['running'])
+"
+```
+
+**Ez a mezőnév egy KAPU, nem részletkérdés:** üzenetet csak FUTÓ ágensnek lehet küldeni,
+tehát a ping-döntés ezen a listán múlik. Ha a nevek `None`-ként jönnek vissza, a lista
+használhatatlan, és a `running` szűrés csendben mindenkit kihagy.
+
+**Kódrészletet TARTALMAZÓ üzenetet fájlból küldj, ne parancssori argumentumként.**
+2026-09-01, Forgács élő esete: egy backtickekbe tett parancs-példát a shell
+parancsbehelyettesítésnek olvasott és **elnyelte**. A címzetthez egy csonka mondat
+érkezett (`"python3 heredoc-kal: ."`), a helper pedig `OK id=243`-at adott vissza --
+tehát a küldés sikeresnek látszott, csak a tartalom nem az volt, amit írtak. Ugyanaz
+a néma-siker osztály, mint a `curl exit 0`. A biztonságos alak:
+
+```bash
+cat > /tmp/uzenet.txt <<'MSG'
+... a szöveg, backtickekkel, $változókkal, bármivel ...
+MSG
+bash scripts/agent-msg.sh marveen CELPONT - < /tmp/uzenet.txt
+```
+
+
+Feldolgozás után a sor nem záródik magától, és a nyitott sor ismételt ébresztést okoz.
+
+**Ami ismételten ébreszt, az `delivered`, NEM `pending`.** A `pending` az átmeneti beszúrási
+állapot: a kézbesítés másodperceken belül `delivered`-re billenti (`src/db.ts:2369` írja be,
+`:2397` billenti át). Mérve 2026-09-02 12:00-kor: a teljes táblában **0 sor** állt `pending`-ben,
+miközben egyedül a marveen postaládájában **303** nyitott sor volt, **mind** `delivered`
+(más nyitott státusz nulla). Az itt
+korábban álló, `status='pending'`-re szűrő tömeges lezárás tehát **nulla sort írt volna át,
+némán, sikeres futás látszatával** -- ugyanaz az osztály, mint a `?status=unread`.
+
+A helyes alak (abszolút úttal, mert relatívval az ágens-mappából elhasal, és a **két óránál
+régebbi** sorokra szűkítve, hogy egyezzen a szerver saját csendes ágával -- `shouldNotifyDelegator`):
 
 ```bash
 python3 -c "
 import sqlite3,time
-db=sqlite3.connect('store/claudeclaw.db'); now=int(time.time())
-db.execute('UPDATE agent_messages SET status=?, delivered_at=COALESCE(delivered_at,?), completed_at=? WHERE to_agent=? AND status=?',
-           ('done',now,now,'marveen','pending')); db.commit()"
+db=sqlite3.connect('/home/gabor/marveen/store/claudeclaw.db'); now=int(time.time())
+cur=db.execute('UPDATE agent_messages SET status=?, delivered_at=COALESCE(delivered_at,?), completed_at=? WHERE to_agent=? AND status=? AND created_at < ?',
+           ('done',now,now,'marveen','delivered',now-7200)); db.commit(); print('lezarva:',cur.rowcount)"
 ```
+
+A `print` nem dísz: enélkül a nulla és a háromszáz pontosan egyformán néz ki. A fenti alak
+egy **másolaton** futott le (`cp` a scratchpadre), és 286 sort írt át; az éles fájl 303-on
+maradt. A parancs tehát megy, csak nem futott élesben.
+
+**És szándékosan nem futott.** 2026-09-01 este a flotta megállapodott, hogy **visszamenőleg
+senki nem takarít** a postaládájában, mert a régi sorok a nap bizonyítékai. Ez a parancs
+ahhoz kell, hogy egy TUDATOS döntés végrehajtható legyen, nem ahhoz, hogy magától
+rendrakj. Nagy adagot darabolva.
+
+Ez a közvetlen DB-írás **nem küld nyugtát** senkinek. Friss (két óránál újabb) sort ezért ne
+így zárj le, hanem a `PUT /api/messages/<id>`-vel -- ott a küldő megkapja az eredményt.
+
+Listázás (`GET /api/messages`), mérve 2026-09-02:
+
+- Ismeretlen paraméter és ismeretlen `status`-érték egyaránt **400**, felsorolt `known` listával.
+  Ez a kapu jó irányba téved, nem némán szélesít.
+- **A `limit` 200-nál elvágódik**: `?limit=1000` is 200 sort ad (`messages.ts`,
+  `Math.min(..., 200)`). Egy lista hossza tehát NEM darabszám.
+  **2026-09-04 óta a válasz megmondja, ha vágott** (kártya c1fa4c60), fejlécekben, mert a
+  törzs sima tömb marad és minden hívó úgy indexeli:
+
+      X-Result-Truncated: true
+      X-Result-Limit: 200
+      X-Next-Before: 1702      <- ezzel kérd a következő lapot
+
+  A `before` **ÜZENET-AZONOSÍTÓ, nem epoch** -- ez a sor korábban `before=<epoch>`-ot írt,
+  és az soha nem volt igaz. És eddig a FLOTTA-SZINTŰ úton el volt fogadva, de nem hatott:
+  `?limit=200` és `?limit=200&before=1600` bitre ugyanazt adta. Csak a `?agent=`-es ág
+  lapozott. Most mind a kettő. Élesben visszamérve 2026-09-04 14:29-kor: `limit=200` ->
+  min id 1702, `limit=200&before=1702` -> 1502..1701, tehát tényleg lép.
+
+  Miért nem elég a plafont ismerni: a vágás **mindig a nap ELEJÉT** dobja el (a rendezés
+  `created_at DESC`). Anorak 2026-09-03-án így vesztett el 218 sorból 18-at, 8,3%-ot, mind
+  08:12 előttről -- és az eredmény teljes napnak látszott. Ha SZÁMOT akarsz, lapozz végig
+  az `X-Next-Before`-ral, vagy kérd le ágensenként és uniózd.
+- A `?status=pending` az egyetlen ág, ami megkerüli a `limit`-et -- és mivel a `pending`
+  átmeneti, ez a gyakorlatban mindig üres listát ad. **A 200-as, üres válasz itt nem azt
+  jelenti, hogy nincs postád.**
 
 ### Ágensek indítása és leállítása
 
@@ -218,12 +411,44 @@ Tartsd 500 sor alatt, a nagyobb anyag megy a `references/` almappába. A skillek
 szinten töltődnek: név+leírás mindig, teljes tartalom ha releváns, segédfájlok ha
 kifejezetten kellenek.
 
-Index-frissítés szerkesztés után, **mindkét szinten**:
+Index-frissítés szerkesztés után. **A SAJÁT mappádra, LITERÁLIS úttal**:
 
 ```bash
-bash scripts/skill-index.sh                     # globális
-bash scripts/skill-index.sh /home/gabor/marveen # ágensspecifikus
+bash /home/gabor/marveen/scripts/skill-index.sh /home/gabor/marveen/agents/<sajat-neved>
 ```
+
+A főágens a telepítés gyökerét adja meg (`/home/gabor/marveen`).
+
+**NE `$PWD`-t használj.** Kézenfekvőnek tűnik, és egy fél óráig ez is állt itt, de a
+munkakönyvtár a session közben elcsúszik: egy ügynök belép a saját projekt-mappájába, vagy
+`cd`-zik a repo gyökerébe, mert onnan futnak a szkriptek. Akkor `$PWD` MÁS ágens indexét
+írja, sikeresnek látszó kimenettel. Ez ugyanaz a hibaosztály, amit a ledger kódja
+LEDGERCWD828 néven már névvel hordoz: a cwd változik a sessionön belül, ezért identitást
+NEM vezetünk le belőle. (Cody és Forgács mérte ki, 2026-09-01.)
+
+A régi példa itt `/home/gabor/marveen`-t adott ÁGENS-MAPPAKÉNT: az a FŐÁGENS mappája, tehát
+egy sub-ágens, aki azt másolta, nem a sajátját frissítette, hanem a főágensét.
+
+A szkript emellett **felfelé normalizálja** a kapott utat: ha az a telepítésen belülre esik,
+`<install>/agents/<id>`-ig vágja vissza. Ez véd az elgépelt alkönyvtár ellen, de NEM véd az
+ellen, ha a repo gyökeréből futtatod: onnan a főágens indexe íródik, mert az út önmagában
+nem árulja el, ki vagy.
+
+**Argumentum NÉLKÜL a KÖZÖS indexet írja** (`~/.claude/skills/.skill-index.md`), ami a
+teljes flottára hat és jóváhagyás-köteles (`skill_patch`). Ne fusson így reflexből:
+
+```bash
+bash /home/gabor/marveen/scripts/skill-index.sh   # KÖZÖS index -- csak jóváhagyással
+```
+
+Két buktató, mindkettő mért (2026-09-01):
+- A generátor korábban **bájtra** vágta a leírásokat 120-nál. Egy ékezetes betű közepén
+  elvágva a fájl érvénytelen UTF-8 lett, és a gép keresője (ugrep) ilyenkor binárisnak
+  ítéli és **némán átugorja**: nulla találat, exit 1, semmi kiírás. Javítva, de ha egy
+  keresés gyanúsan üres: `file <fájl>`, és ha nem UTF-8 text, akkor `grep -a`.
+- Öt ügynökből háromnál az ágens-szintű index **nem is létezett**, mert a skill írása után
+  senki nem futtatta a generátort. A tünet ugyanaz, mint a sérült fájlé: nulla találat.
+  Ezért a skill-index frissítése a skill-írás RÉSZE, nem külön lépés.
 
 ---
 

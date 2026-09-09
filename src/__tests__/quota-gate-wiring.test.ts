@@ -39,7 +39,11 @@ describe('schedule-runner wiring', () => {
     const block = gate.slice(0, gate.indexOf('const cronPc'))
     expect(block).toContain('scheduleLastRun.set(task.name, now)')
     expect(block).toContain('persistScheduleLastRun()')
-    expect(block).toContain("appendTaskRun(task.name, agentName, 'skipped')")
+    // Through recordSkip since 2026-09-04, and carrying the quota's OWN reason:
+    // a quota deferral and a busy drop wrote the same bare 'skipped' before, so
+    // the table could not tell "held back on purpose" from "collided again"
+    // (card a8f8aa54).
+    expect(block).toContain('recordSkip(task.name, agentName, `quota-defer:${quota.reason}`)')
   })
 
   it('gates before the pre-check, so a deferred task never spawns its script', () => {

@@ -57,9 +57,22 @@ def _objects(data):
         sm = re.search(rb"stream\r?\n", body)
         stream = None
         if sm:
-            se = body.find(b"endstream", sm.end())
-            raw = body[sm.end():se if se > 0 else len(body)].rstrip(b"\r\n")
             header = body[:sm.start()]
+            # Take the stream by its declared /Length, not by hunting for the
+            # next "endstream".  A COMPRESSED stream is arbitrary bytes and can
+            # contain "endobj" or "endstream" by chance; when it does, the old
+            # slice cut the data short, zlib refused it, and the whole PAGE
+            # dropped out of the extraction silently.  Measured 2026-09-04 on
+            # b02-part-drawings.pdf: 11 pages in the file, 10 in the output,
+            # and the missing page held four real parts.  Fallback kept for
+            # streams that declare no length.
+            length = re.search(rb"/Length\s+(\d+)\b", header)
+            if length:
+                s0 = start + sm.end()
+                raw = data[s0:s0 + int(length.group(1))]
+            else:
+                se = body.find(b"endstream", sm.end())
+                raw = body[sm.end():se if se > 0 else len(body)].rstrip(b"\r\n")
             stream = raw
             filters = re.findall(rb"/(ASCII85Decode|A85|FlateDecode|Fl)",
                                  header)
@@ -401,9 +414,12 @@ def _plausible_text(text):
 
 
 def main(argv):
-    if len(argv) < 2:
+    # `--help` used to fall through to open(argv[1]) and die with a traceback
+    # naming "--help" as a missing file. The usage text was always here; only
+    # the flag that everyone tries first was not wired to it.
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
-        return 2
+        return 2 if len(argv) < 2 else 0
     txt = extract(argv[1], raw="--raw" in argv)
     if not txt.strip():
         return 0

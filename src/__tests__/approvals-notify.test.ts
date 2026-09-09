@@ -64,10 +64,18 @@ describe('approvals notification target', () => {
 
     // The notification must go to the mocked MAIN_AGENT_ID value.
     const pending = getPendingMessages('agent-a')
-    expect(pending.length).toBe(1)
-    expect(pending[0].to_agent).toBe('agent-a')
-    expect(pending[0].from_agent).toBe('system')
-    expect(pending[0].content).toContain('[APPROVAL_REQUEST]')
+    for (const m of pending) {
+      expect(m.to_agent).toBe('agent-a')
+      expect(m.from_agent).toBe('system')
+    }
+    expect(pending.some((m) => m.content.includes('[APPROVAL_REQUEST]'))).toBe(true)
+
+    // OWNERUNREACHED901: there is no bot token in the test environment, so the
+    // owner notification cannot go out -- and the main agent must be TOLD that,
+    // even though a sub-agent made the request. Before the fix the marker was
+    // suppressed for sub-agent requesters and only the bare [APPROVAL_REQUEST]
+    // arrived, which reads as "the owner has it".
+    expect(pending.some((m) => m.content.includes('[APPROVAL_OWNER_UNREACHED'))).toBe(true)
 
     // Regression guard: no message may land on a different target.
     const wrongTarget = getPendingMessages('agent-b')
