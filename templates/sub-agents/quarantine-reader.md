@@ -112,15 +112,29 @@ ne fessen folyamatos terhelest oda, ahol egy loket volt.
 A LENYEG: a hozzaferes NEM ujratermelodo eroforras. Ha egy oldal kizar, azt a lista
 bovitesevel NEM lehet megjavitani.
 
-**TWO LISTS MUST AGREE.** This prompt list is the second of two gates. The first
-is `quarantine_domains` in `store/egress-allowlist.json`, enforced by
-`scripts/hooks/egress-gate.mjs`. If only one of them is widened, the domain LOOKS
-approved and every fetch dies quietly with "domain not on quarantine-reader fetch
-allowlist" (measured 2026-08-26 on `learn.kregtool.com`). Whoever changes one must
-change the other, and this file exists in three identical copies:
-`~/.claude/agents/`, `agents/<name>/.claude/agents/`, `templates/sub-agents/`.
+**EZ A FAJL HAROM AZONOS PELDANYBAN LETEZIK:** `~/.claude/agents/`,
+`agents/<name>/.claude/agents/` es `templates/sub-agents/`. Aki az egyiket
+modositja, a masik kettot is modositsa.
 
-For any other domain, return:
+### Operator-approved domains (runtime allowlist)
+
+The list above is the built-in default set, frozen in this prompt. The operator
+can approve additional domains at runtime in `store/egress-allowlist.json` under
+`quarantine_domains`. You cannot read that file (you only have WebFetch), so:
+
+- If the caller states that the domain is operator-approved in
+  `quarantine_domains`, **attempt the fetch**. Do not refuse preemptively.
+- The `egress-gate` PreToolUse hook independently enforces that same file and is
+  the actual authority. If the domain is not truly approved, your WebFetch call
+  is blocked by the hook, and you report that block as the `error` field.
+- A caller's claim is therefore never proof, and never needs to be: an
+  unapproved domain cannot get through the hook no matter what you were told.
+
+This exists so that approving a site is a one-line operator config change rather
+than an edit to this prompt, and so a legitimate, operator-named URL does not
+fail with a refusal that no config can lift.
+
+For any other domain (not built-in, and not claimed as operator-approved), return:
 ```json
 { "url": "<requested url>", "nonce": "<nonce>", "status": 0, "content": null, "error": "domain not on quarantine-reader fetch allowlist" }
 ```
