@@ -356,18 +356,10 @@ export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
   // so a fix for a SILENT failure was pointing readers at a closed door.
   // The honest repair was to make the sentence true, not to soften it: the
   // receipt says where the rest is, so the rest has to be there.
-  const msgGetMatch = path.match(/^\/api\/messages\/(\d+)$/)
-  if (msgGetMatch && method === 'GET') {
-    const one = getAgentMessage(parseInt(msgGetMatch[1], 10))
-    if (!one) { json(res, { error: 'message not found' }, 404); return true }
-    json(res, one)
-    return true
-  }
-
-  const msgUpdateMatch = path.match(/^\/api\/messages\/(\d+)$/)
   // EGY uzenet a TELJES tartalmaval -- ezt nevezi meg a levagott ertesites markere.
   // A lista-vegpont csak agens szerint kerdezheto, tehat egy `msg N` hivatkozast eddig
   // nem lehetett egy lepesben kovetni.
+  const msgUpdateMatch = path.match(/^\/api\/messages\/(\d+)$/)
   if (msgUpdateMatch && method === 'GET') {
     const one = getAgentMessage(parseInt(msgUpdateMatch[1], 10))
     if (!one) { json(res, { error: 'Message not found' }, 404); return true }
