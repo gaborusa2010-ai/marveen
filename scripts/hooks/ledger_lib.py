@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS conversation_log (
   created_at INTEGER NOT NULL,
   attachment_kind TEXT,
   attachment_file_id TEXT,
+  reply_to_message_id TEXT,
   UNIQUE(agent_id, chat_id, direction, message_id)
 )
 """
@@ -49,6 +50,7 @@ _MIGRATION_COLUMNS = (
     # even though the file was on disk the whole time. Voice already handled this;
     # photo did not.
     ("attachment_path", "TEXT"),
+    ("reply_to_message_id", "TEXT"),
 )
 
 RECENT_LIMIT = 20
@@ -254,7 +256,7 @@ def connect():
 
 def log_inbound(agent_id, chat_id, message_id, text, ts,
                 attachment_kind=None, attachment_file_id=None,
-                attachment_path=None, created_at=None):
+                attachment_path=None, reply_to_message_id=None, created_at=None):
     """Record an inbound user message. Idempotent on (agent_id, chat_id, in, message_id).
 
     attachment_kind/file_id: set for voice / video_note messages that arrived
@@ -274,17 +276,23 @@ def log_inbound(agent_id, chat_id, message_id, text, ts,
     ledger read as "newest inbound, unanswered" and the drain would have raised
     an already-handled message. Ordering is what this table is FOR; a row with
     the wrong created_at is worse than a missing row, because it makes the
-    watchdog lie in the confident direction."""
+    watchdog lie in the confident direction.
+
+    reply_to_message_id: the message_id this inbound quoted (Telegram
+    ctx.message.reply_to_message), when the sender replied to a specific
+    earlier message instead of writing standalone. Only the id is kept, not an
+    excerpt -- the quoted text is a copy of that other row's own `text` and is
+    already recoverable via a lookup on message_id (df3b48a7)."""
     con = connect()
     try:
         con.execute(
             "INSERT OR IGNORE INTO conversation_log"
             " (agent_id, chat_id, direction, message_id, text, ts, created_at,"
-            "  attachment_kind, attachment_file_id, attachment_path)"
-            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?)",
+            "  attachment_kind, attachment_file_id, attachment_path, reply_to_message_id)"
+            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?)",
             (str(agent_id), str(chat_id), str(message_id), text, ts,
              int(created_at) if created_at else int(time.time()),
-             attachment_kind, attachment_file_id, attachment_path),
+             attachment_kind, attachment_file_id, attachment_path, reply_to_message_id),
         )
         con.commit()
     finally:

@@ -2,11 +2,22 @@
 # Marveen - Reggeli napindító
 # Trigger: systemd user timer (Linux, <agent>-morning.timer) vagy LaunchAgent
 # (macOS), naponta 7:27-kor. Naponta legfeljebb egyszer küld (lásd a guardot).
+#
+# A Linux telepítő 2026-09-13 óta NEM engedélyezi ezt a timert: ugyanazt a
+# munkát a beseedelt reggeli-napindito scheduled task végzi 07:30-kor, az élő
+# csatorna-munkamenetben, ahol VAN channel allowlist. Ez a script a tartalék
+# és a kézi út marad (systemctl --user enable --now <agent>-morning.timer,
+# vagy MORNING_FORCE=1 mellett közvetlen futtatás).
 
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 INSTALL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CLAUDE="$(command -v claude)"
+# CLAUDE_BIN overrides the lookup. The PATH export above is deliberate (systemd
+# hands this script a minimal PATH), but it also wipes anything a caller put in
+# front -- so a test cannot substitute a stub by prepending to PATH, and would
+# silently drive the REAL binary instead. The seam keeps the hermetic tests
+# hermetic; nothing in production sets it.
+CLAUDE="${CLAUDE_BIN:-$(command -v claude)}"
 [ -z "$CLAUDE" ] && echo "ERROR: claude not found on PATH" >&2 && exit 1
 LOG="$INSTALL_DIR/store/morning.log"
 
@@ -34,6 +45,25 @@ echo "=== Reggeli napindító $(date) ===" >> "$LOG"
 
 cd "$INSTALL_DIR"
 
+# Delivery-proof sentinel. The dedup stamp must record "the briefing REACHED
+# the owner", not "the process exited 0" -- those diverged on 2026-09-13: the
+# run refused the task (empty channel allowlist in its config dir, so the reply
+# tool rejected the chat_id), printed an explanation, exited 0, and stamped the
+# day as done. The owner got nothing and the guard suppressed every retry. Now
+# the run must print SENTINEL as its last line, which it is told to do ONLY
+# after a reply tool call actually succeeded; no sentinel means no stamp, so the
+# next trigger tries again.
+#
+# Per-run nonce suffix: the sentinel is spelled out inside the prompt, so a
+# fixed constant is a control trigger that matches its own instruction text --
+# a run that QUOTES the instruction ("...print MORNING_SENT_OK...") on a bare
+# line would stamp a day that was never delivered. With the nonce, the only
+# string that stamps is the one THIS run was asked to print, and yesterday's
+# transcript (or a hardcoded echo) can never satisfy today's gate.
+SENTINEL="MORNING_SENT_OK_$(date +%s)_$$"
+RUN_OUT="$(mktemp)"
+trap 'rm -f "$RUN_OUT"' EXIT
+
 $CLAUDE --dangerously-skip-permissions \
   --channels plugin:telegram@claude-plugins-official \
   -p "Reggeli napindító - készítsd el és küld el Telegramra (chat_id: $CHAT_ID).
@@ -46,19 +76,23 @@ $CLAUDE --dangerously-skip-permissions \
    futtasd le ezt, mas esetben SOHA:
    date +%F > $SENT_MARKER
 
-Tomor, lenyegre toro. Ekezetesen irj magyarul." >> "$LOG" 2>&1
+Tömör, lényegre törő. Ékezetesen írj magyarul.
 
-# SILENTSTAMP901: the guard used to be stamped on `claude -p` exit 0 alone.
-# That exit code says the SESSION ran, not that a briefing was DELIVERED --
-# on 2026-09-01 the run only asked the owner a provenance question, sent
-# nothing, and still stamped the day as done. Had the scheduled-task path not
-# existed as well, the briefing would have been silently skipped while the
-# guard claimed success. The stamp now follows the marker the run itself
-# writes only after the reply tool confirmed a message id.
-if [ "$(cat "$SENT_MARKER" 2>/dev/null)" = "$TODAY" ]; then
+FONTOS, a kézbesítés visszaigazolása: ha a Telegram küldés TÉNYLEGESEN sikerült
+(a reply tool hibamentesen lefutott), akkor a válaszod UTOLSÓ sora pontosan ez
+legyen, önmagában: $SENTINEL
+Ha bármi miatt nem ment ki az üzenet (eszköz nem elérhető, hiba, megtagadás,
+visszakérdezés), akkor EZT A SORT NE írd ki. Ilyenkor írd le egy mondatban, mi
+akadályozta meg a küldést." > "$RUN_OUT" 2>&1
+RUN_RC=$?
+
+cat "$RUN_OUT" >> "$LOG"
+
+if [ "$RUN_RC" -eq 0 ] && grep -qx "$SENTINEL" "$RUN_OUT"; then
   echo "$TODAY" > "$STAMP"
+  echo "=== Kézbesítve, guard bepecsételve: $TODAY ===" >> "$LOG"
 else
-  echo "NEM stampelek: a futas nem igazolta vissza a kikuldest ($SENT_MARKER != $TODAY)" >> "$LOG"
+  echo "=== NEM kézbesítve (rc=$RUN_RC, sentinel hiányzik) -- guard NEM pecsételve, a következő trigger újra próbálja ===" >> "$LOG"
 fi
 
 echo "=== Kész $(date) ===" >> "$LOG"

@@ -101,12 +101,18 @@ def main():
         att_path = _attr(attrs, "image_path")
         if att_path and not att_kind:
             att_kind = "photo"
+        # Which earlier message (if any) the sender quoted. Only the id is
+        # captured, never reply_to_excerpt (df3b48a7): the excerpt is a copy of
+        # that other row's own text, and storing it twice would drift the
+        # moment either side is edited/redacted.
+        reply_to_message_id = _attr(attrs, "reply_to_message_id")
         if chat_id and message_id:
             try:
                 ledger_lib.log_inbound(
                     agent_id, chat_id, message_id, text.strip(), ts,
                     attachment_kind=att_kind, attachment_file_id=att_file_id,
                     attachment_path=att_path,
+                    reply_to_message_id=reply_to_message_id,
                 )
                 stored += 1
             except Exception as exc:
