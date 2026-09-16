@@ -49,6 +49,23 @@ run_drain() { # db
         MAIN_AGENT_ID="marveen" python3 "$HOOKS_DIR/ledger-live-drain.py" )
 }
 
+# The drain's grace window is read FROM THE DRAIN ITSELF, never copied here as a
+# literal. Measured 2026-09-09: this block had been failing since 09-01 because
+# the cases below aged rows by a hardcoded 120s while GRACE_SECONDS was raised
+# 60 -> 180 (Roxy, on nine real raises). The three RED assertions were the loud
+# half; the quiet half was worse -- (g2) and (g3) assert EMPTY output, which an
+# unsurfaced question produces just as well as a correctly suppressed one, so
+# both went GREEN without being able to say "no".
+DRAIN_GRACE="$(python3 - "$HOOKS_DIR/ledger-live-drain.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ledger_live_drain", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(mod.GRACE_SECONDS)
+PYEOF
+)"
+AGED_PAST_GRACE=$((DRAIN_GRACE + 60))
+
 # Age every row in a ledger DB backwards so an open question clears the grace window.
 age_rows() { # db seconds
     python3 - "$1" "$2" <<'PYEOF'
@@ -457,7 +474,7 @@ echo "(g) Live-session open-question drain"
 # (g1) aged + unanswered + not yet surfaced -> writes block + updates statefile
 mkdir -p "$TMPDIR_BASE/ld1"; DB_LD1="$TMPDIR_BASE/ld1/x.db"
 emit_inbound 10000000001 1122 "Elveszett elo kerdes" | run_hook ledger-capture.py "$DB_LD1"
-age_rows "$DB_LD1" 120
+age_rows "$DB_LD1" "$AGED_PAST_GRACE"
 OUT_G1="$(run_drain "$DB_LD1")"
 if printf '%s' "$OUT_G1" | grep -q "OPEN_QUESTION chat_id=10000000001 message_id=1122"; then
     pass "live drain: surfaces an aged, unanswered open question"
@@ -479,7 +496,7 @@ assert_eq "live drain: dedup suppresses re-surfacing the same message_id" "" "$O
 # (g3) a later 'out' answered it -> no output
 mkdir -p "$TMPDIR_BASE/ld3"; DB_LD3="$TMPDIR_BASE/ld3/x.db"
 emit_inbound 10000000001 1130 "Megvalaszolt kerdes" | run_hook ledger-capture.py "$DB_LD3"
-age_rows "$DB_LD3" 120
+age_rows "$DB_LD3" "$AGED_PAST_GRACE"
 emit_reply 10000000001 "Itt a valasz" | run_hook ledger-outbound.py "$DB_LD3"
 OUT_G3="$(run_drain "$DB_LD3")"
 assert_eq "live drain: an answered question is not surfaced" "" "$OUT_G3"
@@ -529,7 +546,7 @@ assert_eq "multi-part reply extracts the first message_id" "991" "$H2_MID"
 #      IS surfaced by the drain, and stops being surfaced once answered.
 mkdir -p "$TMPDIR_BASE/h3"; DB_H3="$TMPDIR_BASE/h3/x.db"
 emit_inbound_provider discord 10000000001 4201 "kerdes discordon" | run_hook ledger-capture.py "$DB_H3"
-age_rows "$DB_H3" 600
+age_rows "$DB_H3" "$AGED_PAST_GRACE"
 OUT_H3A="$(run_drain "$DB_H3")"
 case "$OUT_H3A" in
     *"kerdes discordon"*) pass "discord open question is surfaced by the drain" ;;

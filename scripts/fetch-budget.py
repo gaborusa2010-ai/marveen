@@ -35,7 +35,12 @@ WHAT IT CANNOT SEE, and the number has to say so
 ------------------------------------------------
 The egress gate is a PreToolUse hook matched on "WebFetch" and nothing else. Its
 own header says it: it does not intercept WebSearch, curl or Bash network calls,
-or MCP outbound. So this counts WebFetch traffic and only that.
+or MCP outbound. So this counts WebFetch traffic -- plus, since 2026-09-09, the
+browser fetcher, which is NOT hooked at all and therefore logs its own
+ALLOWED_BROWSER line into this same file on purpose. A page pulled by Chromium
+costs the source exactly what a WebFetch costs it, so leaving it out would have
+made this tally read "we were light on that source" while we were not. That is
+the failure this whole header is about, and it would have been self-inflicted.
 
 Measured 2026-08-29: the roxy and cody profiles both carry Bash(curl:*), and
 roxy's whole purpose is calling an outside image service. Those requests never
@@ -134,7 +139,20 @@ def read(path):
                 continue
             if not verdict.startswith("ALLOWED"):
                 continue
-            rows.append((ts[:10], ts[11:16], host_of(url)))
+            # The 4th element is the parsed UTC instant, and it exists because the
+            # log is UTC while dt.date.today() is local. Measured 2026-09-11 00:01
+            # BST by Anorak, reproduced at 00:02: three fetches made at 22:28,
+            # 22:40 and 22:45 UTC counted as ZERO, because the local date had
+            # already rolled over. Under BST that opens a one-hour hole every
+            # night; under GMT the two zones coincide and the bug disappears,
+            # which is why it went unseen for two weeks.
+            when = None
+            try:
+                when = dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                    tzinfo=dt.timezone.utc)
+            except ValueError:
+                pass
+            rows.append((ts[:10], ts[11:16], host_of(url), when))
     return rows, skipped
 
 
@@ -146,11 +164,15 @@ def main(argv=None):
     ap.add_argument("--warn-per-min", type=int, default=3)
     ap.add_argument("--budget", metavar="HOST",
                     help="mennyit vittem el MA errol a hostrol, es mennyi maradt")
+    ap.add_argument("--log", default=LOG,
+                    help="a naplo utja; TESZTELESRE van, nem megkerulesre -- aki ezt at "
+                         "tudja adni, az a hivast egeszben is kihagyhatna, tehat nem nyit "
+                         "ujat. A kapu az allowlist, nem ez a szamlalo.")
     ap.add_argument("--cap", type=int, default=12,
-                    help="napi plafon egy hostra (alap 12)")
+                    help="plafon egy hostra, GORDULO 24 ORAS ablakra (alap 12)")
     a = ap.parse_args(argv)
 
-    rows, selftest_skipped = read(LOG)
+    rows, selftest_skipped = read(a.log)
     if selftest_skipped:
         print(f"[selftest] {selftest_skipped} sor kihagyva a naplobol (SELFTEST_, "
               f"halozati keres nem tortent). Ha ez a szam EL, akkor az "
@@ -159,14 +181,23 @@ def main(argv=None):
 
     if a.budget:
         want = host_of("https://" + re.sub(r"^[a-z]+://", "", a.budget.strip().lower()))
-        today = dt.date.today().isoformat()
-        used = sum(1 for d, _, h in rows if h == want and d == today)
+        # A ROLLING 24 HOURS, not a calendar day. Two reasons, and the second is
+        # the one a zone fix alone would not have caught:
+        #   1. the log is UTC and dt.date.today() is local, so under BST the
+        #      counter read ZERO between 00:00 and 01:00 local (measured);
+        #   2. even with the zones agreed, a calendar-day counter lets twelve
+        #      fetches at 23:50 and twelve more at 00:10 both pass -- twenty-four
+        #      in twenty minutes. The host counts requests, not our midnights.
+        # A rolling window needs no zone chosen and has no discontinuity to
+        # exploit, so it answers both at once.
+        since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
+        used = sum(1 for _, _, h, w in rows if h == want and w is not None and w >= since)
         left = a.cap - used
-        print(f"{want}: ma {used} letoltes, napi plafon {a.cap}.")
+        print(f"{want}: az elmult 24 oraban {used} letoltes, plafon {a.cap}.")
         if left > 0:
             print(f"MEHET meg {left}.")
             return 0
-        print("ELFOGYOTT MARA. Ne innen szedd tovabb: vagy holnap, vagy masik forrasbol.")
+        print("ELFOGYOTT. Ne innen szedd tovabb: varj, amig a 24 oras ablak kienged, vagy masik forrasbol.")
         print("A darabszam a kotoelem, nem a sebesseg. Lasd a fenti magyarazatot.")
         return 1
 
@@ -174,7 +205,8 @@ def main(argv=None):
         print("Nincs meg engedelyezett letoltes a naploban.")
         return 0
 
-    cutoff = (dt.date.today() - dt.timedelta(days=a.days - 1)).isoformat()
+    # UTC, mint a naplo sorai -- kulonben a legregibb nap egy oraval korabban esik ki.
+    cutoff = (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=a.days - 1)).isoformat()
     rows = [r for r in rows if r[0] >= cutoff]
     if a.host:
         want = host_of("https://" + re.sub(r"^[a-z]+://", "", a.host.strip().lower()))
@@ -183,9 +215,9 @@ def main(argv=None):
         print(f"Nincs talalat az utolso {a.days} napban.")
         return 0
 
-    per_day = collections.Counter((d, h) for d, _, h in rows)
-    per_min = collections.Counter((d, t, h) for d, t, h in rows)
-    totals = collections.Counter(h for _, _, h in rows)
+    per_day = collections.Counter((d, h) for d, _, h, _ in rows)
+    per_min = collections.Counter((d, t, h) for d, t, h, _ in rows)
+    totals = collections.Counter(h for _, _, h, _ in rows)
 
     print(f"LETOLTESEK, utolso {a.days} nap")
     print("  [hatokor] CSAK a WebFetch hivasok. Az egress-kapu 'WebFetch' matcherre")

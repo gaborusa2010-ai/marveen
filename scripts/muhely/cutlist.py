@@ -369,6 +369,33 @@ def main(argv):
     kerf = float(job.get("kerf", DEFAULT_KERF))
     trim = float(job.get("trim", 0))
     all_parts = job["parts"]
+
+    # A part with no usable size cannot be nested, and the nester must say so
+    # BY NAME instead of dying inside pack() at a bare float(). Measured
+    # 2026-09-12: a row with `w: "tbc"` produced a traceback and exit 1 -- the
+    # same code this tool uses for a real failure, so a caller reading only the
+    # exit code cannot tell a crash from an answer.
+    #
+    # It STOPS, it does not skip. A silently dropped row is the worse failure:
+    # the workshop would get a plan that looks complete and is short a part
+    # (that has happened here once already, eleven parts, 2026-09-04).
+    bad = []
+    for p in all_parts:
+        for key in ("w", "h"):
+            v = p.get(key)
+            try:
+                if float(v if v is not None else 0) <= 0:
+                    bad.append(f'{p.get("name", "?")}: {key}={v!r} nulla vagy negativ')
+            except (TypeError, ValueError):
+                bad.append(f'{p.get("name", "?")}: {key}={v!r} nem szam')
+    if bad:
+        print("NEM NESTELHETo SOR, a vagasterv nem keszult el:", file=sys.stderr)
+        for b in bad:
+            print(f"  - {b}", file=sys.stderr)
+        print("Dontsd el a meretet, vagy vedd ki a sort. "
+              "A listcheck.py ugyanezt nevszerint jelzi.", file=sys.stderr)
+        return 3
+
     stock_table, substituted = _stock_table(job, all_parts)
 
     groups = {}

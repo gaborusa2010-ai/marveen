@@ -98,6 +98,112 @@ def _local(ts):
     return datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+# The owner's overtime rule, in his words (Telegram, 2026-09-09 12:45, relayed by
+# Cody with the card 4596adab): "akkor 7-tol 4-ig napiber, utana minden extra ora
+# az orabérben (200 font / 8 ora = 25 font/ora)". Asked whether 16:00 is a clock
+# time or a worked-hours count, he answered "7-tol 4-ig fix..." (13:02).
+#
+# The divisor is EIGHT, and it is his number, not ours: a nine-hour day is eight
+# PAID hours (two quarter breaks and half an hour for lunch). Deriving the hourly
+# figure from the day rate over nine hours would underpay every overtime hour by
+# about eleven per cent.
+#
+# THE DAY RATE BUYS NINE HOURS OF PRESENCE, AND OVERTIME IS WHAT RUNS PAST THEM.
+# Not a clock time. The owner said it twice in four minutes, in the group chat on
+# 2026-09-10, after we had put the wrong reading in front of him:
+#
+#   08:03  "Hanyszor mondjam meg a napidij az 200 font..."
+#   08:07  "7-tol 4-ig az 9 ora , 8-tol 5-ig az is 9 ora = napidij 200 font..."
+#
+# So a 08:00-17:00 installation day is an ordinary day at 200, exactly like the
+# workshop's 07:00-16:00, and only the ELEVENTH hour of a 07:00-18:00 day is paid
+# extra -- which is the 250 he gave as an example on 2026-09-09.
+#
+# THIS FUNCTION HELD THE WRONG RULE FOR ABOUT THIRTY MINUTES ON 2026-09-10, and the
+# way it got there is worth more than the fix. Forgacs asked him whether the day
+# rate on an 08:00 day "runs out at four or at five" (Telegram 489). He answered
+# "Hivatalosan 4-kor" (497). That is a true answer about the official end of a
+# shift, and it says nothing about a day that began an hour later -- but it was
+# read as "the boundary is a clock time, whatever hour the day began", and both
+# this file and a fleet decision were changed on it. The question offered two
+# clock times and no third option, so the answer could only be a clock time.
+#
+# The reading that turned out to be right was the one already built into the
+# worklog-app, and the one this file used to refuse to guess at.
+#
+# The divisor stays EIGHT, and it is his number: nine hours of presence is eight
+# PAID hours (two quarter breaks and half an hour for lunch), and 200/8 = 25.
+#
+# ONE REFUSAL REMAINS: a record spanning several days. The rule prices ONE day of
+# presence, and a multi-day record does not say how the hours fall across them.
+PAID_PRESENCE_HOURS = 9
+
+
+def _overtime(r):
+    """Overtime hours past a nine-hour day, or a reason not to compute.
+
+    Returns (hours, note). `hours` is None when the figure must not be put on an
+    invoice without a person deciding; `note` then says why, and is printed.
+    """
+    started, stopped = r.get("started_at"), r.get("stopped_at")
+    if not started or not stopped:
+        return None, "meg fut, nincs zarasi ido"
+    days = max(1, r.get("days") or 1)
+    if days > 1:
+        return None, (f"{days} napos rekord: a szabaly EGY nap kilenc orajat arazza, es "
+                      f"nem mondja meg, hogyan oszlanak el az orak. Szamold ki kezzel, "
+                      f"es add meg a sort.")
+    presence = (stopped - started) / 3600.0
+    # A short day is still a whole day: the owner does not invoice part days, and
+    # the overtime on one is zero rather than negative.
+    return max(0.0, presence - PAID_PRESENCE_HOURS), ""
+
+
+def _derived_rule_note(r):
+    """Say when the overtime figure for this day is a DERIVATION, not his word.
+
+    The owner priced ONE shape of day in his own words: a nine-hour day of
+    presence, 200, and 25/hour past it (2026-09-09, 2026-09-10). Two shapes were
+    never put to him, and the numbers this file prints for them are read off the
+    nine-hour rule rather than quoted from him:
+
+      - a shift that runs past midnight (a "night shift");
+      - a day that starts before 07:00.
+
+    THIS DOES NOT REFUSE, AND THAT IS DELIBERATE. `_overtime` already refuses the
+    one case where the rule genuinely cannot be applied (a multi-day record).
+    Here the arithmetic is sound and the figure is usable; what is missing is his
+    confirmation. Refusing would stop an invoice over a question nobody has been
+    asked, which is the more expensive of the two mistakes.
+
+    IT ALSO DOES NOT ASK. The wording states the provenance of the number and
+    stops there. An alert that asks a question turns into an item on a list, and
+    the two questions this replaces sat on the weekend list for three weeks under
+    the label "not urgent" -- while the true label was that there was NO CASE:
+    measured 2026-09-12 across all 17 jobs in the ledger, zero days start before
+    07:00 and zero cross midnight. So this fires for the first time on the day it
+    first matters, and never before, which is the point of putting it here rather
+    than on a list.
+    """
+    started, stopped = r.get("started_at"), r.get("stopped_at")
+    if not started or not stopped:
+        return ""
+    s_dt, e_dt = datetime.fromtimestamp(started), datetime.fromtimestamp(stopped)
+    if s_dt.date() != e_dt.date():
+        return ("EJSZAKAI MUSZAK: a nap atnyulik a kovetkezore "
+                f"({s_dt:%m-%d %H:%M} -> {e_dt:%m-%d %H:%M}). A tulora-szam erre "
+                "LEVEZETES a kilenc oras nap-hossz szabalybol, NEM a gazda szava: "
+                "ilyen napra o meg nem nyilatkozott. Hasznalhato, de ha szamlara "
+                "megy, elotte kerdezd meg tole.")
+    if s_dt.hour < 7:
+        return (f"KORAI KEZDES: a nap {s_dt:%H:%M}-kor indult, 07:00 elott. A "
+                "tulora-szam erre LEVEZETES a kilenc oras nap-hossz szabalybol, "
+                "NEM a gazda szava: o a nap VEGEROL nyilatkozott, a korai "
+                "kezdesrol nem. Hasznalhato, de ha szamlara megy, elotte kerdezd "
+                "meg tole.")
+    return ""
+
+
 def _hours(r):
     """Elapsed hours, never negative.
 
@@ -362,6 +468,9 @@ def cmd_stop(a):
             # person typing 25 meant. So the label states the unit, every time.
             print(f"Oraaranyos: {h} ora, {live['rate']} napi tetelbol "
                   f"({h}/8 nap) = kb. {round(h / 8 * live['rate'], 2)}")
+    note = _derived_rule_note(live)
+    if note:
+        print(f"\n{note}")
     print(f"\nSzamlahoz:  python3 scripts/muhely/jobs.py invoice {live['id']}")
     return 0
 
@@ -438,6 +547,39 @@ def cmd_edit(a):
     if not r:
         print(f"Nincs #{a.id} munka.")
         return 1
+    # FILLING IN A MISSING DAY RATE IS NOT REWRITING HISTORY, and the invoiced
+    # guard below must not swallow it. Measured 2026-09-10: four invoiced jobs
+    # (#3, #4, #5 on 10012 and #11 on 10014) carry no `rate`, while the PDFs the
+    # customer holds show 200.00 on every line. So the record does not match the
+    # paper, and filling the field is what makes them agree.
+    #
+    # It mattered because the tools formed a CLOSED LOOP. `cmd_invoice` on such a
+    # job prints "nincs munkadij ... add meg a dijat: jobs.py edit N --rate X",
+    # and that command then refused itself on the invoiced guard -- with --force
+    # too. The advice the tool gives has to be a command the tool accepts.
+    #
+    # Deliberately narrow, because the guard it steps around is a good one:
+    # only --rate, only when the stored value is missing (never overwriting a
+    # figure that was invoiced), only with --force, and nothing else may change
+    # in the same call. A rate that is already set on an invoiced job is still
+    # refused, because that WOULD contradict the paper.
+    _rate_fill = (
+        a.rate is not None
+        and r.get("rate") in (None, 0, 0.0)
+        and a.force
+        and not any([a.job, a.client, a.address, a.stop])
+    )
+    if r.get("invoice_ref") and _rate_fill:
+        r["rate"] = float(a.rate)
+        r.setdefault("notes", []).append({"at": time.time(), "text":
+            f"NAPIDIJ POTLAS: a rekordbol hianyzott a napidij, {float(a.rate):g} font "
+            f"vezetve be. A munka mar ki van szamlazva ({r['invoice_ref']}), es a "
+            f"szamla NEM valtozik: a potlas azt szunteti meg, hogy a naplo kevesebbet "
+            f"mondjon, mint a vevo kezeben levo papir."})
+        _save(rows)
+        print(f"#{a.id} napidij potolva: {float(a.rate):g}. A {r['invoice_ref']} szamu "
+              f"szamla valtozatlan, csak a rekord lett teljes.")
+        return 0
     if r.get("invoice_ref"):
         print(f"#{a.id} MAR SZAMLAZVA ({r['invoice_ref']}). A leiras kiment egy "
               f"dokumentumon a vevonek, ezert nem irom at: a rekord es a papir nem "
@@ -482,6 +624,18 @@ def cmd_edit(a):
             old_s = _local(r["stopped_at"]) if r.get("stopped_at") else "nyitva"
             changed.append(f"befejezes: {old_s} -> {_local(new_stop)}")
             r["stopped_at"] = new_stop
+    if getattr(a, "rate", None) is not None:
+        # The day rate belongs here for the same reason the finish time does: it is
+        # what the invoice is built on, and a job that never got one produces an
+        # invoice with no labour line at all. Added 2026-09-09, after job #12
+        # (2026-09-07) turned up with rate=None -- started just before `start`
+        # learned to read the figure from muhely-business.json. The error message
+        # on that path names this flag, so the flag has to exist: it was written
+        # first and did not, which is the whole reason this block is here.
+        old_r = r.get("rate")
+        if float(a.rate) != (float(old_r) if old_r is not None else None):
+            changed.append(f"napidij: {old_r if old_r is not None else 'nincs'} -> {float(a.rate)}")
+            r["rate"] = float(a.rate)
     for field, new in (("client", a.client), ("job", a.job), ("address", a.address)):
         if new is None or new == r.get(field):
             continue
@@ -515,8 +669,30 @@ def cmd_invoice(a):
     if r.get("stopped_at") is None:
         print(f"#{a.id} meg fut. Elobb: jobs.py stop")
         return 1
+    # A JOB MARKED no_charge IS NOT A JOB WITH A MISSING RATE, and until 2026-09-10
+    # this could not tell them apart. Measured that day on the one real case, job #1
+    # (2026-08-22, the favour the owner decided not to bill): the rate guard below
+    # fired with "nincs munkadij ... add meg a dijat: jobs.py edit 1 --rate <osszeg>"
+    # and exit 3 -- advice that contradicts the record it just read. The decision not
+    # to charge is IN the file; asking for a figure is asking to undo it.
+    #
+    # It is the same shape as the closed loop fixed earlier the same day, one field
+    # over: a tool that answers from one field while another field already settled
+    # the question. So the check goes HERE, ahead of everything that reads `rate`.
+    #
+    # Margo raised it (via Marveen, msg 4206) from the other side: the worklog-app
+    # treats rate 0 as a real zero fee on purpose, this file treats it as missing.
+    # Both readings stay as they are -- what was wrong was that `no_charge`, which
+    # is neither of those, fell through to the second one.
+    if r.get("no_charge"):
+        print(f"#{a.id} NEM SZAMLAZANDO, es ezert nem keszitek szamlat.\n"
+              f"  A dontes a rekordban all: {r['no_charge']}\n"
+              f"  Ha megis szamlazni kell, eloszor a dontest kell visszavonni, "
+              f"nem dijat megadni.")
+        return 0
     hours = _hours(r)
     lines = []
+    overtime_unresolved = False
     if r.get("billing") == "fixed":
         # Fixed price: ONE line, and the description must say so. The amount could
         # be produced without this mode (rate=500, days=1 gives 500), and it would
@@ -543,18 +719,77 @@ def cmd_invoice(a):
                                   f" ({hours} hours on site)",
                           "qty": days, "unit": float(r["rate"]),
                           "cis": bool(r.get("cis"))})
+            # Overtime is a SECOND line, not a bigger day. The client should see
+            # what he is paying for, and the day rate stays the day rate.
+            derived = _derived_rule_note(r)
+            if derived:
+                print(f"FIGYELEM: {derived}", file=sys.stderr)
+            ot, why = _overtime(r)
+            if ot is None:
+                # The refusal has to reach the EXIT CODE, not only stderr. Until
+                # 2026-09-09 this printed and returned 0, so a job with unbilled
+                # overtime looked like a finished invoice to anything checking $?.
+                #
+                # That was tolerable while the only 08:00 start in the ledger was
+                # job #1 (no_charge). It stopped being tolerable the moment the
+                # owner said the 08:00 start is the RULE for installation days
+                # ("nem mindig tudunk 7-kor kezdeni... olyankor 8-kor kezdunk",
+                # 2026-09-09). From here on this fires on real, invoiced days:
+                # an 08:00-19:00 day would go out at 200 with three hours missing.
+                overtime_unresolved = True
+                print(f"TULORA: NEM SZAMOLOM EL MAGAMTOL. {why}", file=sys.stderr)
+            elif ot > 0:
+                # qty stays the EXACT quotient; only the description is rounded.
+                # The file's own note above explains why: invoice.py multiplies
+                # qty * unit, so a value rounded here loses money in the total and
+                # in the CIS base with it.
+                unit = float(r["rate"]) / 8.0
+                shown = round(ot, 2)
+                lines.append({"desc": f"Overtime, {shown:g} hour{'' if shown == 1 else 's'}"
+                                      f" beyond the {PAID_PRESENCE_HOURS}-hour day"
+                                      f" at {unit:g}/hour",
+                              "qty": ot, "unit": unit,
+                              "cis": bool(r.get("cis"))})
     else:
-        days = round(hours / 8.0, 2)
+        # A KEREKITETT NAPSZAM CSAK SZOVEG, A SZAMLA A PONTOS TORTTEL SZAMOL.
+        # Merve 2026-09-09 (Cody talalta, Marveen visszamerte): 9 ora / 200-as
+        # napi tetelnel a `stop` sora 225.0-t irt ki, a szamla viszont 224.0-t
+        # keszitett. Az ok nem a keplet, hanem a SORREND: a `round(9/8, 2)` a
+        # felet a PAROS fele viszi (1.125 -> 1.12), es az invoice.py mindenhol
+        # `qty * unit`-ot szamol (invoice.py:239, :249, :317), tehat a levagott
+        # ezred egy egesz fontot vitt el -- a CIS-alapbol is.
+        # A 225 a helyes: 9/8 nap * 200 font. Ezert a `qty` a PONTOS hanyados,
+        # es a kerekitett ertek csak a leirasban all, ahol ember olvassa.
+        # Amiert ez fontos a par font ellenere: a `stop` zaro sora az, amit a
+        # gazda a muhelyben elolvas, tehat a szamlaval kell egyeznie. A fajl
+        # sajat kommentje (338-343) EPP errol a hibaosztalyrol szol.
+        # A LEIRAS ES A MENNYISEG-OSZLOP UGYANAZT A SZAMOT MUTASSA. Az invoice.py
+        # a qty-t `:g` formaval nyomtatja (invoice.py:319), tehat 1.125-ot ir ki;
+        # ha a leirasban 1.12 allna, a kesz lapon ket kulonbozo napszam nezne
+        # egymassal szembe ugyanabban a sorban. Ezert itt is `:g`.
+        qty = hours / 8.0
         if r.get("rate"):
-            lines.append({"desc": f"Labour, {hours} hours ({days} days)",
-                          "qty": days, "unit": float(r["rate"]),
+            lines.append({"desc": f"Labour, {hours} hours ({qty:g} days)",
+                          "qty": qty, "unit": float(r["rate"]),
                           "cis": bool(r.get("cis"))})
     job = {
         "client": {"name": r["client"], "address": [r["address"]] if r.get("address") else []},
         "job": r["job"],
         "cis": bool(r.get("cis")),
         "lines": lines,
-        "notes": "\n".join(n["text"] for n in r.get("notes", [])),
+        # INTERNAL notes, and the underscore is the point. invoice.py PRINTS
+        # job["notes"] on the customer's PDF under a "Notes" heading
+        # (invoice.py:358-361), and the notes this ledger collects are not for a
+        # customer: they are provenance ("a befejezes ideje a gazda szava,
+        # Telegram ..."), corrections ("napidij: nincs -> 200.0"), and open
+        # questions. Measured 2026-09-09: job #13 carries 277 characters of
+        # exactly that, and it would have gone out on the Palmer invoice on the
+        # first run through this path. The two issued invoices escaped only
+        # because they were built from hand-written job files with no notes at all.
+        #
+        # A real customer note is still possible: put `notes` into the job file
+        # by hand before running invoice.py. That is now a DECISION, not a leak.
+        "_notes": "\n".join(n["text"] for n in r.get("notes", [])),
         "_job_id": r["id"],
         "_photos": [p["path"] for p in r.get("photos", [])],
     }
@@ -563,11 +798,30 @@ def cmd_invoice(a):
         json.dump(job, fh, indent=2, ensure_ascii=False)
     print(f"Kiirva: {out}")
     print(f"Munkaido {hours} ora ({days} nap).")
-    if not lines:
-        print("FIGYELEM: nincs munkadij a munkan (--rate hianyzott inditaskor), "
-              "ezert a szamla sorok URESEK. Ird bele kezzel, vagy add meg a dijat.")
     print(f"Anyagot es egyeb tetelt kezzel adj hozza, aztan:")
     print(f"  python3 scripts/muhely/invoice.py invoice {out} --out szamla.pdf")
+    if not lines:
+        # A job with no labour line is not a usable invoice input, and until
+        # 2026-09-09 this said so and then returned 0. The sentence stops a person
+        # who reads the terminal; it stops nothing else. Measured that day on job
+        # #12 (2026-09-07, started before `start` learned to read the day rate from
+        # muhely-business.json): the file was written, the warning printed, and the
+        # exit code was 0 -- so any step that checks `$?` instead of reading Hungarian
+        # would carry an invoice with zero labour on it straight to the client.
+        # The owner's money is on this path, so the failure has to be in the channel
+        # a caller can actually test.
+        print("FIGYELEM: nincs munkadij a munkan (--rate hianyzott inditaskor), "
+              "ezert a szamla sorok URESEK. Ird bele kezzel, vagy add meg a dijat:",
+              file=sys.stderr)
+        print(f"  python3 scripts/muhely/jobs.py edit {r['id']} --rate <osszeg>",
+              file=sys.stderr)
+        return 3
+    if overtime_unresolved:
+        # Distinct from 3: there IS a labour line, the invoice is merely incomplete.
+        # The file is written either way, so the figures are there to look at.
+        print("A szamla EGYEBKENT kesz, de a tulora-sor hianyzik belole. Dontsd el a "
+              "ket olvasas kozott, es ird bele kezzel, mielott kimegy.", file=sys.stderr)
+        return 4
     return 0
 
 
@@ -610,6 +864,8 @@ def main(argv):
     p.add_argument("--job"); p.add_argument("--client")
     p.add_argument("--address", help="a munkavegzes helye, ha utolag derult ki")
     p.add_argument("--stop", help="a befejezes idopontjanak javitasa, pl. 16:00")
+    p.add_argument("--rate", type=float,
+                   help="a napidij potlasa vagy javitasa, ha inditaskor lemaradt")
     p.add_argument("--force", action="store_true",
                    help="lezart munkanal is, ha biztos hogy meg nincs szamlazva")
     p.set_defaults(fn=cmd_edit)

@@ -65,6 +65,15 @@ CONFIG = {
     "claude_authoritative_cache_max_age_min": 90,  # reuse last authoritative Claude snapshot
                                                     # on a transient failure (429/5xx/timeout)
                                                     # if it's younger than this
+    # Level alerts (weekly all-models, weekly Fable-only, monthly extra-usage
+    # spend): ONE line per crossed level per window cycle, no refire. Built
+    # 2026-09-16 after the weekly bar hit 100% and then the monthly spend cap
+    # closed every prompt for 11 hours with nobody warned: the pace model above
+    # is a forecaster, this is the odometer.
+    "level_thresholds": (50, 75, 90, 100),
+    # UNDERUSE lines are advice ("worth starting a big project"), not a warning;
+    # they stay in the printed report and are NOT pushed to the owner's phone.
+    "notify_underuse": False,
 }
 
 # Window length in seconds, keyed by the Claude window's dict key. Codex
@@ -84,6 +93,7 @@ ALERT_WINDOW_NAMES = {
     "claude_seven_day": "weekly limit",
     "claude_seven_day_opus": "Fable weekly limit",
     "claude_seven_day_sonnet": "Sonnet weekly limit",
+    "claude_monthly_spend": "monthly extra-usage spend",
     "codex_weekly": "Codex weekly limit",
     "codex_five_hour": "Codex 5-hour limit",
 }
@@ -97,7 +107,7 @@ ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
 # Display timezone for reset stamps. Defaults to the project's Europe/Budapest;
 # override with MARVEEN_TZ for an install whose owner lives elsewhere.
-LOCAL_TZ = ZoneInfo(os.environ.get("MARVEEN_TZ", "Europe/Budapest"))
+LOCAL_TZ = ZoneInfo(os.environ.get("MARVEEN_TZ", "Europe/London"))
 
 TOKEN_FIELDS = (
     "input_tokens",
@@ -452,9 +462,67 @@ def _collect_claude_authoritative():
                 windows["seven_day_opus"] = {"used_percent": lim.get("percent"), "resets_at": resets_epoch}
                 break
 
+    # The MONTHLY extra-usage (usage credits) spend cap. This is the wall that
+    # stood from 2026-09-15 17:44 to 09-16 04:45 ("You've hit your monthly
+    # spend limit") while every weekly bar had just reset -- and nothing here
+    # looked at it. Stored as a pseudo-window so the cache path carries it too;
+    # it has no window length, so the pace model skips it by construction.
+    spend = _parse_monthly_spend(data)
+    if spend:
+        windows["monthly_spend"] = spend
+
     if not windows:
         return None, "authoritative response had no usable rate_limits windows", "transient"
     return windows, None, None
+
+
+def _parse_monthly_spend(data):
+    """Top-level "spend" carries the money in minor units ({"used": {"amount_minor":
+    8092, "currency": "GBP", "exponent": 2}, "limit": {...}, "percent": 100,
+    "enabled": false, "disabled_reason": ...}); "extra_usage" carries the enable
+    state (is_enabled, spend_limit_reached). Returns None unless the shape is the
+    real one -- never a guessed number."""
+    sp = data.get("spend")
+    ex = data.get("extra_usage") if isinstance(data.get("extra_usage"), dict) else {}
+    if not isinstance(sp, dict):
+        return None
+    used = sp.get("used") if isinstance(sp.get("used"), dict) else {}
+    lim = sp.get("limit") if isinstance(sp.get("limit"), dict) else {}
+    used_minor = used.get("amount_minor")
+    limit_minor = lim.get("amount_minor")
+    pct = sp.get("percent")
+    if pct is None and isinstance(used_minor, (int, float)) and isinstance(limit_minor, (int, float)) and limit_minor > 0:
+        pct = 100.0 * used_minor / limit_minor
+    if not isinstance(pct, (int, float)):
+        return None
+    enabled = sp.get("enabled")
+    if enabled is None:
+        enabled = ex.get("is_enabled")
+    reached = ex.get("spend_limit_reached")
+    if reached is None:
+        reached = pct >= 100
+    return {
+        "used_percent": float(pct),
+        "resets_at": None,
+        "used_minor": used_minor,
+        "limit_minor": limit_minor,
+        "currency": used.get("currency") or lim.get("currency"),
+        "exponent": used.get("exponent", lim.get("exponent", 2)),
+        "enabled": bool(enabled),
+        "spend_limit_reached": bool(reached),
+        "disabled_reason": sp.get("disabled_reason") or ex.get("disabled_reason"),
+        "severity": sp.get("severity"),
+    }
+
+
+def _fmt_money(minor, exponent, currency):
+    if not isinstance(minor, (int, float)):
+        return "?"
+    try:
+        exp = int(exponent) if exponent is not None else 2
+    except (TypeError, ValueError):
+        exp = 2
+    return f"{minor / (10 ** exp):.{exp}f} {currency or ''}".strip()
 
 
 def _read_cached_claude_authoritative(max_age_minutes, now_utc=None):
@@ -655,9 +723,16 @@ def render_summary(snapshot):
             "seven_day_sonnet": "weekly (Sonnet)",
         }
         for label, w in windows.items():
-            local_str, rel = fmt_reset(w.get("resets_at"))
             pct = w.get("used_percent")
             pct_str = f"{pct:.1f}%" if isinstance(pct, (int, float)) else "?"
+            if label == "monthly_spend":
+                money = f"{_fmt_money(w.get('used_minor'), w.get('exponent'), '')} / {_fmt_money(w.get('limit_minor'), w.get('exponent'), w.get('currency'))}"
+                state_str = "credits ON" if w.get("enabled") else "credits OFF"
+                if w.get("disabled_reason"):
+                    state_str += f": {w['disabled_reason']}"
+                lines.append(f"  monthly extra-usage spend: {pct_str} used ({money}, {state_str}; resets with the calendar month)")
+                continue
+            local_str, rel = fmt_reset(w.get("resets_at"))
             pace = compute_pace(pct, w.get("resets_at"), _window_length_seconds(f"claude_{label}", w))
             lines.append(
                 f"  {names.get(label, label)} limit: {pct_str} used (reset: {local_str}, {rel})"
@@ -805,6 +880,111 @@ def compute_alerts(snapshot, state, now_utc=None):
     return alerts
 
 
+LEVEL_SCOPE_NAMES = {
+    "claude_seven_day": "Heti keret (minden modell)",
+    "claude_seven_day_opus": "Heti keret (csak Fable)",
+    "claude_monthly_spend": "Havi extra-koltes plafon",
+}
+
+
+def compute_level_alerts(snapshot, state, now_utc=None):
+    """Odometer alerts: the weekly (all models), the weekly Fable-only and the
+    monthly extra-usage spend crossing 50 / 75 / 90 / 100 percent. ONE line per
+    crossed level per window cycle -- the cycle is the window's resets_at for
+    the weekly bars and the calendar month for the spend cap -- and a jump from
+    40 to 95 sends one line (the highest level), not three. No refire: the
+    near-exhaustion backstop in compute_alerts already nags every 45 minutes
+    above 92 percent. A weekly window whose resets_at is in the past describes
+    a window that no longer exists (the 22:00 rollover lesson in
+    scripts/lib/quota-check.py) and is skipped."""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    now_ts = now_utc.timestamp()
+    claude = snapshot.get("claude") or {}
+    if not (claude.get("ok") and claude.get("source") in ("authoritative", "authoritative_cached")):
+        return []
+    levels = state.setdefault("levels", {})
+    if not isinstance(levels, dict):
+        levels = state["levels"] = {}
+    alerts = []
+    for key, w in (claude.get("windows") or {}).items():
+        scope_key = f"claude_{key}"
+        name = LEVEL_SCOPE_NAMES.get(scope_key)
+        if not name or not isinstance(w, dict):
+            continue
+        pct = w.get("used_percent")
+        if not isinstance(pct, (int, float)):
+            continue
+        if key == "monthly_spend":
+            cycle = now_utc.astimezone(LOCAL_TZ).strftime("%Y-%m")
+        else:
+            resets_at = w.get("resets_at")
+            if not isinstance(resets_at, (int, float)) or resets_at <= now_ts:
+                continue
+            cycle = str(int(resets_at))
+        crossed = [L for L in CONFIG["level_thresholds"] if pct >= L]
+        if not crossed:
+            continue
+        top = max(crossed)
+        if f"{scope_key}|{cycle}|{top}" in levels:
+            continue
+        for L in crossed:
+            levels[f"{scope_key}|{cycle}|{L}"] = now_ts
+        if key == "monthly_spend":
+            money = f"{_fmt_money(w.get('used_minor'), w.get('exponent'), '')} / {_fmt_money(w.get('limit_minor'), w.get('exponent'), w.get('currency'))}"
+            line = f"ALERT: {name}: {pct:.0f}% ({money}); extra-koltes {'BE' if w.get('enabled') else 'KI'}"
+            if w.get("disabled_reason"):
+                line += f" ({w['disabled_reason']})"
+            line += ". A honap vegeig nem all vissza, csak a plafon emelese ad levegot."
+        else:
+            reset_local, reset_rel = fmt_reset(w.get("resets_at"), now_utc)
+            line = f"ALERT: {name}: {pct:.0f}% elhasznalva, nullazodik {reset_local} ({reset_rel})."
+        alerts.append(line)
+    # Old cycles: keep the file from growing forever. 40 days covers a full
+    # month cycle plus the weekly windows that overlap it.
+    for k, t in list(levels.items()):
+        if not isinstance(t, (int, float)) or now_ts - t > 40 * 86400:
+            del levels[k]
+    return alerts
+
+
+def _status_line(snapshot):
+    """One compact line of the current readings for the owner message."""
+    claude = snapshot.get("claude") or {}
+    windows = claude.get("windows") or {}
+    parts = []
+    for key, label in (("five_hour", "5h"), ("seven_day", "heti"), ("seven_day_opus", "Fable"), ("monthly_spend", "havi extra")):
+        w = windows.get(key) or {}
+        pct = w.get("used_percent")
+        if isinstance(pct, (int, float)):
+            parts.append(f"{label} {pct:.0f}%")
+    return " | ".join(parts)
+
+
+def notify_owner(lines, snapshot):
+    """Push the alert lines to the owner through scripts/notify.sh, the fleet's
+    honest sender (exit 0 ONLY on curl 0 + "ok":true). Returns True on a
+    confirmed delivery. The caller must save the dedupe state ONLY on True:
+    a failed alert buried under its own suppression stamp is lost forever
+    (the limit-monitor failure mode)."""
+    if not lines:
+        return True
+    msg = "\u203c\ufe0f CLAUDE KERET (usage-quota timer)\n\n" + "\n".join(lines)
+    status = _status_line(snapshot)
+    if status:
+        msg += f"\n\nAllas most: {status}"
+    msg += "\nMerve az api.anthropic.com/api/oauth/usage vegpontbol, Claude nelkul."
+    script = os.path.join(REPO_ROOT, "scripts", "notify.sh")
+    try:
+        r = subprocess.run(["bash", script, msg], capture_output=True, text=True, timeout=40)
+    except Exception as e:
+        print(f"usage-collect.py: notify.sh failed to run: {e}", file=sys.stderr)
+        return False
+    if r.returncode != 0:
+        print(f"usage-collect.py: notify.sh exit {r.returncode}: {(r.stdout + r.stderr).strip()[:300]}", file=sys.stderr)
+        return False
+    return True
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
@@ -812,6 +992,9 @@ def compute_alerts(snapshot, state, now_utc=None):
 def _run():
     parser = argparse.ArgumentParser(description="Subscription usage/quota monitor")
     parser.add_argument("--json", action="store_true", help="print only the snapshot JSON, no alerts/history")
+    parser.add_argument("--notify", action="store_true",
+                        help="push ALERT lines to the owner via scripts/notify.sh; the dedupe state is "
+                             "saved ONLY after a confirmed delivery, so a failed send retries next run")
     args = parser.parse_args()
 
     snapshot = build_snapshot()
@@ -823,10 +1006,23 @@ def _run():
     print(render_summary(snapshot))
 
     state = _load_state()
-    alerts = compute_alerts(snapshot, state)
-    _save_state(state)
+    alerts = compute_alerts(snapshot, state) + compute_level_alerts(snapshot, state)
     for line in alerts:
         print(line)
+    if args.notify:
+        # What reaches the phone: level lines, near-exhaustion, and OVERUSE
+        # forecasts for weekly-class windows. A 5-hour OVERUSE forecast at
+        # 15% elapsed is the fleet's normal morning start-up, not a warning,
+        # and it would refire every 45 minutes.
+        to_send = [a for a in alerts
+                   if (CONFIG["notify_underuse"] or "UNDERUSE" not in a)
+                   and not ("OVERUSE" in a and "5-hour" in a)]
+        if notify_owner(to_send, snapshot):
+            _save_state(state)
+        else:
+            print("usage-collect.py: alert NOT delivered, dedupe state NOT saved -- the next run retries", file=sys.stderr)
+    else:
+        _save_state(state)
 
     os.makedirs(STORE_DIR, exist_ok=True)
     with open(HISTORY_PATH, "a", encoding="utf-8") as f:

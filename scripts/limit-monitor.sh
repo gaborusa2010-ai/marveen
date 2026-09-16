@@ -155,7 +155,7 @@ pane_text() {
 CANDIDATE="$(
   { tail -n 200 "$STORE/channels.log" "$STORE/channels.error.log" "$STORE/dashboard.log" 2>/dev/null;
     pane_text;
-  } | grep -iE "usage limit reached|reached your (usage|plan|weekly) limit|your limit will reset|approaching your usage limit|approaching[^|]*(weekly|usage) limit|[0-9]+-hour limit reached|(weekly|session) limit reached|rate_limit_error|429 too many requests|quota exceeded|out of (usage|credits)" \
+  } | grep -iE "usage limit reached|reached your (usage|plan|weekly) limit|your limit will reset|approaching your usage limit|approaching[^|]*(weekly|usage) limit|[0-9]+-hour limit reached|(weekly|session) limit reached|rate_limit_error|429 too many requests|quota exceeded|out of (usage|credits)|hit your (monthly|weekly|usage|session)[^|]{0,20}limit|monthly spend limit" \
     | grep -viE "rate.?limit.?error class|no rate|within limit|limit-monitor|LIMIT-FIGYELMEZT|email/nap|req/nap|/nap free|kérés/hó|/hó\b|approaching\.\*limit"
 )"
 

@@ -54,7 +54,7 @@ Usage
   fetch-image.py URL --out DIR [--cap 12] [--max-bytes N]
 
 Prints a one-line JSON receipt on success (path, bytes, sha256, type). Exit 0
-downloaded, 2 refused by the gate, 3 over the daily budget, 4 fetch failed,
+downloaded, 2 refused by the gate, 3 over the rolling 24h budget, 4 fetch failed,
 5 not an image we accept.
 """
 import argparse
@@ -154,7 +154,7 @@ def budget_left(url, cap):
 def log_fetch(url, kind="ALLOWED_IMAGE"):
     """Write the line fetch-budget.py counts.
 
-    Without this an image download is invisible to the per-source daily count,
+    Without this an image download is invisible to the per-source rolling 24h count,
     and the source would be paying for requests nothing measures -- which is the
     same blind spot that got us blocked from kregtool in the first place.
     """
@@ -172,10 +172,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
     ap.add_argument("--out", required=True, help="konyvtar, ahova a kep kerul")
-    ap.add_argument("--cap", type=int, default=12, help="napi plafon egy hostra")
+    ap.add_argument("--cap", type=int, default=12,
+                    help="plafon egy hostra, GORDULO 24 ORAS ablakra")
     ap.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     ap.add_argument("--skip-budget", action="store_true",
-                    help="csak teszthez: a napi plafon ellenorzesenek kihagyasa")
+                    help="csak teszthez: a 24 oras plafon ellenorzesenek kihagyasa")
     a = ap.parse_args(argv)
 
     allowed, reason = gate_allows(a.url)

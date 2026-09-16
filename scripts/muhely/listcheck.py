@@ -121,18 +121,61 @@ def check(job, overall=None):
         entries = raw if isinstance(raw, list) else [raw]
         stock = {s.get("material"): s for s in entries}
 
+    # Rows whose w/h are real numbers. Every size-based check below this loop
+    # iterates THIS list, not `parts`: one unusable row used to kill the whole
+    # run at the first bare float(), four separate places deep (222, 236, 257,
+    # 260 before this change). Filtering once is why a new check added later
+    # cannot fall into the same hole.
+    numeric_parts = []
+
     for p in parts:
         n = p.get("name", "?")
+
+        if not p.get("grain"):
+            findings.append(("NINCS SZALIRANY", n, "lathato alkatresznel kotelezo"))
+
+        # 13 UNUSABLE SIZE. Measured 2026-09-12, on a real proposal: put a row in
+        # with `w: "tbc"` (the same placeholder that is a DECISION for edging) and
+        # this checker died at float() with a traceback -- and exited 1, the SAME
+        # code a clean finding-report exits with. So a caller that reads only the
+        # exit code sees a working checker, while every finding after the crash,
+        # including the undecided-edging warning the row was added for, is gone.
+        # A checker must not be silenceable by its own input.
+        #
+        # Two kinds, kept apart because the fix differs. A non-numeric size is an
+        # OPEN QUESTION written into a number field: name it, and skip the size
+        # checks for that row so the rest of the list still gets checked. A zero
+        # or negative size is a row that would be nested as nothing.
+        dims, unusable = {}, False
         for key in ("w", "h"):
-            v = float(p.get(key, 0))
+            raw_v = p.get(key)
+            try:
+                dims[key] = float(raw_v if raw_v is not None else 0)
+            except (TypeError, ValueError):
+                unusable = True
+                findings.append(("NEM SZAM MERET", n,
+                                 f"{key}={raw_v!r}: ez nem meret, hanem nyitott kerdes egy "
+                                 f"szam helyen. A sor tobbi meret-ellenorzese kimarad, a "
+                                 f"listaen nem: dontsd el, mielott a lap a fureszhez megy"))
+        if unusable:
+            continue
+        if dims["w"] <= 0 or dims["h"] <= 0:
+            findings.append(("NULLA MERET", n,
+                             f"{p.get('w')} x {p.get('h')}: nulla vagy negativ meret, ez a sor "
+                             f"semmire sem nestelodne. Ha helykitolto, akkor sincs helye a "
+                             f"szabaslistan meret nelkul"))
+            continue
+
+        numeric_parts.append(p)
+
+        for key in ("w", "h"):
+            v = dims[key]
             # Only both-dimensions-small is a real inch smell. A 60mm plinth strip or a
             # 38mm rail is perfectly normal, and flagging those trains you to ignore the tool.
-            if 0 < v < 100 and 0 < float(p.get("w", 0)) < 100 and 0 < float(p.get("h", 0)) < 100 and key == "w":
+            if 0 < v < 100 and 0 < dims["w"] < 100 and 0 < dims["h"] < 100 and key == "w":
                 findings.append(("NEM MILLIMETER", n,
                                  f"{p.get('w')} x {p.get('h')}: mindket meret 100 alatt, "
                                  f"valoszinuleg hüvelyk maradt benne"))
-            if round(v, 3) != round(v, 1) or (v and abs(v - round(v, 2)) > 1e-9 and not near_half(v)):
-                pass  # covered by the two checks below
             if abs(v - round(v, 2)) > 1e-9:
                 findings.append(("CAD TIZEDES", n,
                                  f"{key}={v}: harom tizedes, ez szamitasi maradek. Kerekitsd 0,5-re"))
@@ -143,13 +186,10 @@ def check(job, overall=None):
         st = stock.get(p.get("material"))
         if st:
             bw, bh = float(st["w"]), float(st["h"])
-            pw, ph = float(p.get("w", 0)), float(p.get("h", 0))
+            pw, ph = dims["w"], dims["h"]
             if not ((pw <= bw and ph <= bh) or (pw <= bh and ph <= bw)):
                 findings.append(("NAGYOBB MINT A TABLA", n,
                                  f"{pw} x {ph} nem fer a {bw} x {bh} tablara"))
-
-        if not p.get("grain"):
-            findings.append(("NINCS SZALIRANY", n, "lathato alkatresznel kotelezo"))
 
 
     # Edging is a property of the CUT LIST, not of the nesting input. If not one row
@@ -160,8 +200,34 @@ def check(job, overall=None):
                          "az elszalag elenkent megy, es minden szalagos el 2 mm-t vesz le ABBOL a "
                          "meretbol. Ha ez a nestelo bemenete, akkor rendben, ott nincs ra szukseg"))
 
-    by_name = defaultdict(set)
+    # 12 UNDECIDED EDGING. The column check above fires only when the WHOLE list
+    # is missing edging. A single row that says "tbc" passes it, and passes every
+    # other check too, because "tbc" is a non-empty string: the row looks filled in.
+    # Measured 2026-09-09 on the live Lyford B-02 list -- `drawer front 569x150,
+    # edging "tbc"`, four of them -- and the list reported clean.
+    #
+    # Edging is not a note. Each banded edge takes 2 mm off THAT dimension, so an
+    # undecided edge is an undecided SIZE, on a sheet that goes to the saw. The
+    # danger is exactly that it does not look unfinished.
+    #
+    # Narrow on purpose: only literal placeholders fire. "none", "none, painted",
+    # "2 mm front edge" are decisions and stay silent. A checker that fires on
+    # every edging string would be ignored inside a week, and two false alarms
+    # were already cut out of this file for that reason.
+    PLACEHOLDER = {"tbc", "tbd", "t.b.c.", "t.b.d.", "?", "??", "-", "--",
+                   "n/a", "na", "kesobb", "kesobb dontjuk", "meg nem tudom"}
     for p in parts:
+        raw = p.get("edging")
+        if raw is None:
+            continue
+        if str(raw).strip().lower() in PLACEHOLDER:
+            findings.append(("ELDONTETLEN ELSZALAG", p.get("name"),
+                             f"elszalag = \"{raw}\", ez nem dontes. Minden szalagos el 2 mm-t "
+                             f"vesz le ABBOL a meretbol, tehat a {p.get('w')}x{p.get('h')} "
+                             f"meg nem vegleges. Dontsd el, mielott a lap a fureszhez megy"))
+
+    by_name = defaultdict(set)
+    for p in numeric_parts:
         by_name[p.get("name")].add((float(p.get("w", 0)), float(p.get("h", 0))))
     for n, sizes in by_name.items():
         if len(sizes) > 1:
@@ -172,7 +238,7 @@ def check(job, overall=None):
     opening = job.get("opening")
     if opening:
         opening = float(opening)
-        for p in parts:
+        for p in numeric_parts:
             name = (p.get("name") or "").lower()
             note = (p.get("edging", "") + " " + str(p.get("note", ""))).lower()
             if "polc" in name or "shelf" in name:
@@ -197,9 +263,9 @@ def check(job, overall=None):
                                      f"Ennyi altalaban azt jelenti, hogy rossz nyilashoz meretezted"))
 
     if overall:
-        widest = max((float(p["w"]) for p in parts), default=0)
+        widest = max((float(p["w"]) for p in numeric_parts), default=0)
         best = None
-        for p in parts:
+        for p in numeric_parts:
             w = float(p["w"])
             for k in range(1, 9):
                 if abs(k * w - overall) < 1.0:

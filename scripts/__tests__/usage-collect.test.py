@@ -62,11 +62,25 @@ class TestFmtReset(unittest.TestCase):
         _, rel = uc.fmt_reset(ts)
         self.assertEqual(rel, "now")
 
-    def test_local_string_has_budapest_offset_marker(self):
+    def test_local_string_ends_with_the_local_tz_abbrev(self):
         ts = _future_ts(days=1)
         local_str, _ = uc.fmt_reset(ts)
-        # e.g. "2026-07-23 14:45 CEST" -- must contain a plausible tz abbrev
-        self.assertRegex(local_str, r"CES?T$")
+        # The comment on the old form already said what it wanted -- "must
+        # contain a plausible tz abbrev" -- but the regex spelled out CET/CEST,
+        # so the suite only passed where the author sat. This deployment is
+        # Europe/London on purpose, and got "2026-09-10 11:48 BST" -> red.
+        #
+        # The abbrev is derived from uc.LOCAL_TZ, the module's OWN display zone
+        # (MARVEEN_TZ, default Europe/Budapest) -- NOT from the process TZ.
+        # Measured 2026-09-09: fmt_reset ignores TZ entirely, so a version of
+        # this line built on datetime.astimezone() went red under TZ=Asia/Tokyo
+        # while the code was behaving correctly. Derived for that same instant,
+        # so it also survives a DST boundary.
+        expected = datetime.fromtimestamp(ts, tz=uc.LOCAL_TZ).strftime("%Z")
+        self.assertTrue(
+            local_str.endswith(expected),
+            f"local string {local_str!r} does not end with the local tz abbrev {expected!r}",
+        )
 
 
 class TestParseIsoToEpoch(unittest.TestCase):
@@ -822,14 +836,27 @@ class TestClaudeTokenSources(unittest.TestCase):
         self.assertEqual(source, "keychain")
 
     def test_keychain_beats_env_file(self):
-        """The .env token answers 403, so it must never win over the keychain."""
+        """The .env token answers 403, so it must never win over the keychain.
+
+        `expanduser` is patched too, and that is not cosmetic (measured
+        2026-09-09). Without it, `exists -> True` only says the credentials
+        path is there; the open() that follows still hits the REAL
+        ~/.claude/.credentials.json. On any machine that has one, the live
+        session token won the comparison and unittest printed it verbatim in
+        the failure diff -- out of a function whose own docstring promises
+        "Never logs the value". The sibling test two methods down already
+        patched expanduser; this one did not.
+        Source is asserted BEFORE the token for the same reason: a wrong
+        source must fail on the word "credentials_file", not on a secret.
+        """
         with patch.object(uc.sys, "platform", "darwin"), \
              patch.object(uc.os.path, "exists", return_value=True), \
+             patch.object(uc.os.path, "expanduser", return_value=self._tmp.name), \
              patch.object(uc, "ENV_PATH", self._tmp.name), \
              patch.object(uc.subprocess, "run", return_value=self._security_ok()):
             token, source = uc._read_claude_token()
-        self.assertEqual(token, "keychain-tok")
         self.assertEqual(source, "keychain")
+        self.assertEqual(token, "keychain-tok")
 
     def test_credentials_file_still_wins_over_keychain(self):
         cred = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
@@ -875,6 +902,127 @@ class TestClaudeTokenSources(unittest.TestCase):
         with patch.object(uc.sys, "platform", "linux"), \
              patch.object(uc.os.path, "exists", return_value=False):
             self.assertEqual(uc._read_claude_token(), (None, None))
+
+
+
+class TestMonthlySpendParsing(unittest.TestCase):
+    """The monthly extra-usage spend cap (the wall of 2026-09-15/16) rides
+    along as the pseudo-window "monthly_spend"; the old {"amount": ...}
+    fixture shape must still be ignored (never a guessed number)."""
+
+    REAL_SPEND = {
+        "used": {"amount_minor": 8092, "currency": "GBP", "exponent": 2},
+        "limit": {"amount_minor": 8000, "currency": "GBP", "exponent": 2},
+        "percent": 100, "severity": "critical", "enabled": False,
+        "disabled_reason": "org_level_disabled_until",
+    }
+
+    def test_real_shape_parses_to_pseudo_window(self):
+        w = uc._parse_monthly_spend({"spend": self.REAL_SPEND,
+                                     "extra_usage": {"is_enabled": False, "spend_limit_reached": True}})
+        self.assertEqual(w["used_percent"], 100.0)
+        self.assertEqual(w["used_minor"], 8092)
+        self.assertEqual(w["limit_minor"], 8000)
+        self.assertEqual(w["currency"], "GBP")
+        self.assertFalse(w["enabled"])
+        self.assertTrue(w["spend_limit_reached"])
+        self.assertIsNone(w["resets_at"])
+
+    def test_percent_derived_from_money_when_missing(self):
+        sp = dict(self.REAL_SPEND); sp.pop("percent")
+        sp["used"] = {"amount_minor": 2000, "currency": "GBP", "exponent": 2}
+        self.assertAlmostEqual(uc._parse_monthly_spend({"spend": sp})["used_percent"], 25.0)
+
+    def test_unknown_shape_returns_none(self):
+        self.assertIsNone(uc._parse_monthly_spend({"spend": {"amount": 12.3}}))
+        self.assertIsNone(uc._parse_monthly_spend({"spend": None}))
+        self.assertIsNone(uc._parse_monthly_spend({}))
+
+    def test_pace_model_skips_the_spend_pseudo_window(self):
+        snap = {"claude": {"ok": True, "source": "authoritative",
+                           "windows": {"monthly_spend": uc._parse_monthly_spend({"spend": self.REAL_SPEND})}},
+                "codex": {"ok": False}}
+        self.assertEqual(list(uc._iter_pace_windows(snap)), [])
+
+    def test_fmt_money(self):
+        self.assertEqual(uc._fmt_money(8092, 2, "GBP"), "80.92 GBP")
+        self.assertEqual(uc._fmt_money(None, 2, "GBP"), "?")
+
+
+class TestLevelAlerts(unittest.TestCase):
+    """Odometer alerts: one line per crossed level per window cycle."""
+
+    def _snap(self, weekly_pct, fable_pct=None, spend_pct=None, resets_at=None):
+        now = datetime.now(timezone.utc).timestamp()
+        resets_at = resets_at if resets_at is not None else now + 3 * 86400
+        windows = {"seven_day": {"used_percent": weekly_pct, "resets_at": resets_at}}
+        if fable_pct is not None:
+            windows["seven_day_opus"] = {"used_percent": fable_pct, "resets_at": resets_at}
+        if spend_pct is not None:
+            windows["monthly_spend"] = {"used_percent": spend_pct, "resets_at": None, "used_minor": 100,
+                                        "limit_minor": 8000, "currency": "GBP", "exponent": 2,
+                                        "enabled": True, "spend_limit_reached": False, "disabled_reason": None}
+        return {"claude": {"ok": True, "source": "authoritative", "windows": windows}, "codex": {"ok": False}}
+
+    def test_below_first_level_is_silent(self):
+        state = {}
+        self.assertEqual(uc.compute_level_alerts(self._snap(3.0), state), [])
+
+    def test_each_level_fires_once_per_cycle(self):
+        state = {}
+        a1 = uc.compute_level_alerts(self._snap(52.0, resets_at=2_000_000_000), state)
+        self.assertEqual(len(a1), 1)
+        self.assertIn("Heti keret (minden modell): 52%", a1[0])
+        # same level, same cycle: silent
+        self.assertEqual(uc.compute_level_alerts(self._snap(60.0, resets_at=2_000_000_000), state), [])
+        # next level: one line
+        a2 = uc.compute_level_alerts(self._snap(76.0, resets_at=2_000_000_000), state)
+        self.assertEqual(len(a2), 1)
+        # new cycle (new resets_at): fires again from the first level
+        a3 = uc.compute_level_alerts(self._snap(55.0, resets_at=2_000_600_000), state)
+        self.assertEqual(len(a3), 1)
+
+    def test_jump_across_several_levels_sends_one_line(self):
+        state = {}
+        a = uc.compute_level_alerts(self._snap(95.0, resets_at=2_000_000_000), state)
+        self.assertEqual(len(a), 1)
+        self.assertIn("95%", a[0])
+        # 50, 75 and 90 are stamped for this cycle; 100 was not crossed
+        keys = [k for k in state["levels"] if k.startswith("claude_seven_day|")]
+        self.assertEqual(len(keys), 3)
+
+    def test_expired_weekly_window_is_skipped(self):
+        state = {}
+        self.assertEqual(uc.compute_level_alerts(self._snap(99.0, resets_at=1_000_000), state), [])
+
+    def test_fable_and_spend_have_their_own_lines(self):
+        state = {}
+        a = uc.compute_level_alerts(self._snap(3.0, fable_pct=80.0, spend_pct=91.0), state)
+        self.assertEqual(len(a), 2)
+        self.assertTrue(any("csak Fable" in x for x in a))
+        self.assertTrue(any("Havi extra-koltes" in x and "91%" in x for x in a))
+
+    def test_non_authoritative_source_never_alerts(self):
+        snap = self._snap(99.0); snap["claude"]["source"] = "estimate"
+        self.assertEqual(uc.compute_level_alerts(snap, {}), [])
+
+
+class TestNotifyOwner(unittest.TestCase):
+    def test_no_lines_is_a_confirmed_noop(self):
+        self.assertTrue(uc.notify_owner([], {"claude": {}}))
+
+    def test_failed_send_returns_false(self):
+        fake = MagicMock(); fake.returncode = 1; fake.stdout = "Hiba"; fake.stderr = ""
+        with patch.object(uc.subprocess, "run", return_value=fake):
+            self.assertFalse(uc.notify_owner(["ALERT: x"], {"claude": {}}))
+
+    def test_confirmed_send_returns_true_and_carries_the_lines(self):
+        fake = MagicMock(); fake.returncode = 0; fake.stdout = ""; fake.stderr = ""
+        with patch.object(uc.subprocess, "run", return_value=fake) as run:
+            self.assertTrue(uc.notify_owner(["ALERT: heti 75%"], {"claude": {"windows": {"seven_day": {"used_percent": 75}}}}))
+            msg = run.call_args[0][0][2]
+            self.assertIn("ALERT: heti 75%", msg)
+            self.assertIn("heti 75%", msg)
 
 
 if __name__ == "__main__":

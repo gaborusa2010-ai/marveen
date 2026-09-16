@@ -14,6 +14,16 @@
 
 set -u
 
+# Elofeltetel: a suite az `sqlite3` CLI-t hasznalja. Ezen a telepitesen az
+# nincs telepitve (a projekt CLAUDE.md-je ki is mondja), es a hianyaban a
+# futas `command not found`-dal esik szet -- ami nem lelet a kodrol, csak
+# annyi, hogy itt nincs mivel merni. Hangos SKIP, exit 0. Ha az sqlite3
+# egyszer felkerul a gepre, a suite magatol ujra elesedik.
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "  SKIP a suite az sqlite3 CLI-t igenyli, ezen a gepen nincs telepitve"
+  exit 0
+fi
+
 PASS=0; FAIL=0
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

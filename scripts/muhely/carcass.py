@@ -48,13 +48,37 @@ Spec
       # not to the carcass. A fixed shelf still goes to the carcass.
   "drawers": [
       {"count": 3, "front_h": 250, "runner": "side", "bottom_t": 6,
-       "runner_length": 400}
+       "runner_length": 400, "bay": 1}
+      # bay: which bay the stack goes in, 1-based from the high end. Only
+      # matters on a RAKED carcass, where the bays are different heights and
+      # the stack has to clear the LOW edge of its own bay. Leave it out and
+      # a raked job is checked against the shallowest bay, which is the
+      # honest answer when nobody said.
       # runner_length: side runners come in fixed lengths and the box is cut
       # to the runner, not to whatever is left in front of the back. Give it
       # whenever you know it; without it the box stops
       # `drawer_box_rear_clearance` short of the back.
   ],
   "drawer_front": "overlay",          # "overlay" or "inset"
+  "doors": {"count": 2, "handle_board": 50, "gap": 3,
+            "bottom": "flush", "top": "raked", "hinge_side": "high"},
+      # Overlay doors across the WHOLE external front: n doors share W with
+      # n+1 reveals. Back-calculated from the delivered Lyford Road TV unit,
+      # where only gap = 3.0 reproduces all four published sizes.
+      # handle_board: the owner never routs a pull into the door leaf. A solid
+      #   oak board of this height goes ON TOP of the leaf, and the leaf is cut
+      #   shorter by it.
+      # bottom: "flush" (no reveal, the recessed plinth hides the edge -- the
+      #   owner's convention) or "gap".
+      # top: on a RAKED box, "raked" gives a trapezoid door that follows the
+      #   stair; "square" gives a rectangle limited by the bay's LOW edge plus a
+      #   fixed triangular filler above it.
+      # hinge_side: "high" or "low" -- which vertical edge takes the hinges.
+      #   Omit it and the check runs on the SHORT edge, which is the honest
+      #   answer when nobody said.
+  "plinth": {"h": 50, "setback": 40, "oversize": 10},
+      # h is a MAXIMUM, not a size: the plinth is scribed to the floor on site,
+      # so it leaves the shop oversize in height.
   "edging": {"t": 2, "parts": {"polc": {"w": 0, "h": 1}}}
       # The owner's rule: every banded edge takes the tape thickness off THAT
       # dimension. Per part name, say how many banded edges each dimension has
@@ -91,6 +115,14 @@ DEFAULTS = {
     "drawer_front_gap": 3.0,         # gap between overlay fronts
     "inset_front_gap": 2.0,          # gap all round for an inset front
     "bottom_groove_depth": 6.0,      # drawer bottom groove depth per side
+    # MEASURED, not chosen: the Lyford Road TV unit's four published door sizes
+    # only come out at 3.0. See apply_doors.
+    "door_gap": 3.0,                 # reveal round an overlay door
+    # ASSUMED: a standard 35 mm European cup at 80 mm from the end of the door.
+    # The shop has a dedicated boring machine but its hinge make is not recorded,
+    # so these two drive a WARNING, never a size.
+    "hinge_cup_dia": 35.0,
+    "hinge_end_inset": 80.0,
 }
 
 
@@ -173,7 +205,11 @@ def apply_rounding(parts, notes, grid):
 
     # Parts that live inside something else. Rounding these UP is what jams a
     # shelf in its housing, so they always go down.
-    into_opening = ("polc", "fiok", "valaszfal")
+    # A door is not IN an opening, but it rounds down for the same reason: the
+    # quarter millimetre has to go into the reveal, never into the neighbour.
+    # Lyford Road cut 531.75 as 531.5; to nearest it would have been 532.0 and
+    # the pair would have closed the 3 mm gap between them.
+    into_opening = ("polc", "fiok", "valaszfal", "ajto", "labazat")
     down = up = 0
     for p in parts:
         constrained = p["name"].startswith(into_opening)
@@ -190,6 +226,94 @@ def apply_rounding(parts, notes, grid):
         notes.append(f"KEREKITES {grid} mm-re: {down} meret LEFELE (ami nyilasba megy), "
                      f"{up} a legkozelebbire (ami a kulso meretet adja). "
                      f"A panelfuresz ennel pontosabbat nem tud.")
+
+
+def _slope_angle(slope, W, H):
+    """The rake angle, from whichever of the three forms the spec used.
+
+    Pulled out of apply_slope so the drawer check can ask the same question and
+    get the same answer. Two copies of this arithmetic would drift, and the way
+    it would drift is silently: both copies return a plausible angle.
+    """
+    import math
+
+    run = float(slope.get("run", 0))
+    rise = float(slope.get("rise", 0))
+    if slope.get("angle") is not None:
+        alpha = math.radians(float(slope["angle"]))
+        how = f"megadott szog {math.degrees(alpha):.1f} fok"
+    elif rise and run:
+        alpha = math.atan(rise / run)
+        how = f"emelkedes {rise:.0f} / futas {run:.0f}"
+    elif slope.get("h_low") is not None:
+        drop = H - float(slope["h_low"])
+        alpha = math.atan(drop / W)
+        how = f"magas veg {H:.0f}, alacsony veg {float(slope['h_low']):.0f}"
+    else:
+        raise ValueError("A slope blokkhoz rise+run, angle vagy h_low kell.")
+    return alpha, how
+
+
+def _bay_spans(bays, t, div_t):
+    """(start, end) of every bay, measured from the OUTSIDE face of the high end.
+
+    Same origin as the rake, and the first bay starts at t, not at 0 -- the
+    mistake that made every divider t*tan(alpha) too long until 2026-09-13.
+    """
+    spans = []
+    x = t
+    for i, bay in enumerate(bays):
+        spans.append((x, x + bay))
+        x += bay + (div_t if i < len(bays) - 1 else 0)
+    return spans
+
+
+def _sloped_drawer_limit(slope, drawer_groups, notes, *, W, H, t, bays, div_t, inset):
+    """How much height a drawer stack really has in a raked carcass.
+
+    The front is a rectangle, so what limits it is the LOW edge of its bay, not
+    the carcass height. Returns (limit, label) for the caller's fit check.
+    """
+    import math
+
+    alpha, _ = _slope_angle(slope, W, H)
+    tan_a = math.tan(alpha)
+    spans = _bay_spans(bays, t, div_t)
+
+    wanted = {int(d["bay"]) for d in drawer_groups if d.get("bay") is not None}
+    if len(wanted) > 1:
+        notes.append(f"FIGYELEM: a fiokcsoportok tobb rekeszre hivatkoznak "
+                     f"({sorted(wanted)}), es ez az ellenorzes egy fuggoleges "
+                     f"sorra szol. Rekeszenkent kulon futtasd le.")
+    if wanted:
+        idx = min(wanted)
+        if not 1 <= idx <= len(spans):
+            raise ValueError(f"A fiok a {idx}. rekeszbe kerulne, de {len(spans)} rekesz van.")
+        # "az 1. rekesz", "a 3. rekesz": the Hungarian article follows the spoken
+        # number, and 1 and 5 are the ones that start with a vowel.
+        art = "az" if idx in (1, 5) else "a"
+        where, why = f"{art} {idx}. rekesz", ""
+    else:
+        # No bay named on a raked box: take the shallowest one. A tool that does
+        # not know must not pick the flattering answer.
+        idx = len(spans)
+        where = f"a legalacsonyabb ({idx}.) rekesz"
+        why = (" A spec nem mondja meg, melyik rekeszbe kerul a fiok, ezert a "
+               "legrosszabb esettel szamolok. Add meg a drawers blokkban: \"bay\": 1.")
+
+    x_low = spans[idx - 1][1]
+    h_out = H - x_low * tan_a           # carcass height at the bay's low edge
+    if inset:
+        # Bottom panel, plus the raked top measured VERTICALLY where it crosses.
+        limit = h_out - t - t / math.cos(alpha)
+        what = f"tiszta nyilas {where} also elenel"
+    else:
+        limit = h_out
+        what = f"kulso magassag {where} also elenel"
+    notes.append(f"FERDE KORPUSZ, fiok-ellenorzes: {where} also elen a korpusz "
+                 f"{h_out:.0f} mm (a magas vegen {H:.0f}), tehat a fiokoknak "
+                 f"{limit:.0f} mm all rendelkezesre, nem {H:.0f}.{why}")
+    return limit, what
 
 
 def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
@@ -213,21 +337,7 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
     """
     import math
 
-    run = float(slope.get("run", 0))
-    rise = float(slope.get("rise", 0))
-    if slope.get("angle") is not None:
-        alpha = math.radians(float(slope["angle"]))
-        how = f"megadott szog {math.degrees(alpha):.1f} fok"
-    elif rise and run:
-        alpha = math.atan(rise / run)
-        how = f"emelkedes {rise:.0f} / futas {run:.0f}"
-    elif slope.get("h_low") is not None:
-        drop = H - float(slope["h_low"])
-        alpha = math.atan(drop / W)
-        how = f"magas veg {H:.0f}, alacsony veg {float(slope['h_low']):.0f}"
-    else:
-        raise ValueError("A slope blokkhoz rise+run, angle vagy h_low kell.")
-
+    alpha, how = _slope_angle(slope, W, H)
     tan_a = math.tan(alpha)
     drop_total = W * tan_a
     h_low = H - drop_total
@@ -267,13 +377,19 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
                      "es futtasd ujra. A listcheck addig nem engedi at.")
 
     # Uprights: the two ends, then each divider at its own distance along the run.
-    x = 0.0
-    positions = []
-    for i, bay in enumerate(bays):
-        x += bay
-        if i < len(bays) - 1:
-            positions.append(x + div_t / 2)
-            x += div_t
+    #
+    # THE ORIGIN IS THE OUTSIDE FACE OF THE HIGH END, not the first bay. Every
+    # other figure in this function is measured from there: the high end gets H
+    # at x=0 and the low end gets H - W*tan at x=W. So the running position has
+    # to start at the INSIDE face of the high-end panel, which is t along, or
+    # every divider comes out t*tan(alpha) too LONG -- 13.7 mm on an 18 mm side
+    # at 37.2 degrees, and too long is the direction that binds.
+    #
+    # Measured 2026-09-13 on a 1800 x 1950 three-bay practice box: the code said
+    # 1505.0 and 1054.0, an independent calculation said 1491.7 and 1040.3.
+    # `bays` holds CLEAR openings, so the panel thicknesses are not in them.
+    spans = _bay_spans(bays, t, div_t)
+    positions = [end + div_t / 2 for (_, end) in spans[:-1]]
 
     for p in list(parts):
         if p["name"] == "oldal":
@@ -290,17 +406,40 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
                               "note": f"{xp:.0f} mm-re a magas vegtol, ezert "
                                       f"{xp * tan_a:.1f} mm-rel rovidebb, hosszu pont"})
         elif p["name"] in ("tetolap", "munkalap"):
-            raked = W / math.cos(alpha)
+            # THE RAKE STRETCHES THE PANEL'S OWN SPAN, NOT THE CARCASS WIDTH.
+            # A "sides_full" top sits BETWEEN the sides, so its horizontal span
+            # is the internal width; only a "top_applied" worktop runs the full
+            # external W. Dividing W by cos in both cases made the top 45.4 mm
+            # too long on the 1800 mm practice box (2260.8 instead of 2215.6).
+            # The panel already carries its own span in p["w"], so use that.
+            flat = float(p["w"])
+            raked = flat / math.cos(alpha)
             parts.remove(p)
             parts.append({**p, "name": f"{p['name']} (ferde)", "w": round(raked, 1),
-                          "note": f"a FERDE el hossza {raked:.1f} mm, nem {W:.0f}. "
+                          "note": f"a FERDE el hossza {raked:.1f} mm, nem {flat:.0f}. "
                                   f"Ket vege {math.degrees(alpha):.1f} fokra vagva"})
         elif p["name"] == "hatlap":
+            # THE BACK NEVER REACHES THE EXTERNAL HEIGHT, so H is the wrong
+            # bounding figure: a rebated back is inner_h + 2*rebate tall, and
+            # writing H put it 16 mm over on the practice box. Its own h is
+            # already that number, so keep it and rake it.
+            #
+            # WHAT IS NOT CLAIMED HERE: the exact height of the back's top
+            # corner at the high end. It depends on where the raked top's
+            # underside crosses the high side, which is the panel thickness
+            # measured VERTICALLY (t/cos), and that is not worth deriving for
+            # a 6 mm panel that gets scribed anyway. So the raked edge goes out
+            # OVERSIZE and is trimmed to the fitted top -- the owner's own rule
+            # for anything that meets another surface.
+            flat_w, flat_h = float(p["w"]), float(p["h"])
+            drop_back = flat_w * tan_a
             parts.remove(p)
-            parts.append({**p, "name": "hatlap (trapez)", "h": round(H, 1),
-                          "note": f"TRAPEZ: {H:.0f} mm a magas vegen, {h_low:.1f} mm "
-                                  f"az alacsonyon, a ferde el {math.degrees(alpha):.1f} fok. "
-                                  f"A megadott meret a befoglalo teglalap"})
+            parts.append({**p, "name": "hatlap (trapez)", "h": round(flat_h, 1),
+                          "note": f"TRAPEZ: {flat_h:.0f} mm a magas vegen, "
+                                  f"{flat_h - drop_back:.1f} mm az alacsonyon, a ferde el "
+                                  f"{math.degrees(alpha):.1f} fok. A megadott meret a "
+                                  f"befoglalo teglalap. A FERDE ELEN TULMERETRE vagd, "
+                                  f"es a beszerelt tetolaphoz szabd helyben"})
 
     notes.append("A ferde vagasok HOSSZU PONTON mertek. A helyszinen merj ket-harom "
                  "ponton, a legkisebbel szamolj, es ami falhoz vagy padlohoz er, "
@@ -310,8 +449,323 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
             if p["name"].startswith(("oldal", "valaszfal", "tetolap", "munkalap", "hatlap")):
                 p["note"] = (p.get("note", "") + "  [FELTETELEZETT SZOG]").strip()
     return {"angle_deg": round(math.degrees(alpha), 2), "h_low": round(h_low, 1),
-            "raked_edge": round(W / math.cos(alpha), 1),
+            # The stair line across the OUTSIDE of the box. It is deliberately
+            # not the top panel's length: that one follows the panel's own span
+            # (internal width for a top between the sides), and the two differ
+            # by 2*t/cos. Keep both straight or the wrong one reaches the saw.
+            "raked_edge_outside": round(W / math.cos(alpha), 1),
             "source": "mert" if measured else "feltetelezett"}
+
+
+def _door_spans(W, n, gap):
+    """Where each door's two vertical edges fall, measured from the high end.
+
+    An overlay door covers the OUTSIDE of the box, so n doors share the external
+    width with n+1 reveals: one between each pair and one at each end. Measured
+    on the Lyford Road TV unit (2026-08-24, built and delivered): a 1072.5 mm box
+    with two doors gives 531.75 mm each, and 1072.5 - 2*531.75 = 9.0 = 3 x 3 mm.
+    """
+    dw = (W - (n + 1) * gap) / n
+    spans = []
+    x = gap
+    for _ in range(n):
+        spans.append((x, x + dw))
+        x += dw + gap
+    return dw, spans
+
+
+def apply_doors(parts, notes, *, spec, cfg, W, H, t, bays, div_t):
+    """Overlay doors, straight or following the rake.
+
+    THE WHOLE RULE IS BACK-CALCULATED FROM A REAL JOB, not assumed. The Lyford
+    Road TV unit went out with door leaves 374 x 527.5, handle boards 50 x 531.5
+    and a 426 mm door assembly in a 429 mm box. Four numbers, one free parameter
+    (the reveal), and only gap = 3.0 reproduces all four -- 2.5 and 3.5 both miss
+    every one of them. So the reveal is measured, not picked.
+
+      door assembly height = H - gap          (flush at the bottom, reveal on top)
+      door leaf height     = assembly - handle board
+      door width           = (W - (n+1) * gap) / n
+      cut size             = finished minus edging, rounded DOWN to the grid
+
+    Flush at the bottom is the owner's convention and it is CONDITIONAL: it holds
+    where a recessed plinth sits under the door. Say "bottom": "gap" when there
+    is no plinth to hide the bottom edge.
+
+    ON A RAKED BOX the door's top follows the stair, so the leaf is a right
+    trapezoid and the two vertical edges are different heights. Which one matters
+    is not decoration: the HINGES go on one of them, and the short one may not be
+    tall enough to take two.
+    """
+    import math
+
+    dspec = spec.get("doors")
+    if not dspec:
+        return
+    if isinstance(dspec, dict):
+        dspec = [dspec]
+
+    slope = spec.get("slope")
+    alpha = tan_a = 0.0
+    if slope:
+        alpha, _ = _slope_angle(slope, W, H)
+        tan_a = math.tan(alpha)
+
+    for gi, dg in enumerate(dspec, 1):
+        n = int(dg.get("count", 1))
+        if n < 1:
+            raise ValueError("A doors blokkban a count legalabb 1.")
+        gap = float(dg.get("gap", cfg["door_gap"]))
+        hb = float(dg.get("handle_board", 0))
+        bottom = dg.get("bottom", "flush")
+        tag = f"ajto{gi}" if len(dspec) > 1 else "ajto"
+
+        bottom_gap = 0.0 if bottom == "flush" else gap
+        assembly_h = H - gap - bottom_gap
+        dw, spans = _door_spans(W, n, gap)
+        if dw <= 0:
+            raise ValueError(f"{n} ajto {gap:.1f} mm fugakkal nem fer el "
+                             f"{W:.0f} mm-en.")
+
+        # Where the door edges land relative to the uprights behind them. Not
+        # cosmetic: a door edge that stops half way across a divider leaves the
+        # divider showing, and that is a decision somebody has to make on purpose.
+        upright_x = [t / 2] + [e + div_t / 2 for (_, e) in _bay_spans(bays, t, div_t)[:-1]] \
+                    + [W - t / 2]
+        edges = [round(x, 1) for s in spans for x in s]
+        notes.append(f"{n} db rafekvo ajto, {gap:.1f} mm fuga korben "
+                     f"({n + 1} fuga a {W:.0f} mm-en). Egy ajto keszen {dw:.2f} mm szeles. "
+                     f"Az ajtoelek a magas vegtol: {', '.join(f'{e:.0f}' for e in edges)} mm; "
+                     f"az allo elemek kozepe: {', '.join(f'{u:.0f}' for u in upright_x)} mm.")
+        if bottom == "flush":
+            notes.append("Az ajto ALUL SIK (nincs res), a fuga csak felul -- a gazda "
+                         "konvencioja sullyesztett labazatnal. Ha nincs labazat alatta, "
+                         "add meg: \"bottom\": \"gap\".")
+
+        if not slope:
+            leaf_h = assembly_h - hb
+            if leaf_h <= 0:
+                raise ValueError(f"A {hb:.0f} mm-es fogantyu deszka nem fer bele a "
+                                 f"{assembly_h:.1f} mm-es ajtoba.")
+            parts_add(parts, f"{tag}lap", dw, leaf_h, n, grain="h",
+                      note=f"rafekvo, keszen {dw:.2f} x {leaf_h:.1f}")
+            if hb:
+                parts.append({"name": f"{tag} fogantyu deszka", "w": round(dw, 1),
+                              "h": round(hb, 1), "qty": n, "grain": "w",
+                              "note": "tomor tolgy, szalag nelkul, az ajtolap TETEJERE",
+                              "material": "tomor"})
+            notes.append(f"Ajto osszeallitva {assembly_h:.1f} mm magas a {H:.0f} mm-es "
+                         f"korpuszon" + (f", ebbol {hb:.0f} a fogantyu deszka es "
+                                         f"{leaf_h:.1f} az ajtolap." if hb else "."))
+            continue
+
+        # ---- raked ----
+        top_style = dg.get("top", "raked")
+        hinge_side = dg.get("hinge_side")
+        # WHERE THE HANDLE BOARD GOES ON A RAKED DOOR IS A DECISION, NOT A SUM.
+        # "raked": the strip follows the stair, the owner's own rule ("on top of
+        # the leaf") read literally on a door whose top is sloped.
+        # "level": a horizontal strip whose top edge lands on the door's LOW
+        # corner, so it is grippable at one height, with a triangle above it.
+        # The two give DIFFERENT PARTS, not different sizes, so there is no worst
+        # case to fall back on. Default is the literal reading of his convention.
+        handle_top = dg.get("handle_top", "raked")
+        if hb and handle_top not in ("raked", "level"):
+            raise ValueError("A doors.handle_top csak \"raked\" vagy \"level\" lehet.")
+        if hb and top_style == "raked":
+            notes.append(f"DONTENDO: a fogantyu deszka ferde ajton. Most a "
+                         f"\"{handle_top}\" valtozat all a listan"
+                         + (" (a deszka a FERDE el menten fut, vegei gerbe vagva)."
+                            if handle_top == "raked" else
+                            " (VIZSZINTES deszka, a felso ele az ajto ALACSONY sarkanal, "
+                            "folotte haromszog betet).")
+                         + " Ez a ket olvasat MAS ALKATRESZEKET ad, nem mas meretet, "
+                           "tehat nincs 'rosszabbik eset', amibe visszaeshetnenk. "
+                           "A gazda szava dönti el.")
+        # The reveal is what the eye sees, so it is measured PERPENDICULAR to the
+        # raked edge. What the saw needs is the VERTICAL drop, and the two are not
+        # the same number: 3 mm across a 37 degree rake is 3.77 mm straight down.
+        # Writing the perpendicular figure onto a vertical dimension is the kind
+        # of mistake that looks right on paper and leaves a visible wedge.
+        drop = gap / math.cos(alpha)
+        notes.append(f"FERDE AJTO. A {gap:.1f} mm-es fuga a ferde el MENTEN ertendo "
+                     f"(merolegesen), ami FUGGoLEGESEN {drop:.2f} mm. A ket szam "
+                     f"{math.degrees(alpha):.1f} foknal nem ugyanaz.")
+
+        for k, (xa, xb) in enumerate(spans, 1):
+            h_hi = H - xa * tan_a - drop - bottom_gap    # tall (high-end) edge
+            h_lo = H - xb * tan_a - drop - bottom_gap    # short (low-end) edge
+            nm = f"{tag}lap {k}." if n > 1 else f"{tag}lap"
+            if h_lo <= 0:
+                notes.append(f"FIGYELEM: a(z) {k}. ajto alacsony ele {h_lo:.1f} mm, "
+                             f"tehat a doles a hegyes vegen tulfut az ajton. Ez az "
+                             f"ajto nem teglalapra vagott trapez, hanem haromszog -- "
+                             f"rovidebb futast adj meg, vagy zard le ezt a rekeszt.")
+                continue
+
+            if top_style == "square":
+                # A rectangle cannot fill a raked opening, so it is limited by the
+                # SHORT edge -- the same rule as a drawer front -- and what is left
+                # above it is a fixed filler, not thin air. Emitting the filler is
+                # the point: without it the list is short a part and the gap only
+                # turns up on site.
+                leaf_h = h_lo - hb
+                if leaf_h <= 0:
+                    raise ValueError(f"A {hb:.0f} mm-es fogantyu deszka nem fer bele a "
+                                     f"{k}. ajto {h_lo:.1f} mm-es magassagaba.")
+                parts_add(parts, nm, dw, leaf_h, 1, grain="h",
+                          note=f"EGYENES teteju, a rekesz ALACSONY elehez merve. "
+                               f"Az ajto ott {h_lo:.1f} mm, ebbol {hb:.0f} a fogantyu "
+                               f"deszka, tehat az ajtolap keszen {leaf_h:.1f} mm")
+                if hb:
+                    # A square-topped door has a horizontal top, so the board is a
+                    # plain strip -- but it still has to BE on the list. It was
+                    # not: the branch subtracted its height from the leaf and then
+                    # emitted no board, so the door came out 50 mm short of its
+                    # own opening and nothing said so.
+                    parts.append({"name": f"{tag} fogantyu deszka {k}.",
+                                  "w": round(dw, 1), "h": round(hb, 1), "qty": 1,
+                                  "grain": "w", "material": "tomor",
+                                  "note": "tomor tolgy, VIZSZINTES, az ajtolap "
+                                          "TETEJERE, szalag nelkul"})
+                parts_add(parts, f"{tag} vakolo {k}.", dw, h_hi - h_lo, 1, grain="h",
+                          note=f"FIX haromszog az ajto FOLE: {h_hi - h_lo:.1f} mm a magas "
+                               f"elen, 0 az alacsonyon. A megadott meret a befoglalo "
+                               f"teglalap, a ferde elen tulmeretre vagd")
+                hinge_hi = hinge_lo = leaf_h   # a szogletes ajto ket ele egyforma
+            else:
+                # The blank is the bounding rectangle: you cut a rectangle and take
+                # the corner off. The sloped edge is LONGER than the door is wide.
+                raked_edge = dw / math.cos(alpha)
+                # A BOARD OF PERPENDICULAR WIDTH hb TAKES hb/cos(alpha) OFF THE
+                # HEIGHT, NOT hb. Measured 2026-09-14 on this same practice box:
+                # subtracting 50 vertically left every raked leaf 12.8 mm too
+                # long at 37.2 degrees, and too long is the direction that will
+                # not shut. The straight door is the special case where alpha=0
+                # makes the two numbers equal, which is exactly why the straight
+                # code was right and this one was not.
+                hb_v = hb / math.cos(alpha) if handle_top == "raked" else hb
+                leaf_hi = h_hi - hb_v
+                leaf_lo = h_lo - hb_v
+                if leaf_lo <= 0:
+                    raise ValueError(f"A {hb:.0f} mm-es fogantyu deszka nem fer ra a "
+                                     f"{k}. ajto {h_lo:.1f} mm-es alacsony vegere.")
+                if hb and handle_top == "level":
+                    # Horizontal strip at the low corner: a plain panel under it,
+                    # a right triangle over it, and the strip itself straight.
+                    parts_add(parts, nm, dw, leaf_lo, 1, grain="h",
+                              note=f"ALSO, TEGLALAP resz: a fogantyu deszka ALATT, "
+                                   f"keszen {leaf_lo:.1f} mm magas")
+                    parts_add(parts, f"{tag} felso betet {k}.", dw, h_hi - h_lo, 1,
+                              grain="h",
+                              note=f"HAROMSZOG a fogantyu deszka FOLOTT: "
+                                   f"{h_hi - h_lo:.1f} mm a magas elen, 0 az alacsonyon. "
+                                   f"A megadott meret a BEFOGLALO teglalap")
+                    parts.append({"name": f"{tag} fogantyu deszka {k}.",
+                                  "w": round(dw, 1), "h": round(hb, 1), "qty": 1,
+                                  "grain": "w", "material": "tomor",
+                                  "note": "tomor tolgy, VIZSZINTES, a felso ele az ajto "
+                                          "alacsony sarkanal, szalag nelkul"})
+                else:
+                    parts_add(parts, nm, dw, leaf_hi, 1, grain="h",
+                              note=f"TRAPEZ: {leaf_hi:.1f} mm a magas elen, {leaf_lo:.1f} az "
+                                   f"alacsonyon, a ferde el {raked_edge:.1f} mm hosszu "
+                                   f"({math.degrees(alpha):.1f} fok). A megadott meret a "
+                                   f"BEFOGLALO teglalap")
+                hinge_hi, hinge_lo = leaf_hi, leaf_lo
+                if hb and handle_top == "raked":
+                    # SOLID TIMBER IS NOT SHEET. A bounding rectangle is the right
+                    # shape to write for a panel cut out of a board; a handle strip
+                    # is ripped to width and CROSSCUT at an angle, so its size is
+                    # length x width with the end angle called out. Writing the
+                    # 596 x 516 blank asked for a plank to get a 50 mm strip.
+                    end_offset = hb * tan_a
+                    parts.append({"name": f"{tag} fogantyu deszka {k}.",
+                                  "w": round(raked_edge, 1), "h": round(hb, 1), "qty": 1,
+                                  "grain": "w", "material": "tomor",
+                                  "note": f"tomor tolgy, a FERDE el menten. Hosszu pont "
+                                          f"{raked_edge:.1f}, rovid pont "
+                                          f"{raked_edge - 2 * end_offset:.1f}; a ket vege "
+                                          f"{90 - math.degrees(alpha):.1f} fokra a hossz "
+                                          f"iranyahoz kepest (fuggolegesen all). "
+                                          f"Az ajtolap TETEJERE"})
+
+            # Hinges. The cup needs material, and on a raked door one edge is
+            # short. Two cups at the given inset cannot overlap, so the edge has
+            # to be at least 2*inset + cup tall.
+            need = 2 * cfg["hinge_end_inset"] + cfg["hinge_cup_dia"]
+            if hinge_side is None:
+                # The tool does not know which edge takes the hinges, so it checks
+                # the SHORT one -- the same principle the drawer check runs on.
+                # A tool that does not know must not pick the flattering answer.
+                checked = min(hinge_hi, hinge_lo)
+                which = ("a rovidebbik, mert a spec nem mondja meg, melyikre kerul a "
+                         "pant -- add meg: \"hinge_side\": \"high\" vagy \"low\"")
+            else:
+                checked = hinge_lo if hinge_side == "low" else hinge_hi
+                which = ("az alacsony el" if hinge_side == "low" else "a magas el")
+            if checked < need:
+                notes.append(f"FIGYELEM: a(z) {k}. ajton a pantos el {checked:.1f} mm "
+                             f"magas, ket pantcseszehez viszont {need:.0f} mm kell "
+                             f"({cfg['hinge_end_inset']:.0f} mm vegtavolsag ketszer plusz "
+                             f"{cfg['hinge_cup_dia']:.0f} mm csesze). Ide egy pant fer, "
+                             f"vagy a masik elre kell tenni. (Mert el: {which}.)")
+            else:
+                notes.append(f"A(z) {k}. ajton a pantos el {checked:.1f} mm, a ket "
+                             f"pantcseszehez kello {need:.0f} mm megvan. "
+                             f"(Mert el: {which}.)")
+
+        notes.append("FIGYELEM: a pant merete FELTETELEZETT (szabvanyos 35 mm-es "
+                     "euro csesze, 80 mm vegtavolsaggal), nem a muhely vasalatabol "
+                     "mert. A pontos szam a pant adatlapjan all; addig ez az "
+                     "ellenorzes iranymutato, nem dontes.")
+
+
+    # SOLID TIMBER IS BOUGHT BY THE METRE, NOT NESTED ON A SHEET. cutlist.py
+    # will happily lay these strips onto a 2440 x 1220 board and report 96%
+    # waste, which is a true number about a fiction: nobody buys a sheet of
+    # oak. The figure the shop actually needs is the running length, so put
+    # it on the list. The delivered Lyford Road list says the same thing in
+    # the same words ("kb. 2130 mm tomor anyag kell hozza").
+    solid = [p for p in parts if p.get("material") == "tomor"
+             and "fogantyu" in p["name"]]
+    if solid:
+        run_mm = sum(p["w"] * p["qty"] for p in solid)
+        notes.append(f"TOMOR ANYAG: a fogantyu deszkakhoz osszesen {run_mm:.0f} mm "
+                     f"({run_mm / 1000:.2f} m) folyometer kell, {max(p['h'] for p in solid):.0f} mm "
+                     f"szelesen. A szabastervben ez egy TABLARA kerul kiosztva es "
+                     f"magas hulladekot mutat -- azt a szamot itt ne olvasd, tomor "
+                     f"anyagot folyometerre veszunk.")
+
+
+def apply_plinth(parts, notes, *, spec, W, H, t, slope_info):
+    """The plinth: a face board set back from the door front, scribed on site.
+
+    The owner's own numbers from the Lyford Road unit: set back 40 mm from the
+    door face, 50 mm is the MAXIMUM height, and it leaves the shop 10 mm oversize
+    in height because it gets cut to the floor. Height is a maximum and not a
+    size, so the part carries the oversize and says why.
+    """
+    pl = spec.get("plinth")
+    if not pl:
+        return
+    h = float(pl.get("h", 50))
+    setback = float(pl.get("setback", 40))
+    over = float(pl.get("oversize", 10))
+    parts_add(parts, "labazat", W, h + over, int(pl.get("qty", 1)), grain="w",
+              note=f"{h:.0f} mm a MAXIMUM magassag, plusz {over:.0f} mm tulmeret: "
+                   f"helyszinen a padlohoz szabva. {setback:.0f} mm-rel hatrebb az "
+                   f"ajto elolapjatol, szalag nelkul")
+    notes.append(f"LABAZAT {h:.0f} mm (maximum), {setback:.0f} mm hatrahuzva az ajto "
+                 f"elolapjatol, {over:.0f} mm tulmerettel megy ki. A padlohoz helyben "
+                 f"szabjuk.")
+    if slope_info:
+        notes.append(f"FERDE KORPUSZ + LABAZAT: az alacsony vegen a korpusz "
+                     f"{slope_info['h_low']:.0f} mm, ebbol a labazat {h:.0f}-et elvesz, "
+                     f"tehat ott {slope_info['h_low'] - h:.0f} mm hasznos magassag marad. "
+                     f"AMIT EZ NEM MOND MEG: a lepcso also foka. Ha a butor a lepcso "
+                     f"aljanal a foknak utkozik, a labazatot ki kell vagni ra -- azt a "
+                     f"helyszini meres dönti el, nem ez a szamitas.")
 
 
 def build(spec):
@@ -537,6 +991,17 @@ def build(spec):
         if runner == "under":
             # Size the INSIDE first, then derive the outside. See the note on
             # undermount_inside_deduction above.
+            # WHOSE number is 42? Blum TANDEM's. The workshop's runner is NOT
+            # TANDEM: the owner photographed the box on 2026-08-27 and it is a
+            # GRASS Dynapro (F130 107 853 201, VA NL650 70 3D, soft-close), see
+            # store/muhely/cutlist-benchmark/raw6/01-alulszerelt-sin-hiba.md.
+            # Grass works to a different deduction, and the figure is in the
+            # fitting leaflet in the box ("Korpusinnenmass minus X"), not measured
+            # yet. So the default is not merely a default here -- for THIS shop it
+            # is the wrong maker's number, and it sizes a drawer box that has to
+            # fit a real runner. Say so whenever the job leans on it; do not
+            # substitute a guess.
+            explicit = "inside_deduction" in dg
             ded = float(dg.get("inside_deduction", cfg["undermount_inside_deduction"]))
             inside_w = opening_w - ded
             box_w = inside_w + 2 * t
@@ -544,6 +1009,12 @@ def build(spec):
                          f"{opening_w:.1f} nyilas minusz {ded:.0f} = {inside_w:.1f} belso, "
                          f"{t:.0f} mm oldallal a doboz kulso merete {box_w:.1f}. "
                          f"Turés plusz 0 minusz 1,5: szukebb szabad, bovebb szorul.")
+            if not explicit:
+                notes.append("FIGYELEM: az alapertelmezett 42 mm a BLUM TANDEM szama. "
+                             "A muhely sinje GRASS Dynapro (a gazda fotoja, 2026-08-27), "
+                             "es a Grass mas levonassal dolgozik. A pontos szam a doboz "
+                             "szerelesi utmutatojan all (Korpusinnenmass minusz X); amig "
+                             "az nincs meg, add meg kezzel az inside_deduction erteket.")
             if abs(t - 19.0) < 0.6 and abs(ded - 42.0) < 0.1:
                 notes.append("FIGYELEM: 19 mm-es fiokoldalhoz a TANDEM 49 mm levonast ir, "
                              "nem 42-t. Allitsd at az inside_deduction erteket, vagy "
@@ -634,6 +1105,23 @@ def build(spec):
             limit, what = inner_h, "belso magassag"
         else:
             limit, what = H, "kulso magassag"
+        # ON A RAKED CARCASS THE CARCASS HEIGHT IS THE WRONG YARDSTICK, and it is
+        # wrong in the reassuring direction: it is the tallest figure in the box.
+        # Measured 2026-09-13 on the three-bay practice box: three 250 mm fronts
+        # were checked against 1950 and reported "1200 mm free", while the low bay
+        # is 582 mm tall at its far edge and the stack does not fit in it at all.
+        #
+        # A drawer front is a rectangle, so the limit is the height at the LOW
+        # edge of the bay it sits in -- the shallowest point the front has to
+        # clear. Which bay is a spec question, so "bay" (1-based, from the high
+        # end) can say it. Without it the box is raked and we do not know, which
+        # is exactly when a tool must take the WORST case and say so, not the
+        # flattering one.
+        if spec.get("slope"):
+            limit, what = _sloped_drawer_limit(
+                spec["slope"], drawer_groups, notes,
+                W=W, H=H, t=t, bays=bays, div_t=div_t,
+                inset=(front_style == "inset"))
         if total_h > limit + 1:
             notes.append(f"FIGYELEM: a fiokelolapok osszmagassaga {total_h:.0f} mm, "
                          f"a {what} viszont csak {limit:.0f} mm. Nem fer bele.")
@@ -642,12 +1130,21 @@ def build(spec):
                          f"{limit:.0f} mm-bol, {limit - total_h:.0f} mm szabadon marad. "
                          f"Szandekos? Ha vegig fiokos a front, novelt elolap-magassag kell.")
 
+    # Doors carry their own rake arithmetic, so they run BEFORE apply_slope and
+    # apply_slope never sees them: it rewrites by exact part name ("oldal",
+    # "valaszfal", "tetolap", "munkalap", "hatlap") and no door is called any of
+    # those. Both still land ahead of the banding and the rounding.
+    apply_doors(parts, notes, spec=spec, cfg=cfg, W=W, H=H, t=t,
+                bays=bays, div_t=div_t)
+
     # The rake goes on BEFORE the edge banding, because banding comes off the
     # finished size and the rake is what decides that size.
     slope_info = None
     if spec.get("slope"):
         slope_info = apply_slope(parts, notes, slope=spec["slope"], W=W, H=H, t=t,
                                  bays=bays, div_t=div_t, panel_depth=panel_depth)
+
+    apply_plinth(parts, notes, spec=spec, W=W, H=H, t=t, slope_info=slope_info)
 
     edging = spec.get("edging")
     if edging:

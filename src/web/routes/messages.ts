@@ -394,12 +394,33 @@ export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
       return true
     }
 
+    // RECEIPT920912: the receipt must hang on the STATUS CHANGE, not on the UPDATE
+    // succeeding. `markMessageDone` reports `changes > 0`, and a `done -> done` PUT
+    // also matches -- the WHERE has only the id, so `result` and `completed_at` are
+    // rewritten and the row IS touched. That made a plain `result` correction send a
+    // SECOND receipt, which wakes the sender for nothing. Measured by Margo (n=2,
+    // same shape both times); the fix and its limits are Cody's reading of this file.
+    //
+    // What we deliberately did NOT do: guard the UPDATE itself with
+    // `AND status != 'done'`. Correcting the `result` of an already closed row is a
+    // legitimate operation (Roxy did exactly that when fixing a guessed id), and that
+    // guard would make the correction itself fail. `markPendingFederatedFailed` can be
+    // guarded because there the OPERATION only applies to a pending row; here it does not.
+    const before = getAgentMessage(id)
+
     let ok = false
     if (newStatus === 'done') ok = markMessageDone(id, result)
     else if (newStatus === 'failed') ok = markMessageFailed(id, result)
 
     if (ok) {
       const done = getAgentMessage(id)
+      // NOT race-free, and deliberately so: two simultaneous PUTs on the same row can
+      // both read the pre-state and both send a receipt. One row is closed by one agent
+      // in this fleet, so the case does not occur today; making it race-free needs a
+      // transaction or a new db function that reports whether the status changed, which
+      // would touch every caller including the drain-inbox path. Do not later believe
+      // this is excluded -- it is judged not worth the cost.
+      const statusChanged = before?.status !== newStatus
       // Close the OTel span now that the message has a terminal status.
       if (done?.trace_id && done?.span_id) {
         closeOtelSpan(done.trace_id, done.span_id, Date.now(), newStatus === 'done' ? 'ok' : 'error')
@@ -411,7 +432,7 @@ export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
       // it does NOT override shouldNotifyDelegator, whose guards stop undeliverable
       // acks, ping-pong acks and closures older than the stale cutoff (2 h), not
       // merely expensive ones.
-      if (done && notify !== false
+      if (done && statusChanged && notify !== false
           && shouldNotifyDelegator(done.from_agent, done.to_agent, done.content, done.created_at)) {
         // A vagas NE legyen nema, ES legyen KOVETHETO: lasd resultSummary().
         const summary = resultSummary(id, result)

@@ -155,6 +155,42 @@ def main():
     except Exception:
         pend = None
 
+    # KOZOS CSOPORT: nem kenyszeritunk valaszt, es nem is kuldunk ki semmit.
+    #
+    # A gazda 2026-09-09-en letrehozott egy kozos Telegram-csoportot mind a hat
+    # botnak, es kimondta a celjat (msg 2356): "ez a csoport csak azert van, hogy
+    # ha mindenkinek akarok valamit mondani, akkor ne kelljen hatszor begepelnem".
+    # Ebbol kovetkezik a szabaly a CLAUDE.md-ben: a csoportban CSAK az szolal meg,
+    # akit nevén szolitottak, es a nyugtazas a fo-agens dolga, EGYSZER.
+    #
+    # Ez a hook viszont az ellenkezojet kenyszeritette ki. Margo merte meg magan
+    # 2026-09-10-en: helyesen dontott ugy, hogy hallgat a csoportban, mire a hook
+    # blokkolt, szo szerint azzal, hogy "ha tenyleg nincs erdemi valasz, akkor is
+    # kuldj egy rovid visszaigazolast" -- vagyis pontosan az ot peldanyban kikuldott
+    # "rendben", ami ellen a szabaly keszult.
+    #
+    # ES A MASODIK KOR ROSSZABB, MINT AZ ELSO: ha a blokk utan sem megy ki valasz,
+    # a lenti fallback-ag MAGATOL kikuldi az agens utolso TRANSZKRIPT-SZOVEGET a
+    # chatbe. Egy csoportban ez ot agens belso munkaszovege, fordulonkent.
+    #
+    # A megkulonbozteto a chat_id ELOJELE: a Telegramnal a csoport- es
+    # supergroup-azonositok negativak, a privat beszelgetesek pozitivak.
+    # A DM-en minden marad a regiben -- ott a kenyszerites HELYES, mert ott a
+    # gazda tenyleg valaszra var.
+    if pend:
+        maradt = []
+        for _p in pend:
+            try:
+                _cid = int(_p.get("chat_id"))
+            except Exception:
+                maradt.append(_p)
+                continue
+            if _cid < 0:
+                log(sd, f"[enforce] csoport-chat, nincs kenyszerites sid={sid} chat={_cid}")
+            else:
+                maradt.append(_p)
+        pend = maradt
+
     if not pend:
         # Nothing pending: either not a Telegram turn, or the reply was already
         # sent (PostToolUse cleared it). Drop any stale enforce marker and exit.

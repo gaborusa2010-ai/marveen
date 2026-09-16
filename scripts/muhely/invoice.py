@@ -448,6 +448,37 @@ def main(argv):
     with open(argv[2]) as fh:
         job = json.load(fh)
     out = argv[argv.index("--out") + 1] if "--out" in argv else f"{kind}.pdf"
+
+    # A SECOND INVOICE FOR THE SAME JOB SPENDS A NEW NUMBER, and until 2026-09-10
+    # nothing here noticed. Measured that day in a sandbox copy: job #11, already
+    # invoiced as 10014, rendered again without a word and moved the counter from
+    # 10015 to 10016. Two invoices, same day of work, different numbers, and the
+    # customer holding both would be right to ask which one to pay.
+    #
+    # The fact was already on file -- `issued_for` has answered this question since
+    # the register was added, and jobs.py `edit` has been asking it all along. It
+    # was simply never asked at the one moment that spends a number.
+    #
+    # A WARNING, NOT A BAN, and the difference matters: a corrective invoice is a
+    # real thing, and so is a job wrongly marked. The rule is that a second number
+    # must be a decision somebody made, not a side effect of running the same
+    # command twice. Quotes are excluded on purpose: a customer may be re-quoted
+    # any number of times, and a quote spends nothing that says what the work WAS.
+    if kind == "invoice" and "--force" not in argv:
+        prior = [e for e in issued_for(job.get("_job_id"))
+                 if e.get("kind") == "invoice"]
+        if prior:
+            refs = ", ".join(str(e.get("reference")) for e in prior)
+            print(f"A #{job.get('_job_id')} munkara MAR MENT SZAMLA: {refs}\n"
+                  f"  {prior[-1].get('pdf')}\n"
+                  f"Egy masodik szamla UJ SORSZAMOT koltene ugyanarra a munkara, es a "
+                  f"vevo ket papirt kapna ugyanarrol a naprol.\n"
+                  f"  Ha a MEGLEVo szamlat akarod ujra, nyisd meg a fenti PDF-et: "
+                  f"ahhoz nem kell uj szamot kiadni.\n"
+                  f"  Ha tenyleg UJ (helyesbito) szamla kell, ismeteld meg "
+                  f"--force kapcsoloval.", file=sys.stderr)
+            return 3
+
     r = render(kind, job, business, out)
     print(json.dumps(r, indent=2, ensure_ascii=False))
     return 0

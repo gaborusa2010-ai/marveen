@@ -556,7 +556,14 @@ while IFS= read -r want; do
   # A directory entry is listed once in the manifest and expands to many paths
   # in the archive, so match on the prefix, and anchor it so "store/x" cannot
   # be satisfied by "store/xyz".
-  if ! grep -qE "^${want}(/|$)" "${ARCHIVE_LIST}"; then
+  # verify-match-begin
+  # The manifest path is data, not a pattern: a "$" in a class-file name
+  # (MainActivity$2.class) is a line anchor to grep -E and never matches, so the
+  # 2026-09-10 20:01 run reported three present files as MISSING and exited 6
+  # over a good archive. Escape every ERE metacharacter before anchoring.
+  want_re="$(printf '%s' "${want}" | sed -e 's/[][\.*^$+?(){}|]/\\&/g')"
+  if ! grep -qE "^${want_re}(/|$)" "${ARCHIVE_LIST}"; then
+  # verify-match-end
     echo "backup: MISSING from the archive: ${want}" >&2
     missing=$((missing + 1))
   fi
@@ -590,7 +597,12 @@ if [[ "${missing}" -gt 0 ]]; then
   # the next turn. Best-effort: a messaging problem must not change the exit
   # code or mask the real failure.
   if [[ -x "${REPO_ROOT}/scripts/agent-msg.sh" ]]; then
-    bash "${REPO_ROOT}/scripts/agent-msg.sh" halpali halpali \
+    # The recipient is the main agent as .env names it. "halpali" was the
+    # pre-rename id: measured 2026-09-10, zero rows to it in agent_messages, so
+    # every failure notice this block ever sent was dropped on the floor.
+    main_agent="$(sed -n 's/^MAIN_AGENT_ID=//p' "${REPO_ROOT}/.env" 2>/dev/null | head -1 | tr -d '"')"
+    main_agent="${main_agent:-marveen}"
+    bash "${REPO_ROOT}/scripts/agent-msg.sh" "${main_agent}" "${main_agent}" \
       "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} tetel hianyzik az archivumbol (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
       >/dev/null 2>&1 || true
   fi

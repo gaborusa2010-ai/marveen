@@ -80,8 +80,44 @@ for r in shared: print('  [' + str(r.get('agent_id')) + '] ' + str(r.get('conten
 # napi napló (append-only)
 curl -s -X POST http://localhost:3420/api/daily-log \
   -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
-  -d '{"agent_id":"marveen","content":"## HH:MM -- Téma\nMi történt, mi lett az eredmény"}'
+  -d '{"agent_id":"marveen","content":"[LEZART] Téma -- mi történt, mi lett az eredmény"}'
 ```
+
+**ÓRÁT NE ÍRJ A SOR ELEJÉRE.** A régi sablon `## HH:MM` prefixszel kezdődött, és az
+2026-09-11-én megdőlt: a dashboard `renderLogEntries` függvénye (`web/app.js`) MINDEN
+bejegyzés mellé kiírja a sor saját `created_at` mezőjét, óra:perc alakban. A kézzel írt
+óra tehát nem redundáns, hanem **egy sorban áll a valódi idővel, és ellentmondhat neki**:
+Margó naplójában tíz bejegyzés csúszott el, a végén 82 perccel, Forgácsnál öt sor,
+a legnagyobb 38 perc -- és mind a tizenöt a KÉZZEL írt sorokból való.
+Ha valamiért mégis kell óra a szövegbe, `date`-tel mérve, sose fejből.
+(Mérve a FUTÓ buildben, ami 2026-09-04-i; kártya `e053398b`.)
+
+**AMI VISZONT MARADJON: a `[LEZART]` / `[FOLYAMATBAN]` jelölés** (Forgács). Azt a
+dashboard NEM írja ki, a napló pedig append-only -- nélküle egy délelőtti részeredmény
+holnap végeredménynek látszik. És a visszahivatkozás TÉMÁRA menjen, ne órára:
+„a fenti FOLYAMATBAN sort megdönti", nem „a 10:00-as sort megdönti" (Cody).
+
+### Naplo-ora-prefix kereso
+
+```bash
+python3 scripts/naplo-prefix-kereso.py            # a hat CLAUDE.md + ez a doksi
+python3 scripts/naplo-prefix-kereso.py <fajl>...  # csak a megadottak
+python3 scripts/naplo-prefix-kereso.py --onteszt  # tiz kontroll (4 pozitiv, 6 negativ)
+```
+
+Kilepesi kod: **1, ha van talalat**, 0 ha nincs -- tehat hookba/cronba koetheto.
+(2026-09-11-ig a hivo ELDOBTA a kiszamolt kodot es mindig 0-t adott. Roxy merte meg,
+a POZITIV kontrollon: egy 0 talalat + exit 0 egyezes a hibas es a helyes valtozatnal
+ugyanugy nez ki.)
+
+**Miert szkript, es miert ne irj sajat grep-mintat ra:** 2026-09-11-en negy agens negy
+jo szandeku mintat irt ugyanerre, es mind a negy mast adott -- ket alulmeres (a
+literalis `HH:MM` sablon, illetve a konkret orak egyiket sem latta), es ket tulmeres
+(egy horgony nelkuli minta a `--at 07:00 --billing` kapcsolot fogta meg; a mintak
+UNIOJA prozaban allo idopontokat). Mind a negy "kesz" valaszt adott volna valakinek.
+
+**Amit a szkript NEM tud:** nem kulonbozteti meg a HASZNALATOT az EMLITESTOL. Ezert
+irja ki minden talalat SORAT -- a szamra ne tervezz, a sort nezd meg.
 
 Tier-váltás (pl. lezárult hot emlék hidegbe) API-n **nincs**, csak közvetlen SQL:
 
@@ -299,6 +335,74 @@ Listázás (`GET /api/messages`), mérve 2026-09-02:
 - A `?status=pending` az egyetlen ág, ami megkerüli a `limit`-et -- és mivel a `pending`
   átmeneti, ez a gyakorlatban mindig üres listát ad. **A 200-as, üres válasz itt nem azt
   jelenti, hogy nincs postád.**
+
+**A MASOLHATO PARANCS, ami tenyleg megmondja, mi var rad** (merve 2026-09-13 21:4x).
+Ez azert all ITT, a figyelmeztetes ALATT: a fenti bekezdes 2026-09-02 ota helyesen
+mondja, hogy a `?status=pending` mindig ures -- es 09-13-an EGY NAP ALATT KETTEN
+futottunk bele ujra (Roxy es Marveen), mert a szabaly le volt irva, de a helyette
+hasznalando parancs nem. Aki dolgozik, parancsot masol, nem bekezdest olvas.
+
+```bash
+python3 - <<'PY'
+import json,urllib.request
+AGENS="marveen"          # <- a sajat neved
+tok=open('/home/gabor/marveen/store/.dashboard-token').read().strip()
+r=urllib.request.Request(f"http://localhost:3420/api/messages?agent={AGENS}&limit=200",
+                         headers={"Authorization":"Bearer "+tok})
+d=json.load(urllib.request.urlopen(r))
+if isinstance(d, dict) and 'error' in d:      # <- Roxy javaslata, 2026-09-13
+    raise SystemExit(f"API HIBA: {d}")        #    a valasz `hint` mezoje is kiirodik
+rows = d if isinstance(d, list) else d.get('messages', d.get('data', []))
+nyitott=[x for x in rows if x.get('to_agent')==AGENS and x.get('status')!='done']
+print(len(nyitott),'nyitott sor')
+for x in nyitott:
+    print(' ', x['id'], x.get('status'), x.get('from_agent'), (x.get('content') or '')[:70].replace('\n',' '))
+PY
+```
+
+Harom mert reszlet, amiert epp igy:
+
+- **`?agent=<nev>` MUKODIK, `?to=<nev>` NEM.** A `to` ismeretlen parameter -> HTTP 400.
+  Mérve mind a kettore ugyanabban a percben.
+- **Az `agent=` MIND A KET IRANYT adja** (amit kaptal ES amit kuldtel), ezert kell a
+  `to_agent` szures kliens-oldalon.
+- **A nyitott sorok kozott ott lesznek a `[Eredmeny]` nyugtak is.** Azokat NE zard le
+  (lasd a fo CLAUDE.md-t) -- tehat a "nyitott" szam nem azonos a "teendo" szammal.
+
+**A NULLA SOR HAROM KULONBOZO OKBOL JOHET, ES MIND A HAROM UGYANUGY NEZ KI.**
+Merve 2026-09-13 este; a harmadikat Roxy talalta a sajat parancsan, miutan en az
+elsovel magyaraztam a hibajat -- tehat meg az OK-ot is el lehet teveszteni utolag.
+
+1. **Ervenyes, de sosem illeszkedo parameter-ertek** -- `?status=pending`. HTTP 200,
+   ures tomb, semmi jelzes. (Lasd a fenti bekezdest.)
+2. **Rossz MEZONEV a sajat, kliens-oldali szuresedben.** A visszaadott sorok kulcsai,
+   merve:
+
+       completed_at, content, created_at, delivered_at, from_agent, id, origin_note,
+       parent_span_id, result, span_id, status, to_agent, trace_id
+
+   **`to` es `from` NEM LETEZIK** -- a mezo `to_agent` es `from_agent`. Aki `r.get("to")`-ra
+   szur, MINDEN sort kidob, es "0 nyitottat" kap egy tokeletes valaszbol.
+3. **HTTP 400, amit a sajat egysorosod NYEL LE.** Ez a legrosszabb, mert a szerver
+   PONTOSAN megmondja, mi a baj:
+
+       {"error": "unknown query parameter", "unknown": ["to"],
+        "known": ["agent", "status", "limit", "before"],
+        "hint": "the mailbox filter is \"agent\"; \"agent_id\" and \"to\" are not read"}
+
+   De a szokasos `curl -s ... | python3 -c "... d.get('messages', [])"` mintaban ez az
+   objektum nem tartalmaz `messages` kulcsot, tehat a fallback ures listat ad, es a
+   szkript kiirja: `0`. **A hibauzenet ott volt, es a sajat parancsunk dobta el.**
+   Ha nullat kapsz, ELOSZOR a nyers valaszt ird ki, ne a szurest kezdd javitani.
+
+   **AZ ORKODO KET SOR, ES A FENTI BLOKKBAN MAR BENNE IS ALL** (Roxy javasolta, 09-13):
+   a `d.get('messages', ...)` fallback CSENDBEN nyeli le a hibat, ezert a kicsomagolas
+   ELE kell egy `if isinstance(d, dict) and 'error' in d: raise SystemExit(...)`.
+   Ez a harom okbol az 1.-et es a 3.-at azonnal MEGNEVEZI; a 2.-at (rossz mezonev a
+   sajat szuresedben) nem fogja meg, arra a kulcs-lista kiirasa valo.
+   **Negativ kontrollal merve, mindket iranyban:** a rossz `?to=roxy` alakon
+   `API HIBA: {...}` + exit 1, a jo `?agent=roxy` alakon `sorok: 5` + exit 0.
+   Egy orszem, ami csak igent tud mondani, nem orszem.
 
 ### Ágensek indítása és leállítása
 

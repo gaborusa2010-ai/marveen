@@ -141,6 +141,25 @@ index_skills_dir() {
 
 index_skills_dir "$GLOBAL_SKILLS_DIR" "global"
 
+# HAROM skill-mappa letezik, nem ketto, es a harmadik 2026-09-09-ig kimaradt innen:
+#   a GLOBALIS (a HOME alatt, lasd GLOBAL_SKILLS_DIR) -- a teljes flottae
+#   a PROJEKT-szintu <install>/.claude/skills -- a harness ezt is betolti MINDEN
+#     agensnek, mert az <install> a sub-agensek munkakonyvtaranak a szuloje
+#   az AGENS-sajat <install>/agents/<id>/.claude/skills
+# Cody merte 2026-09-09 14:1x: a frissen ujragenerált indexeben a projekt-szintu mappa
+# tizenot skillje kozul EGY SEM szerepelt, koztuk ket olyan, amit aznap patcheltunk.
+# A harness listaja latta oket, a MIENK nem -- tehat aki az indexet grepeli (mi, minden
+# nap), egy tizenot elemu vak foltot hordozott. A fo-agensnel ez nem latszott, mert nala
+# az AGENT_SKILLS_DIR EPPEN a projekt-szintu mappa; ezert szurjuk ki az egyezest lent.
+if [ "$MERGED" = "1" ]; then
+  PROJECT_SKILLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/.claude/skills"
+  if [ -d "$PROJECT_SKILLS_DIR" ] \
+     && [ "$PROJECT_SKILLS_DIR" != "$AGENT_SKILLS_DIR" ] \
+     && [ "$PROJECT_SKILLS_DIR" != "$GLOBAL_SKILLS_DIR" ]; then
+    index_skills_dir "$PROJECT_SKILLS_DIR" "project"
+  fi
+fi
+
 if [ "$MERGED" = "1" ] && [ -d "$AGENT_SKILLS_DIR" ]; then
   index_skills_dir "$AGENT_SKILLS_DIR" "agent"
 fi

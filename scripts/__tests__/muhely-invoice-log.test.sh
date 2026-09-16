@@ -24,7 +24,16 @@ no() { printf '  FAIL %s\n' "$1"; fail=1; }
 
 echo "muhely-invoice-log"
 
+# A teszt a telepites uzleti adatlapjabol dolgozik. Egy checkoutban (audit-
+# worktree, CI-masolat) ez a fajl nincs ott, es a suite FileNotFoundError-ral
+# halt el -- ami nem lelet, csak annyi, hogy itt nincs mit merni.
+if [ ! -f store/muhely-business.json ]; then
+  echo "  SKIP a suite az eles store/muhely-business.json-t igenyli, itt nincs"
+  exit 0
+fi
+
 COUNTERS_BEFORE=$(cat store/muhely-counters.json 2>/dev/null)
+LOG_BEFORE=$(cat store/muhely-invoice-log.json 2>/dev/null)
 
 TMP="$TMP" python3 - <<'PY'
 import sys, os, json
@@ -97,7 +106,15 @@ COUNTERS_AFTER=$(cat store/muhely-counters.json 2>/dev/null)
   && ok "a VALODI sorszamlalo erintetlen maradt" \
   || no "a teszt elhasznalt egy eles szamlaszamot"
 
-[ ! -f store/muhely-invoice-log.json ] || [ -n "${ALLOW_REAL_LOG:-}" ] \
+# Ez a sor 2026-09-09-ig a fajl LETEZESET nezte, nem a VALTOZASAT -- tehat egy
+# eles installon MINDIG "a teszt az eles nyilvantartasba irt"-ot mondott, akkor
+# is, ha egyetlen bajtot sem irt (visszamerve: mtime es tartalom valtozatlan).
+# A helyes alak ket sorral feljebb allt vegig, a szamlalo-ellenorzesben:
+# elotte-utana osszevetes. Ugyanaz a fajta hiba, mint amit a fajl fejlece tilt --
+# egy ellenorzes, ami nem tud igent mondani, ugyanolyan hasznalhatatlan, mint
+# amelyik nem tud nemet.
+LOG_AFTER=$(cat store/muhely-invoice-log.json 2>/dev/null)
+[ "$LOG_BEFORE" = "$LOG_AFTER" ] \
   && ok "a teszt nem irt az eles nyilvantartasba" \
   || no "a teszt az eles nyilvantartasba irt"
 
