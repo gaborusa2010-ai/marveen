@@ -77,7 +77,7 @@ export async function tryHandleMemories(ctx: RouteContext): Promise<boolean> {
     // Every agent's CLAUDE.md tells it to search its memories before answering,
     // so this is the most-called filter in the fleet -- and a typo here used to
     // widen the query instead of failing it. See rejectUnknownQueryParams.
-    if (rejectUnknownQueryParams(res, url, ['q', 'agent', 'agent_id', 'tier', 'category', 'limit', 'mode'],
+    if (rejectUnknownQueryParams(res, url, ['q', 'agent', 'agent_id', 'tier', 'category', 'limit', 'mode', 'offset'],
       'the agent filter is "agent" ("agent_id" is a deprecated alias); the tier filter is "tier" or "category"')) return true
     const q = url.searchParams.get('q')?.trim() || ''
     const agentIdAlias = url.searchParams.get('agent_id')
@@ -294,11 +294,18 @@ Respond ONLY with JSON, nothing else:
     // omitted content is backfilled from the existing row -- previously an
     // undefined content made the SQL bind throw and the endpoint 500'd, which
     // left tier moves impossible via the API (Dream Engine blocker, 2026-07-30).
+    // PUT500901 (2026-09-01), kept next to the partial update: a content that IS
+    // sent but is not a non-empty string (null, a number, "") must be refused
+    // as a 400 that names the field, never passed down to a NOT NULL column as
+    // an opaque 500. Omitting content is the partial update; sending junk is not.
     let effectiveContent = content
     if (effectiveContent === undefined) {
       const row = getDb().prepare('SELECT content FROM memories WHERE id = ?').get(id) as { content: string } | undefined
       if (!row) { json(res, { error: 'Memory not found' }, 404); return true }
       effectiveContent = row.content
+    } else if (typeof content !== 'string' || !content.trim()) {
+      json(res, { error: 'content is required to be a non-empty string when sent (omit it to keep the stored content)' }, 400)
+      return true
     } else if (containsSuspiciousContent(effectiveContent)) {
       json(res, { error: 'Content rejected by security filter' }, 400)
       return true

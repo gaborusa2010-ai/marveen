@@ -41,7 +41,12 @@ const EXPECTED: Record<string, string[]> = {
     'outgoing-copy-gate.py', 'email-approval-gate.py',
     'channel-image-resize.sh', 'egress-gate.mjs',
   ],
-  Stop: ['telegram-reply-guard.py', 'telegram_progress_clear.py'],
+  // Local additions on this install (reviewed 2026-09-16, v1.38.0 merge):
+  // ledger-midturn-capture.py backfills mid-turn inbound rows into the
+  // conversation ledger (MIDTURN901); PostToolUseFailure feeds the same
+  // tool_call_log as PostToolUse so failed calls are not invisible.
+  Stop: ['telegram-reply-guard.py', 'telegram_progress_clear.py', 'ledger-midturn-capture.py'],
+  PostToolUseFailure: ['tool-log-capture.py'],
   SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py'],
   SessionEnd: ['clear-capture.py'],
 }

@@ -139,13 +139,13 @@
             "type": "command",
             "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/voice-reply-directive.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/voice-reply-directive.py; exit 0'",
             "timeout": 60
-          }
-          ,{
+          },
+          {
             "type": "command",
             "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/claude-usage.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/claude-usage.py; exit 0'",
             "timeout": 45
-          }
-          ,{
+          },
+          {
             "type": "command",
             "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/telegram_progress.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/telegram_progress.py; exit 0'",
             "timeout": 15
@@ -163,20 +163,7 @@
             "timeout": 15
           }
         ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/telegram_progress_clear.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/telegram_progress_clear.py; exit 0'",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
+      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -198,6 +185,17 @@
           {
             "type": "command",
             "command": "node \"{{PROJECT_ROOT}}/scripts/hooks/global-skill-write-gate.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/telegram_progress_clear.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/telegram_progress_clear.py; exit 0'",
             "timeout": 15
           }
         ]
