@@ -1,0 +1,15 @@
+[Unit]
+Description=Check for upstream releases every 15 minutes and merge them into the local main
+Requires=marveen-upstream-sync.service
+
+[Timer]
+# 15 min matches the dashboard update-checker refresh, so by the time the UI
+# offers "Frissites most" the histories are already reconciled. A tick with
+# nothing to do is one git fetch.
+OnBootSec=4min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

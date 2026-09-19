@@ -1,0 +1,6 @@
+[Unit]
+Description=Marveen: auction closing reminders (zero model tokens, Bot API direct)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/gabor/marveen/scripts/auction-closing-watch.py --notify

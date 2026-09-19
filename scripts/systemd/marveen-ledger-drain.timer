@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the lost-inbound drain every 2 minutes
+Requires=marveen-ledger-drain.service
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=2min
+AccuracySec=20s
+
+[Install]
+WantedBy=timers.target

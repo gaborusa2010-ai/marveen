@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: keep the local main mergeable so update.sh can run (silent until it merges)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/bin/bash /home/gabor/marveen/scripts/upstream-sync.sh

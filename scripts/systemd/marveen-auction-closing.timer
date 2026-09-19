@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the auction-closing watch every 5 minutes
+Requires=marveen-auction-closing.service
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

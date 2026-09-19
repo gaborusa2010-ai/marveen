@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: lost-inbound drain (zero model tokens until there is something)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/bin/bash /home/gabor/marveen/scripts/ledger-drain-notify.sh

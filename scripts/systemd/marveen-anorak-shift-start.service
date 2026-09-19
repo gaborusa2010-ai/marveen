@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: start Anorak for the night shift
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/bin/bash /home/gabor/marveen/scripts/agent-night-shift.sh anorak start

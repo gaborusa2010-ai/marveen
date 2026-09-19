@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: Anorak token ceiling (stops the agent, zero model tokens)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/usr/bin/python3 /home/gabor/marveen/scripts/agent-budget-guard.py --agent anorak --cap 60000000 --margin 5000000 --window 5 --cache-read-weight 0.1

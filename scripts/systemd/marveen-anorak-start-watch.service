@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: report what actually happened at Anorak's night start
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/bin/bash /home/gabor/marveen/scripts/anorak-start-watch.sh
