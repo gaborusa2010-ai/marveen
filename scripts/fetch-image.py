@@ -138,6 +138,18 @@ def gate_allows(url):
         except (ValueError, KeyError):
             reason = p.stdout.strip()[:200]
         return False, reason
+    # A CRASHED GATE IS NOT AN APPROVAL. Measured 2026-09-19: an allowed URL and a
+    # gate that died on an unresolved import look identical on stdout -- both empty --
+    # and only the exit code tells them apart. Without this branch a gate broken for
+    # ANY reason (missing module, bad node, unreadable file) silently stops gating and
+    # the fetch goes out. Seen for real in a clean git checkout, where the gate's
+    # `lib/url-prefix.mjs` is absent: the block vanished and the download proceeded.
+    # The spawn-failure branch above already fails closed; this is the same rule for a
+    # failure that happens after the process starts.
+    if p.returncode != 0:
+        detail = (p.stderr or "").strip().splitlines()
+        detail = detail[-1][:200] if detail else f"exit {p.returncode}"
+        return False, f"a kapu hibaval allt le, tehat NEM engedely: {detail}"
     return True, ""
 
 
