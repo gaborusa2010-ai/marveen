@@ -41,6 +41,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { readCommand, tokenizeDetailed, splitSegments, verbIndex, readsProgramFromStdin } from './lib/shell-command.mjs'
 import { logSafe } from './lib/redact.mjs'
+import { localStamp } from './lib/local-time.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const AUDIT_LOG = join(REPO_ROOT, 'store', 'global-skill-writes.log')
@@ -489,7 +490,7 @@ const SELFTEST = process.env.SKILL_GATE_SELFTEST === '1'
 function logLine(kind, detail) {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
-    appendFileSync(AUDIT_LOG, `${new Date().toISOString()} ${SELFTEST ? 'SELFTEST_' : ''}${kind} ${detail}\n`, 'utf-8')
+    appendFileSync(AUDIT_LOG, `${localStamp()} ${SELFTEST ? 'SELFTEST_' : ''}${kind} ${detail}\n`, 'utf-8')
   } catch {
     // A failed log must never turn into a failed agent.
   }

@@ -53,6 +53,7 @@ import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
 import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, extractHeredocBodies, verbIndex } from './lib/shell-command.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
+import { localStamp } from './lib/local-time.mjs'
 export { tokenize } from './lib/shell-command.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -357,7 +358,7 @@ const SELFTEST = process.env.EGRESS_GATE_SELFTEST === '1'
 function logLine(kind, detail) {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
-    const ts = new Date().toISOString()
+    const ts = localStamp()
     if (SELFTEST) kind = `SELFTEST_${kind}`
     appendFileSync(EGRESS_BLOCK_LOG, `${ts} ${kind} ${detail}\n`, 'utf-8')
   } catch {

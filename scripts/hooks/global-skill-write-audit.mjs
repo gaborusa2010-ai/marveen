@@ -53,6 +53,7 @@ import { execFileSync } from 'node:child_process'
 // disagreeing about who is allowed what -- the project's own gate-repair skill
 // says to unify them rather than keep them in step by hand.
 import { readGrant, readStandingGrants } from './global-skill-write-gate.mjs'
+import { localStamp } from './lib/local-time.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const AUDIT_LOG = join(REPO_ROOT, 'store', 'global-skill-writes.log')
@@ -223,7 +224,7 @@ export function agentFromCwd(cwd = process.cwd()) {
 function logLine(kind, detail) {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
-    appendFileSync(AUDIT_LOG, `${new Date().toISOString()} ${kind} ${detail}\n`, 'utf-8')
+    appendFileSync(AUDIT_LOG, `${localStamp()} ${kind} ${detail}\n`, 'utf-8')
   } catch {
     // A failed log must never turn into a failed agent.
   }
