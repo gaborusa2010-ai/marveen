@@ -63,18 +63,6 @@
         ]
       }
     ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/global-skill-write-audit.mjs ] && exec node {{PROJECT_ROOT}}/scripts/hooks/global-skill-write-audit.mjs; exit 0'",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
@@ -117,6 +105,28 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/tool-log-capture.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/tool-log-capture.py; exit 0'",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/global-skill-write-audit.mjs ] && exec node {{PROJECT_ROOT}}/scripts/hooks/global-skill-write-audit.mjs; exit 0'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -139,6 +149,11 @@
             "type": "command",
             "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/voice-reply-directive.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/voice-reply-directive.py; exit 0'",
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/telegram-reply-directive.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/telegram-reply-directive.py; exit 0'",
+            "timeout": 10
           },
           {
             "type": "command",
@@ -186,6 +201,16 @@
             "type": "command",
             "command": "node \"{{PROJECT_ROOT}}/scripts/hooks/global-skill-write-gate.mjs\"",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/memory-frontmatter-gate.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/memory-frontmatter-gate.py; exit 0'",
+            "timeout": 10
           }
         ]
       }

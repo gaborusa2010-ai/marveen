@@ -87,6 +87,14 @@ function readBotPid(chanDir: string): number | null {
 export interface ReapResult {
   reaped: number[]
   source: { fromBotPid: number | null; fromEnvScan: number[] }
+  // Candidates that matched bot.pid/env-scan but were spared because they ARE a
+  // live tmux pane's own leader process right now. Non-empty here is the exact
+  // signature of the 2026-09-19 bug (card 08a02137): env-var inheritance makes a
+  // pane's own claude process match its own *_STATE_DIR export, and killing it
+  // here (instead of leaving it to the caller's imminent `respawn-pane -k`)
+  // collapsed the pane before respawn-pane could run. Logged whenever non-empty
+  // so a recurrence is visible instead of silently "just working".
+  skippedLivePane: number[]
 }
 
 // ---------------------------------------------------------------------------
@@ -329,27 +337,48 @@ export function reapChannelOrphans(
     }
   }
 
+  // TWO NARROWINGS, and they are not alternatives -- this is the union of the
+  // upstream fix and ours, which were written against the same 2026-09-19
+  // measurement (card 08a02137) from opposite ends.
+  //
+  // (1) Never kill a pid that IS a live tmux pane's own leader process right
+  // now. `export VAR=x && exec claude` makes VAR visible in claude's OWN
+  // environment too, not just a spawned poller child's -- so the env-var scan
+  // (and, for the main session, even bot.pid) can match the pane's own claude
+  // process. Killing it here, instead of leaving it to the caller's imminent
+  // `tmux respawn-pane -k`, races the respawn and can collapse the pane first
+  // (no remain-on-exit -> pane death takes the whole session with it).
+  //
+  // (2) The env scan matches every process that INHERITED the state dir, not
+  // just pollers -- on the live tree that included a `sleep 5` (the channels.sh
+  // watchdog) and a `bash -c` that was a Bash tool call in progress. Killing
+  // those is a silent truncation of someone else's work, so the kill is
+  // restricted to what a poller can actually be: a bun/node runtime, or
+  // whatever bot.pid names.
+  //
+  // Fail-SAFE, not fail-open: an UNRESOLVED live-pane set aborts the kill
+  // entirely. livePanePidsOrNull is used rather than livePanePids because the
+  // two failure modes are not the same claim -- "no tmux server running" is a
+  // real, empty answer, while a failed query is no answer at all, and only the
+  // second one may stand the reap down.
   let all = candidates
   let spared: number[] = []
+  let skippedLivePane: number[] = []
   if (candidates.length > 0) {
     const live = livePanePidsOrNull(opts.tmuxPath ?? 'tmux')
     if (live === null) {
-      // Cannot tell a live session from a leftover -> kill nothing. A surviving
-      // orphan costs a 409 race; a killed live session costs a silent channel.
       logger.warn({ provider, chanDir, candidates }, 'channel-poller-reap: live-pane set unavailable, skipping reap (fail-safe)')
-      return { reaped: [], source: { fromBotPid, fromEnvScan } }
+      return { reaped: [], source: { fromBotPid, fromEnvScan }, skippedLivePane: [] }
     }
     const procs = snapshotProcs()
     const split = partitionLiveSessionPids(candidates, procs, live)
-    // Second narrowing, same 2026-09-19 measurement: the env scan matches every
-    // process that INHERITED the state dir, not just pollers -- on the live tree
-    // that included a `sleep 5` (the channels.sh watchdog) and a `bash -c` that
-    // was a Bash tool call in progress. Killing those is a silent truncation of
-    // someone else's work, so restrict the kill to what a poller can actually
-    // be: a bun/node runtime, or whatever bot.pid names (the supervised one,
-    // whatever it is written in).
     const isPoller = (pid: number): boolean => looksLikePoller(pid, procs, fromBotPid)
     all = split.killable.filter(isPoller)
+    // skippedLivePane is the narrower, reportable set the ReapResult contract
+    // describes: pane LEADERS only. `spared` is everything the reap declined to
+    // kill, which also covers narrowing (2) and belongs in the log, not the
+    // result.
+    skippedLivePane = split.spared
     spared = [...split.spared, ...split.killable.filter((p) => !isPoller(p))]
   }
 
@@ -367,7 +396,11 @@ export function reapChannelOrphans(
   if (all.length > 0 || spared.length > 0) {
     logger.info({ provider, chanDir, reaped: all, spared, fromBotPid, fromEnvScan }, 'channel-poller-reap: orphans killed')
   }
-  return { reaped: all, source: { fromBotPid, fromEnvScan } }
+  if (skippedLivePane.length > 0) {
+    logger.warn({ provider, chanDir, skippedLivePane, fromBotPid, fromEnvScan },
+      'channel-poller-reap: candidate IS a live pane leader, sparing it (respawn-pane will replace it)')
+  }
+  return { reaped: all, source: { fromBotPid, fromEnvScan }, skippedLivePane }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Tool-call logger for the activity dashboard.
+"""PostToolUse + PostToolUseFailure hook: log every tool call to /api/tool-log
+for the activity dashboard.
 
-Registered on TWO hook events, because one of them alone only ever sees wins:
+TWO EVENTS, ONE SCRIPT (TOOLLOGVAKSIKER921, measured 2026-09-21 on Claude Code
+2.1.278): a tool call that FAILS does not fire PostToolUse at all. It fires
+PostToolUseFailure, whose payload carries an `error` string and `is_interrupt`
+and has NO `tool_response`. A hook registered under PostToolUse alone therefore
+never sees a failure -- it is not that failures were logged as success=1, they
+were not logged at all (2948/2948 rows success=1 in the whole history, while
+two exit-1 calls from the same session had no row). The `success` column is
+derived from `hook_event_name` first: PostToolUseFailure -> 0. The older
+`tool_response.is_error` check is kept as a second signal for tool families
+that report an error inside a successful PostToolUse payload; a plain Bash
+success payload has only stdout/stderr/interrupted/isImage/noOutputExpected.
 
-  PostToolUse         -- fires when a tool call returns normally.
-  PostToolUseFailure  -- fires when a tool call errors out or is interrupted.
-
-Measured 2026-09-05/09-06: a Bash call that exits non-zero never reaches
-PostToolUse at all, so for months the `success` column held 691 rows and not a
-single 0. A column that cannot take the value 0 looks like a check and checks
-nothing. PostToolUseFailure is the harness event that does see those calls; its
-payload carries `error` and `is_interrupt` instead of `tool_response`.
-
-PostToolUse hook: log every tool call to /api/tool-log for the activity dashboard.
+Independently measured here 2026-09-05/09-06, before the upstream note: the
+`success` column held 691 rows and not a single 0. A column that cannot take
+the value 0 looks like a check and checks nothing.
 
 REGISTRATION IS PER-AGENT, WITH ONE EXCEPTION THAT IS NOT A LEAK TO FIX BY
 MOVING FILES. This hook is shipped in templates/settings.json.template, which
@@ -121,17 +125,15 @@ def _input_summary(tool_input: dict, tool_name: str) -> str:
 
 
 def _success_from_payload(payload: dict) -> bool:
-    """True only for a call that actually returned normally.
-
-    PostToolUseFailure exists only for calls that did not succeed, so there the
-    verdict comes from the event name -- that payload has no `tool_response` to
-    inspect, and reading a missing key as "no error" is exactly how this column
-    ended up unable to hold a 0.
-    """
-    if (payload.get('hook_event_name') or '') == 'PostToolUseFailure':
+    """False for a PostToolUseFailure event, or for a PostToolUse payload whose
+    tool_response carries is_error; True otherwise. The event name is the
+    primary signal -- a failed Bash call never reaches PostToolUse."""
+    if payload.get('hook_event_name') == 'PostToolUseFailure':
         return False
-    resp = payload.get('tool_response')
-    return not bool(resp.get('is_error')) if isinstance(resp, dict) else True
+    tr = payload.get('tool_response')
+    if isinstance(tr, dict) and tr.get('is_error'):
+        return False
+    return True
 
 
 def _summary_for(payload: dict) -> str:

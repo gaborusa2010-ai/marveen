@@ -120,3 +120,22 @@ describe('history exposes the ending, so a finished run stops looking stuck', ()
     expect(DB_SRC).toMatch(/duration_ms: completedAt != null \? completedAt - row\.ts : null/)
   })
 })
+
+// SCHEDLOST915: terminal marker rows (lost, lost-giveup, skipped, missed, error)
+// were inserted with completed_at NULL and read as open runs for ever -- 1127
+// 'lost' rows on the reference install, none ever closed.
+describe('terminal marker rows are closed at insert', () => {
+  it('only a dispatch status opens a run', () => {
+    expect(DB_SRC).toMatch(/OPEN_TASK_RUN_STATUSES: ReadonlySet<string> = new Set\(\['fired', 'fired_late'\]\)/)
+    expect(DB_SRC).toMatch(/const completedAt = OPEN_TASK_RUN_STATUSES\.has\(status\) \? null : now/)
+    // Local fork keeps its own `reason` column (card a8f8aa54); upstream has none.
+    // The assertion is about completed_at being written at insert, so the column
+    // list is matched loosely rather than byte-for-byte.
+    expect(DB_SRC).toMatch(/INSERT INTO task_runs \([^)]*completed_at\) VALUES/)
+  })
+
+  it('backfills the historical marker rows with the same rule the reconcile uses', () => {
+    expect(DB_SRC).toMatch(/UPDATE task_runs SET completed_at = ts\s+WHERE completed_at IS NULL AND status NOT IN \('fired', 'fired_late'\)/)
+    expect(DB_SRC).toMatch(/status IN \('fired', 'fired_late'\)/)
+  })
+})

@@ -128,14 +128,17 @@ describe('schedule-runner pre-check integration (source-level)', () => {
     expect(skipBlock).toMatch(/cronPc\.skip/)
     expect(skipBlock).toMatch(/scheduleLastRun\.set/)
     // The skipped run is recorded inside the targetAgents loop within the skip
-    // block. Since 2026-09-04 that goes through recordSkip(), which appends the
-    // task_run row WITH a reason and counts consecutive skips -- the four skip
-    // sites used to write an indistinguishable bare 'skipped' (card a8f8aa54).
+    // block. Two intents merged here: ours (since 2026-09-04, card a8f8aa54) is
+    // that the four skip sites must not write an indistinguishable bare
+    // 'skipped', so they go through recordSkip() with a `reason`; upstream's is
+    // that a stall detector must tell a healthy precheck-quiet round (state file
+    // legitimately stale) from a busy/quota skip that can mask a stuck agent, so
+    // the STATUS carries 'skipped-precheck'. recordSkip now takes both.
     const loopBlock = afterCronPc.slice(
       afterCronPc.indexOf('if (cronPc.skip)'),
       afterCronPc.indexOf('if (pendingKeys.has(key))'),
     )
-    expect(loopBlock).toMatch(/recordSkip\(task\.name, agentName, 'pre-check'\)/)
+    expect(loopBlock).toMatch(/recordSkip\(task\.name, agentName, 'pre-check', 'skipped-precheck'\)/)
   })
 
   it('uses fail-open semantics (no SKIP on non-zero exit, no throw on missing file)', () => {

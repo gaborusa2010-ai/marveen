@@ -264,6 +264,56 @@
             "command": "command -v node >/dev/null 2>&1 || { echo \"governance-kapu: node interpreter hianyzik, a kapu BLOKKOL\" >&2; exit 2; }; node \"$CLAUDE_PROJECT_DIR/scripts/hooks/global-skill-write-gate.mjs\""
           }
         ]
+      },
+      {
+        "matcher": ".*[Gg]mail.*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/outgoing-copy-gate.py\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": ".*draft_email.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/outgoing-copy-gate.py\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": ".*[Gg]mail.*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/email-approval-gate.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": ".*draft_email.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/email-approval-gate.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/memory-frontmatter-gate.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

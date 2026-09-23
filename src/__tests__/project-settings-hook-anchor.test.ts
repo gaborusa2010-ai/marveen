@@ -36,17 +36,35 @@ const EXPECTED: Record<string, string[]> = {
   PostToolUse: [
     'ledger-outbound.py', 'tool-log-capture.py',
     'telegram_progress_reply_clear.py', 'skill-usage-capture.py',
+    // Local addition on this install: global-skill-write-audit.mjs is the
+    // AFTER-the-fact, effect-based check on the shared skill tree (it diffs the
+    // protected tree against a snapshot on every tool call). It cannot prevent a
+    // write -- it runs after the tool -- so it is deliberately a PostToolUse /
+    // PostToolUseFailure pair rather than a gate.
+    'global-skill-write-audit.mjs',
   ],
+  // A failed tool call fires PostToolUseFailure, never PostToolUse
+  // (TOOLLOGVAKSIKER921): without this entry tool_call_log cannot hold a 0.
+  // global-skill-write-audit.mjs rides both events for the same reason (see
+  // PostToolUse below): a write that made the tool call FAIL still changed the
+  // protected tree, so the snapshot diff has to run on the failure path too.
+  PostToolUseFailure: ['tool-log-capture.py', 'global-skill-write-audit.mjs'],
   PreToolUse: [
     'outgoing-copy-gate.py', 'email-approval-gate.py',
-    'channel-image-resize.sh', 'egress-gate.mjs',
+    'channel-image-resize.sh', 'egress-gate.mjs', 'memory-frontmatter-gate.py',
+    // Local additions on this install, both BEFORE-the-fact gates (the audit
+    // hook above is the after-the-fact half): bash-egress-gate.mjs checks the
+    // network destinations a Bash command reaches for, and
+    // global-skill-write-gate.mjs stops a write aimed at the shared skill tree.
+    'bash-egress-gate.mjs', 'global-skill-write-gate.mjs',
   ],
-  // Local additions on this install (reviewed 2026-09-16, v1.38.0 merge):
+  // Local addition on this install (reviewed 2026-09-16, v1.38.0 merge):
   // ledger-midturn-capture.py backfills mid-turn inbound rows into the
-  // conversation ledger (MIDTURN901); PostToolUseFailure feeds the same
-  // tool_call_log as PostToolUse so failed calls are not invisible.
+  // conversation ledger (MIDTURN901). The PostToolUseFailure entry that used to
+  // sit here too is upstream's own since v1.39.0 (TOOLLOGVAKSIKER921, above) --
+  // the auto-merge left both copies, which is a silent duplicate key in JS and
+  // an error only typecheck catches.
   Stop: ['telegram-reply-guard.py', 'telegram_progress_clear.py', 'ledger-midturn-capture.py'],
-  PostToolUseFailure: ['tool-log-capture.py'],
   SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py'],
   SessionEnd: ['clear-capture.py'],
 }
