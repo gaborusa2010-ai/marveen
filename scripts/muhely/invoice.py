@@ -178,10 +178,16 @@ def record_issued(kind, ref, job, out_path):
     gone; refusing at this point would help nobody. Missing the record only
     costs the downstream guard its certainty, and it degrades to asking.
     """
+    ids = job_ids(job)
     rec = {
         "kind": kind,
         "reference": str(ref),
-        "job_id": job.get("_job_id"),
+        # `job_id` stays for every reader written before multi-day invoices
+        # existed; `job_ids` is the true answer. One value in two shapes is a
+        # smell, but dropping the old key would silently blind jobs.py's
+        # already-invoiced guard, which is the one thing this record is FOR.
+        "job_id": ids[0] if ids else None,
+        "job_ids": ids,
         "client": (job.get("client") or {}).get("name"),
         "pdf": out_path,
         "at": int(time.time()),
@@ -204,11 +210,38 @@ def record_issued(kind, ref, job, out_path):
               f"szamla, es megerositest fog kerni a javitashoz.", file=sys.stderr)
 
 
+def job_ids(job):
+    """The work days this document covers, as a list. [] when it says none.
+
+    A one-day invoice carries `_job_id` (jobs.py writes it); a multi-day one
+    carries `_job_ids`, because an invoice for a week of work is the NORMAL
+    shape here, not the exception -- five of the six invoices issued so far
+    cover more than one day.
+
+    Both keys are read so that a job file written before this existed keeps
+    working, and so that a hand-written file can name its days with one line.
+    """
+    out = []
+    for v in (job.get("_job_ids") or []):
+        if v is not None and v not in out:
+            out.append(v)
+    one = job.get("_job_id")
+    if one is not None and one not in out:
+        out.append(one)
+    return out
+
+
 def issued_for(job_id):
-    """Every reference issued for one job, newest last. [] if none."""
+    """Every reference issued for one job, newest last. [] if none.
+
+    Reads BOTH shapes of the record. Checking only `job_id` would miss every
+    day of a multi-day invoice except the first, and the caller would then be
+    told that a day it already billed is free to bill again.
+    """
     if job_id is None:
         return []
-    return [r for r in _issued_load() if r.get("job_id") == job_id]
+    return [r for r in _issued_load()
+            if r.get("job_id") == job_id or job_id in (r.get("job_ids") or [])]
 
 
 def money(v):
@@ -388,11 +421,155 @@ def render(kind, job, business, out_path):
     # Past the collision check, so the number on the PDF is the number the
     # ledger agrees was spent. Only now is there something true to write down.
     record_issued(kind, ref, job, out_path)
+    # The work log has to learn the number too, or jobs.py will keep offering
+    # these days up as unbilled. See mark_jobs_invoiced for what that cost.
+    _say = lambda m: print(m, file=sys.stderr)
+    mark_jobs_invoiced(kind, ref, job, report=_say)
+    warn_if_unlinked(kind, ref, job, report=_say)
     save_source(job, ref, out_path)
+    archive_to_drive(kind, out_path)
     return {"reference": ref, "subtotal": round(subtotal, 2), "vat": vat,
             "cis_rate": cis_rate, "cis_base": cis_base, "cis": cis,
             "total": total, "deposit": deposit, "balance": balance,
             "vat_registered": bool(vat_no), "pdf": out_path}
+
+
+JOBS_LEDGER = os.path.join(STORE, "muhely-jobs.json")
+
+
+def mark_jobs_invoiced(kind, ref, job, report=None):
+    """Write the issued number back onto every work day this invoice covers.
+
+    WHY THIS EXISTS, measured 2026-09-20. Two files answer "is this day billed"
+    and only one of them was being updated. The register (muhely-invoice-log)
+    learned the answer at issue time; the work log (muhely-jobs.json,
+    `invoice_ref`) did not, and `jobs.py list` -- which is what the Sunday
+    invoicing sentry reads -- shows the work log. So five days that had just
+    gone out on invoice 10016 still read `kesz` afterwards, and the NEXT Sunday
+    the sentry would have offered them up to be invoiced a second time. The
+    same trap the skill's own Buktatok section warns about, one file over.
+
+    It had not bitten yet only because the one-day path is rare here: a
+    hand-written multi-day job file names no days at all, so nothing was ever
+    written back and nothing ever looked wrong.
+
+    SOFT, like the Drive copy and for the same reason: the PDF exists and the
+    number is spent by the time this runs. A failure here is reported and
+    dropped -- and it degrades to exactly the state we were in before, which
+    `jobs.py` still guards with its own "LEZART munka" refusal.
+    """
+    if kind != "invoice":
+        return []
+    ids = job_ids(job)
+    if not ids:
+        return []
+    try:
+        with open(JOBS_LEDGER, encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError) as e:
+        if report:
+            report(f"FIGYELEM: a szamla elkeszult, de a munkanaplot nem tudtam "
+                   f"megjelolni ({e}). Kezzel: jobs.py szamlazva {ref} "
+                   f"{' '.join(str(i) for i in ids)}")
+        return []
+    touched, conflict = [], []
+    for r in rows:
+        if r.get("id") in ids:
+            old = r.get("invoice_ref")
+            if old and str(old) != str(ref):
+                # Do NOT overwrite. A day already carrying a DIFFERENT number
+                # means two invoices claim the same work, and that is a question
+                # for a person, not something to tidy away.
+                conflict.append((r["id"], old))
+                continue
+            if not old:
+                r["invoice_ref"] = str(ref)
+                touched.append(r["id"])
+    if conflict and report:
+        for jid, old in conflict:
+            report(f"FIGYELEM: a #{jid} munkanapon MAR a {old} szamu szamla all, "
+                   f"most a {ref} is ra hivatkozna. NEM irtam at.")
+    if not touched:
+        return []
+    try:
+        tmp = JOBS_LEDGER + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, JOBS_LEDGER)
+    except OSError as e:
+        if report:
+            report(f"FIGYELEM: a szamla elkeszult, de a munkanaplo irasa elbukott "
+                   f"({e}). Kezzel: jobs.py szamlazva {ref} "
+                   f"{' '.join(str(i) for i in ids)}")
+        return []
+    if report:
+        report(f"Munkanaplo: a {ref} bevezetve ide -> "
+               f"{', '.join('#' + str(i) for i in touched)}")
+    return touched
+
+
+def warn_if_unlinked(kind, ref, job, report=None):
+    """Say so when an invoice names no work day at all.
+
+    Not a refusal: a hand-written invoice for something that never went through
+    the work log is legitimate. But silence here is expensive -- the days stay
+    `kesz`, and the Sunday sentry offers them again as unbilled. One sentence
+    and the exact command costs nothing and closes the loop.
+    """
+    if kind != "invoice" or job_ids(job) or not report:
+        return
+    report(f"FIGYELEM: a {ref} szamu szamla EGYETLEN munkanaphoz sincs kotve "
+           f"(nincs _job_id vagy _job_ids a job fajlban).\n"
+           f"  Amig nincs, a `jobs.py list` ezeket a napokat SZAMLAZANDOKENT "
+           f"mutatja, es a vasarnapi orszem ujra felhozza oket.\n"
+           f"  Kezzel: python3 scripts/muhely/jobs.py szamlazva {ref} <nap-id-k>")
+
+
+def archive_to_drive(kind, out_path):
+    """Put a finished INVOICE on the owner's Drive, in the Szamlak folder.
+
+    WHY it runs here and not in a weekly job: on 2026-09-17 the owner asked why
+    his invoices were not on his Drive. Measured that morning -- Szamlak held
+    10011 and nothing else, while 10012, 10013, 10014 and 10015 had been sitting
+    on disk since 08-30. Nothing had failed. Issuing an invoice simply uploaded
+    nothing, and the sync script carried a hand-written list that named exactly
+    one file. The gap was not an error anyone could see; it was work nobody did.
+
+    Invoices only. A quote is a draft and the owner asked for the folder to hold
+    what went out under a number.
+
+    LAST, and soft. The PDF is written and the number is spent by the time this
+    runs, so a network failure must be reported and dropped, never raised: the
+    invoice is the deliverable, the copy is a convenience. drive-sync-muhely.py
+    picks up anything missed -- that second path is what makes this one safe to
+    let fail. MUHELY_NO_DRIVE=1 turns it off for tests and offline runs.
+    """
+    if kind != "invoice":
+        return
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import drive_invoices
+        drive_invoices.upload_one(out_path,
+                                  report=lambda m: print(m, file=sys.stderr))
+    except Exception as e:
+        print(f"FIGYELEM: a szamla elkeszult ({out_path}), de a Drive-archivalas "
+              f"el sem indult: {e}\n"
+              f"  Kezzel: python3 scripts/muhely/drive-sync-muhely.py", file=sys.stderr)
+    # SECOND home, on the owner's own desktop. His words, 2026-09-20, Telegram
+    # msg 617: "mostantol oda is legyen elmentve az osszes szamla". Separate
+    # try/except on purpose -- a Drive outage must not cost him the local copy,
+    # and a missing drive mount must not cost him the Drive copy.
+    try:
+        import desktop_invoices
+        desktop_invoices.copy_one(out_path,
+                                  report=lambda m: print(m, file=sys.stderr))
+    except Exception as e:
+        print(f"FIGYELEM: a szamla elkeszult ({out_path}), de a desktop-masolat "
+              f"el sem indult: {e}\n"
+              f"  Kezzel: python3 scripts/muhely/desktop_invoices.py",
+              file=sys.stderr)
 
 
 def save_source(job, ref, out_path):
@@ -465,11 +642,18 @@ def main(argv):
     # command twice. Quotes are excluded on purpose: a customer may be re-quoted
     # any number of times, and a quote spends nothing that says what the work WAS.
     if kind == "invoice" and "--force" not in argv:
-        prior = [e for e in issued_for(job.get("_job_id"))
-                 if e.get("kind") == "invoice"]
+        # EVERY day this file names, not just the first. A multi-day invoice
+        # that re-used one already-billed day would otherwise walk straight
+        # through the guard, which is the case this guard exists for.
+        prior, hit = [], None
+        for jid in job_ids(job):
+            p = [e for e in issued_for(jid) if e.get("kind") == "invoice"]
+            if p:
+                prior, hit = p, jid
+                break
         if prior:
             refs = ", ".join(str(e.get("reference")) for e in prior)
-            print(f"A #{job.get('_job_id')} munkara MAR MENT SZAMLA: {refs}\n"
+            print(f"A #{hit} munkara MAR MENT SZAMLA: {refs}\n"
                   f"  {prior[-1].get('pdf')}\n"
                   f"Egy masodik szamla UJ SORSZAMOT koltene ugyanarra a munkara, es a "
                   f"vevo ket papirt kapna ugyanarrol a naprol.\n"

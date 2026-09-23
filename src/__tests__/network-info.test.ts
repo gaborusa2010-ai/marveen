@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pickLanIp, isPrivateIpv4 } from '../web/network-info.js'
+import { pickLanIp, isPrivateIpv4, isTailscaleIpv4 } from '../web/network-info.js'
 
 // Minimal shape matching os.NetworkInterfaceInfo for the fields pickLanIp reads.
 function v4(address: string, internal = false) {
@@ -66,5 +66,60 @@ describe('pickLanIp', () => {
       lo0: [v4('127.0.0.1', true)],
     }
     expect(pickLanIp(ifaces)).toBe('192.168.0.10')
+  })
+})
+
+describe('isTailscaleIpv4', () => {
+  it('accepts the CGNAT range Tailscale hands out (100.64.0.0/10)', () => {
+    expect(isTailscaleIpv4('100.64.0.1')).toBe(true)
+    expect(isTailscaleIpv4('100.74.217.71')).toBe(true)
+    expect(isTailscaleIpv4('100.127.255.254')).toBe(true)
+  })
+  it('rejects 100.x outside 64-127, which is ordinary public space', () => {
+    expect(isTailscaleIpv4('100.63.0.1')).toBe(false)
+    expect(isTailscaleIpv4('100.128.0.1')).toBe(false)
+    expect(isTailscaleIpv4('10.0.0.5')).toBe(false)
+  })
+})
+
+describe('pickLanIp with Tailscale present', () => {
+  // The case this was written for: WSL2. eth0 looks like a perfectly good LAN
+  // address (private range, preferred name) but lives on WSL's virtual network
+  // and no phone can reach it. The tailnet address is the only one that works.
+  it('prefers the tailnet address over a WSL eth0 that no phone can reach', () => {
+    const ifaces = {
+      lo: [v4('127.0.0.1', true)],
+      eth0: [v4('172.25.136.167')],
+      tailscale0: [v4('100.74.217.71')],
+    }
+    expect(pickLanIp(ifaces)).toBe('100.74.217.71')
+  })
+
+  it('prefers the tailnet address over a real LAN too: it works off the WiFi as well', () => {
+    const ifaces = {
+      en0: [v4('192.168.1.50')],
+      tailscale0: [v4('100.74.217.71')],
+    }
+    expect(pickLanIp(ifaces)).toBe('100.74.217.71')
+  })
+
+  it('falls back to the LAN heuristic when Tailscale is not running', () => {
+    const ifaces = {
+      lo: [v4('127.0.0.1', true)],
+      eth0: [v4('192.168.1.50')],
+    }
+    expect(pickLanIp(ifaces)).toBe('192.168.1.50')
+  })
+
+  it('ignores a tailscale interface that carries no CGNAT address', () => {
+    const ifaces = {
+      tailscale0: [v6('fe80::9')],
+      eth0: [v4('192.168.1.50')],
+    }
+    expect(pickLanIp(ifaces)).toBe('192.168.1.50')
+  })
+
+  it('returns null when the only interface is a tailscale one with no usable IPv4', () => {
+    expect(pickLanIp({ tailscale0: [v6('fe80::9')] })).toBeNull()
   })
 })

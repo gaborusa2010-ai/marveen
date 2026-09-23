@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parsePollerPidsFromPs, findOrphanChannelClaudes, type ProcRow } from '../web/channel-poller-reap.js'
+import { parsePollerPidsFromPs, findOrphanChannelClaudes, partitionLiveSessionPids, looksLikePoller, type ProcRow } from '../web/channel-poller-reap.js'
 
 // Sample rows captured from a real `ps eww -e` on macOS during the
 // 2026-06-01 channel-disconnect incident. The bun poller, the slack
@@ -147,5 +147,89 @@ describe('findOrphanChannelClaudes', () => {
       { pid: 76621, ppid: 35874, command: `${CLAUDE} --channels plugin:telegram@claude-plugins-official` },
     ]
     expect(findOrphanChannelClaudes(allLive, new Set([76621]))).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2026-09-19: the main session shot itself 77 times in one morning.
+//
+// #915 (2026-09-09) started exporting TELEGRAM_STATE_DIR for the MAIN channels
+// session. The env scan above then matched three live processes instead of
+// zero, and reapChannelOrphans -- called by the scheduled auto-restart BEFORE
+// its respawn -- killed the running session, tmux client and all. The rows
+// below are the real `ps` shape measured on the live tree that morning.
+const LIVE_MAIN_TREE: ProcRow[] = [
+  { pid: 467204, ppid: 628, command: '/bin/bash /home/gabor/marveen/scripts/channels.sh' },
+  { pid: 467342, ppid: 400, command: '/usr/bin/tmux new-session -d -s marveen-channels -c /home/gabor/marveen export TELEGRAM_STATE_DIR=... claude --channels plugin:telegram@claude-plugins-official' },
+  { pid: 467343, ppid: 467342, command: '/home/gabor/.local/bin/claude --dangerously-skip-permissions --model claude-opus-5[1m] --channels plugin:telegram@claude-plugins-official' },
+  { pid: 467457, ppid: 467343, command: 'bun run --cwd /home/gabor/.claude/plugins/cache/claude-plugins-official/telegram/0.0.7 --shell=bun --silent start' },
+]
+// tmux runs the main session's claude as the pane leader, so panePid === claudePid.
+const MAIN_LIVE_PANES = new Set([467343])
+
+describe('partitionLiveSessionPids (main-session suicide guard)', () => {
+  it('spares the live claude and the tmux client, kills only the poller', () => {
+    const { spared, killable } = partitionLiveSessionPids(
+      [467457, 467343, 467342],
+      LIVE_MAIN_TREE,
+      MAIN_LIVE_PANES,
+    )
+    expect(killable).toEqual([467457])
+    expect(spared).toEqual(expect.arrayContaining([467343, 467342]))
+  })
+
+  it('spares a sub-agent claude that is a CHILD of the pane (sh -c wrapper)', () => {
+    const procs: ProcRow[] = [
+      { pid: 500, ppid: 1, command: 'sh -c ...claude --channels...' },
+      { pid: 501, ppid: 500, command: '/home/gabor/.local/bin/claude --channels plugin:telegram@claude-plugins-official' },
+      { pid: 502, ppid: 501, command: 'bun run --cwd .../telegram/0.0.7 --silent start' },
+    ]
+    const { spared, killable } = partitionLiveSessionPids([501, 502], procs, new Set([500]))
+    expect(spared).toEqual([501])
+    expect(killable).toEqual([502])
+  })
+
+  it('kills everything when no pane is live (the case the reap was built for)', () => {
+    const { spared, killable } = partitionLiveSessionPids(
+      [467457, 467343],
+      LIVE_MAIN_TREE,
+      new Set(),
+    )
+    expect(spared).toEqual([])
+    expect(killable).toEqual([467457, 467343])
+  })
+
+  it('kills a pid that is not in the ps snapshot at all (already-dead leftover)', () => {
+    const { killable } = partitionLiveSessionPids([999999], LIVE_MAIN_TREE, MAIN_LIVE_PANES)
+    expect(killable).toEqual([999999])
+  })
+})
+
+describe('looksLikePoller (do not truncate an unrelated inherited process)', () => {
+  // Real rows from the 2026-09-19 env scan: everything that inherited
+  // TELEGRAM_STATE_DIR, not just the poller.
+  const INHERITORS: ProcRow[] = [
+    { pid: 467457, ppid: 467343, command: 'bun run --cwd /home/gabor/.claude/plugins/cache/claude-plugins-official/telegram/0.0.7 --silent start' },
+    { pid: 467469, ppid: 467343, command: '/home/gabor/.bun/bin/bun server.ts' },
+    { pid: 520874, ppid: 467204, command: 'sleep 5' },
+    { pid: 520888, ppid: 467343, command: '/bin/bash -c source /home/gabor/marveen/.channels-config/shell-snapshots/x.sh && eval ...' },
+  ]
+
+  it('kills the bun pollers', () => {
+    expect(looksLikePoller(467457, INHERITORS, null)).toBe(true)
+    expect(looksLikePoller(467469, INHERITORS, null)).toBe(true)
+  })
+
+  it('spares the watchdog sleep and an in-flight bash tool call', () => {
+    expect(looksLikePoller(520874, INHERITORS, null)).toBe(false)
+    expect(looksLikePoller(520888, INHERITORS, null)).toBe(false)
+  })
+
+  it('always kills whatever bot.pid names, whatever it is written in', () => {
+    expect(looksLikePoller(520888, INHERITORS, 520888)).toBe(true)
+  })
+
+  it('treats a pid missing from the snapshot as killable (already dead)', () => {
+    expect(looksLikePoller(999999, INHERITORS, null)).toBe(true)
   })
 })

@@ -9,6 +9,7 @@ import { getEffectiveSettingValue } from '../../settings-store.js'
 import { readMarveenTelegramConfig, readMarveenDiscordConfig, readMarveenSlackConfig, readMarveenGooglechatConfig, readMarveenTeamsConfig, sendMarveenAvatarChange } from '../telegram.js'
 import { hardRestartMarveenChannels } from '../channel-monitor.js'
 import { readFileOr } from '../agent-config.js'
+import { nicknameFor } from '../team-nicknames.js'
 import { parseMultipart } from '../multipart.js'
 import { readBody, json, serveFile } from '../http-helpers.js'
 import { MAIN_CHANNELS_SESSION } from '../main-agent.js'
@@ -75,6 +76,8 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
       // this to pin/label the owner's own message thread instead of a hardcoded
       // literal, so a renamed install recognizes its real owner.
       ownerName: currentOwnerName(),
+      // See the note on `nickname` in routes/agents.ts -- same field, main agent.
+      nickname: nicknameFor(currentBotName()),
       description,
       model: getActiveMarveenModel(),
       tmuxSession: MAIN_CHANNELS_SESSION,
@@ -154,16 +157,39 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
   }
 
   if (path === '/api/marveen/avatar' && method === 'GET') {
-    // Avatars are ~1MB each and rarely change: let browsers reuse them for an
-    // hour without a round-trip (an avatar swapped in another session shows up
-    // after at most 1h, then ETag revalidation; the swapping session itself
-    // busts via the frontend avatar epoch).
+    // no-cache, NOT max-age. This used to be `cacheSeconds: 3600`, on the
+    // assumption that the only writer is the upload route -- which bumps the
+    // frontend avatar epoch and re-busts the URL for the session that did it.
+    // That assumption is false here: the portraits are written to DISK, by an
+    // agent, and no browser learns about it. Measured 2026-09-22 22:15, after
+    // three rounds of portraits went live within 30 minutes: the owner still
+    // saw round one, and would have until the hour expired. His words, msg
+    // 3586: "de nekem meg mindig a regi robotos kepek jonnek elo".
+    // no-cache still caches -- it only forces revalidation, so an unchanged
+    // avatar costs one 304 (a couple hundred bytes), not a re-download.
     for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) {
       const p = join(PROJECT_ROOT, 'store', `marveen-avatar${ext}`)
-      if (existsSync(p)) { serveFile(req, res, p, { cacheSeconds: 3600 }); return true }
+      if (existsSync(p)) { serveFile(req, res, p); return true }
     }
     const fallback = join(webDir, 'avatars', '01_robot.png')
-    if (existsSync(fallback)) { serveFile(req, res, fallback, { cacheSeconds: 3600 }); return true }
+    if (existsSync(fallback)) { serveFile(req, res, fallback); return true }
+    res.writeHead(404); res.end()
+    return true
+  }
+
+  // The owner's own portrait, for the kanban lanes (his ask, Telegram msg 3547).
+  // Read-only on purpose: there is no upload route, because the picture is put
+  // in place by whoever draws it, the same way an agent avatar is. No gallery
+  // fallback either -- a generic robot standing in for the owner would be worse
+  // than the initial the board already draws, and the frontend falls back to
+  // that initial on a 404.
+  if (path === '/api/marveen/owner-avatar' && method === 'GET') {
+    for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) {
+      const p = join(PROJECT_ROOT, 'store', `owner-avatar${ext}`)
+      // no-cache: written on disk by whoever draws it, never through an upload
+      // route, so nothing can bust a max-age. See /api/marveen/avatar above.
+      if (existsSync(p)) { serveFile(req, res, p); return true }
+    }
     res.writeHead(404); res.end()
     return true
   }

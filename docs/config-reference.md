@@ -166,9 +166,9 @@ Minden dashboard-szerkeszthető beállítás egy bejegyzésként szerepel a regi
 
 | Kulcs | Típus | Alapérték | Platform | Újraindítás |
 |-------|-------|-----------|----------|-------------|
-| `MAIN_AGENT_ISOLATED_CONFIG` | boolean | `0` (ki) | csak macOS | igen |
+| `MAIN_AGENT_ISOLATED_CONFIG` | boolean | `0` (ki) | bármely | igen |
 
-#### `MAIN_AGENT_ISOLATED_CONFIG` -- a fő agent config-izolációja (macOS)
+#### `MAIN_AGENT_ISOLATED_CONFIG` -- a fő agent config-izolációja (bármely platform)
 
 **Mire szolgál.** Ki-be kapcsolható javítás a fő channels-agent macOS-en jelentkező
 periodikus `401 Invalid authentication credentials` / „Please run /login" hibájára.
@@ -194,9 +194,17 @@ kapcsoló egységesen vezérli az összeset:
 2. a dashboard channel-monitor `--continue` resume respawn-ja,
 3. a dashboard channel-monitor fresh hard-restart respawn-ja.
 
-**Kapuk (mikor no-op).** Nincs hatása (marad a közös `~/.claude`), ha: nem macOS a
-gép; nincs érvényes fleet setup-token; vagy nincs build-elt `dist/`. Linuxon a
-rotálódó `credentials.json`-t ehelyett a külön credentials-guard kezeli.
+**Kapuk (mikor no-op).** Nincs hatása (marad a közös `~/.claude`), ha: nincs érvényes
+fleet setup-token; vagy nincs build-elt `dist/`. **Platform-megkötés NINCS** -- mérve
+2026-09-19-en a futó buildben (`dist/web/agent-process.js`): az
+`ensureMainAgentIsolatedConfigDir` kapuja pontosan két feltétel (a beállítás `'1'` ÉS a
+setup-token létezése), a `platform` paramétert átveszi, de nem használja, és a
+`provisionIsolatedConfigDir` törzsében sincs `darwin`/`process.platform` hivatkozás.
+A `config-registry` leírása is „Bármely platformon"-t mond. (Ez a bekezdés 2026-09-19-ig
+„nem macOS a gép" no-op kaput állított; az ELAVULT volt, és Linuxon azt sugallta, hogy
+a kapcsoló hatástalan, pedig hat.) Linuxon a rotálódó `credentials.json`-t emellett a
+külön credentials-guard is kezelheti, de az OPT-IN (`CLAUDE_CREDENTIALS_GUARD`), és
+alapértelmezésben ki van kapcsolva -- tehát nem helyettesíti ezt a kapcsolót.
 
 **Bekapcsolás.** Dashboard: *Beállítások → Csatornák → `MAIN_AGENT_ISOLATED_CONFIG`*
 (a kapcsoló a `store/config-overrides.json`-ba ír). Vagy kézzel: `.env`-ben
@@ -372,12 +380,21 @@ Minden feladat egy önálló mappa, benne két fájl. Részletes leírás: [sche
 
 ---
 
-## ~/.claude/channels/ -- csatorna-hozzáférés
+## .claude/channels/ -- csatorna-hozzáférés
+
+**Az út a telepítés gyökeréhez relatív, NEM a `$HOME`-hoz.** A #915 óta a fő ágens
+csatorna-állapota is install-scope-ú, ahogy a sub-ágenseké mindig is volt: a közös
+`~/.claude/channels/` miatt a gép BÁRMELY másik Claude Code sessionje betöltötte ugyanazt a
+bot tokent, és némán átvette a botot. A `~/.claude/channels/` ma legacy fallback, amit a
+kód csak akkor használ, ha ott van `.env` ÉS az install-scope-úban nincs
+(`resolveMainChannelStateDir`, `src/channel-provider.ts`). Ezen a telepítésen üres
+(mérve 2026-09-23).
 
 | Fájl | Leírás |
 |------|--------|
-| `~/.claude/channels/telegram/access.json` | Telegram allowFrom lista, párosított senderek |
-| `~/.claude/channels/slack/access.json` | Slack allowFrom lista |
+| `<repo>/.claude/channels/telegram/access.json` | Telegram allowFrom lista, párosított senderek |
+| `<repo>/.claude/channels/slack/access.json` | Slack allowFrom lista |
+| `agents/<nev>/.claude/channels/<provider>/access.json` | a sub-ágensek sajátja, mindig install-scope |
 
 ---
 

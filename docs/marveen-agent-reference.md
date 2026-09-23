@@ -28,6 +28,29 @@ curl -s -X POST http://localhost:3420/api/memories \
   -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
   -d '{"agent_id":"marveen","content":"MIT","category":"warm","keywords":"kulcsszó1, kulcsszó2"}'
 
+# MÓDOSÍTÁS: a végpont PUT-ot ÉS PATCH-et is fogad, 200-zal. (Margó mérése 2026-09-18,
+# Marveen ugyanaznap szintén használta a 917-es lapon.) A referenciában eddig CSAK POST és
+# GET állt, holott egy emlék FELÜLÍRHATÓ -- és a közös dashboard-tokennel BÁRMELYIK ágens
+# BÁRMELYIK lapja. Ez nem rés (közös token, közös tároló), de aki nem tud róla, véletlenül
+# is megteheti.
+# DE EGY-EMLEK LEKERDEZES NINCS: `GET /api/memories/<id>` -> **404**. (Mérve 2026-09-18
+# 20:2x, ugyanúgy, ahogy a kanbannál a `GET /api/kanban/ID`.) Vagyis egy emléket MÓDOSÍTANI
+# lehet id szerint, VISSZAOLVASNI nem -- a listát kérd le és szűrj rá. Ez azért csapda,
+# mert a PUT előtti "olvasd be, told hozzá, írd vissza" minta itt NEM megy: a teljes új
+# tartalmat kell megírnod, különben a `content` cseréje adatot veszít.
+curl -s -X PUT "http://localhost:3420/api/memories/<id>" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
+  -d '{"content":"A TELJES ÚJ TARTALOM"}'
+#
+# A `content` CSERÉL, nem told hozzá: amit nem küldesz el, az elveszik. Tehát a teljes új
+# szöveget kell átadni, nem a különbséget.
+#
+# ÉS AMIT SOHA: ne ezen próbáld ki, hogy "fogad-e egyáltalán PUT-ot". Az a kérdés
+# olvasásnak hangzik, de ÍRÁS. Margó 2026-09-18-án egy ÉLES lapon próbálta ki
+# {"content":"proba"} törzzsel, és a lap tartalma öt másodpercre tényleg "proba" lett.
+# Visszaállította (a feltételek álltak rá: ő okozta, ugyanabban a sessionben, és a tartalom
+# megvolt nála), de a helyes alak egy ELDOBHATÓ emlék létrehozása és AZON a próba.
+
 # keresés (válasz előtt: van-e releváns emlék?)
 curl -s -H "Authorization: Bearer $T" \
   "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZÓ"
@@ -76,6 +99,22 @@ for r in shared: print('  [' + str(r.get('agent_id')) + '] ' + str(r.get('conten
 # tehát mások megosztott sorai azonos súllyal állnak a sajátjaid mellett. Margó mérése
 # szerint ez témafüggően elnyom: a q=meres keresésénél 25 sorból 20 volt idegen, és az
 # első öt MIND másé. FIGYELEM: az alapértelmezett limit 50, némán vág (Margó mérése).
+
+# LISTAZAS KATEGORIA SZERINT (nem keresés) -- ES A KET NEV, AMI 404-ET AD.
+# Merve 2026-09-16: `GET /api/memory?tier=hot` -> HTTP 404. KET hiba egyszerre, és
+# mindkettot a SAJAT lapjaink sugalljak:
+#   * a vegpont MEMORIES, tobbes szamban  (`/api/memory` nem letezik)
+#   * a mezo neve CATEGORY, nem `tier`    (a CLAUDE.md tablazat fejlece viszont "Tier",
+#     es a hot/warm/cold/shared szavakat is tier-nek hivja -- innen a reflex)
+# A mukodo alak:
+curl -s -H "Authorization: Bearer $T" \
+  "http://localhost:3420/api/memories?agent=marveen&category=hot"
+# AMIERT EZ ITT ALL, ES NEM CSAK EGY EMLEKBEN: ezt 2026-09-10-en MAR megmertem
+# (hot emlek 705, "tier= nema, a mezo category"), es 2026-09-16-an UJRA elkovettem.
+# A tanulsag akkor a memoriaba ment, nem a masolhato parancs melle. Egy hot emlek
+# hat nap alatt nem talalja meg azt, aki parancsot masol.
+# ES EGY HARMADIK, ugyanabbol a korbol: a kanban listaja `/api/kanban`, NEM
+# `/api/kanban/cards` (az is 404). Ket kulonbozo API, ket kulonbozo tobbes szam.
 
 # napi napló (append-only)
 curl -s -X POST http://localhost:3420/api/daily-log \
@@ -135,6 +174,15 @@ curl -s -H "Authorization: Bearer $T" http://localhost:3420/api/kanban          
 curl -s -X POST http://localhost:3420/api/kanban \
   -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
   -d '{"title":"CÍM","status":"planned","assignee":"marveen","priority":"normal"}'
+# HA A LEÍRÁS A VÉDETT KÖZÖS SKILL-MAPPÁRÓL SZÓL, ez az alak ELAKAD a kapun, mert a
+# `-d` melletti szövegben szerepel a védett útvonal. Mérve 2026-09-16 23:4x (a
+# 86848ea4 kártya létrehozásakor). A dokumentált kijárat, három lépés:
+#   1. a leírást `cat > fájl <<'EOF'` alakkal írd ki  (ez ADAT, a kapu átengedi),
+#   2. egy külön python FÁJL olvassa be és csomagolja JSON-ba -- az útvonal NE
+#      kerüljön bele a parancssorba,
+#   3. `curl ... --data-binary @a-json-fájl`.
+# A POST válasza CSAK {"ok":true,"id":"..."}, tehát a mezőket VISSZAOLVASÁSSAL
+# ellenőrizd, ne a válaszból (lásd lentebb a POST-vissza­jelzés buktatót).
 curl -s -X POST http://localhost:3420/api/kanban/ID/move \
   -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
   -d '{"status":"in_progress","actor":"marveen"}'
@@ -309,6 +357,40 @@ rendrakj. Nagy adagot darabolva.
 Ez a közvetlen DB-írás **nem küld nyugtát** senkinek. Friss (két óránál újabb) sort ezért ne
 így zárj le, hanem a `PUT /api/messages/<id>`-vel -- ott a küldő megkapja az eredményt.
 
+### HÁROM LEZÁRÁSI ÚT VAN, ÉS MINDHÁROMNAK MÁS A HELYES ALAPÉRTELMEZÉSE
+
+Ezt 2026-09-17-én Roxy kérte leírni, és jó oka van: a három út ugyanazt a mezőt állítja,
+de nem ugyanarra az esetre való. Aki "egységesíteni" akarja őket, épp azt a különbséget
+tünteti el, amiért így állnak.
+
+| út | nyugta | mikor ez a helyes |
+|---|---|---|
+| közvetlen DB-írás (fent) | **nincs** | tudatos, nagy adagos takarítás; a küldőt nem érdekli |
+| `PUT /api/messages/<id>` | **van**, ez az alapértelmezés | a lezárás MAGA az értesítés: nem küldtél külön üzenetet |
+| `bash scripts/agent-msg.sh --close` | **nincs** (`notify: false`) | ugyanez a hívás küldi a tartalmat ÉS zárja a sort |
+
+**A helper ágán ez nem megítélés kérdése, hanem a kód kényszeríti:** a `--close` mellett is
+kötelező mind a három pozicionális argumentum (`${1:?from required}`, `${2:?to required}`,
+`${3:?content required}`, a 95. sor). Tehát close-only hívás ezen az úton **nem létezik** --
+aki zár, az ugyanabban a hívásban küldött is. Élesen próbálva a helper `from required`-del
+áll meg. (Roxy mérése, 2026-09-17; Marveen visszamérte a kódból és éles próbával.)
+
+**A nyers `PUT` ágon ezért marad ÉRTESÍTŐ az alapértelmezés**, és ez nem szerencse: ott a
+lezárás tényleg lehet az egyetlen jelzés. Ha mégis külön üzenetben már válaszoltál, oda
+kézzel kell odaírni:
+
+```bash
+-d '{"status":"done","result":"...","notify":false}'
+```
+
+**MIÉRT ÁLL EZ ITT ÉS NEM CSAK A CLAUDE.md-BEN.** A `notify` szóra ebben a fájlban
+2026-09-17-ig **nulla** találat volt (`grep -c notify`, kis-nagybetű érzékeny; érzéketlenül egy, a `shouldNotifyDelegator` függvénynév miatt), miközben a másolható
+lezárási parancs ITT áll. Ez a
+flotta saját, nevesített hibája: a helyes tudás dokumentálva van, de a másolható PARANCS és
+az ALAPÉRTELMEZÉS a rosszat viszi. Mérve ugyanaznap: Marveen egyetlen nap alatt **15**
+duplikált nyugtát termelt, mind a helper `--close` ágán; Roxy postájának 46%-a (6/13) ilyen
+volt.
+
 Listázás (`GET /api/messages`), mérve 2026-09-02:
 
 - Ismeretlen paraméter és ismeretlen `status`-érték egyaránt **400**, felsorolt `known` listával.
@@ -417,7 +499,7 @@ Egy sub-ágens **nem tudja magát újraindítani**, a kapcsoló a fő ágensnél
 mert a reap késleltetve is elsülhet:
 
 ```bash
-P=$(cat ~/.claude/channels/telegram/bot.pid); echo "[$P]"; ps -p "$P" -o pid,etime --no-headers
+P=$(cat .claude/channels/telegram/bot.pid); echo "[$P]"; ps -p "$P" -o pid,etime --no-headers
 ```
 
 Ha a `bot.pid` kiürült: `scripts/channel-watchdog.sh`. A channels service `systemctl

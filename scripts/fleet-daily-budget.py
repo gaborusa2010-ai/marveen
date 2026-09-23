@@ -23,6 +23,12 @@ weekly allowance resets) and compares the total to the fleet budget.
   stop band             -> stops the sub-agents that are ACTUALLY SPENDING,
                            never the main agent
 
+AND SINCE 2026-09-23 THE DAILY NUMBER NO LONGER DECIDES ALONE. The daily budget
+is OUR estimate; the real limit is Claude's weekly window, and the gate now reads
+it (store/usage-latest.json). Weekly slack lifts the daily stop; a weekly ceiling
+stops the fleet even on a quiet day. See the block above read_weekly() for why
+both directions are needed and what happens when the weekly number is missing.
+
 WHY IT DOES NOT STOP EVERYONE. An agent that used nothing today did not cause
 the overrun, and stopping it buys no tokens back -- it only removes a worker
 from tomorrow's queue for no gain. The gate therefore skips anyone below
@@ -37,6 +43,7 @@ Usage
   fleet-daily-budget.py                      # measure, print, no action
   fleet-daily-budget.py --notify             # act: warn and stop
   fleet-daily-budget.py --budget 520000000 --stop-at 85 --warn-at 70
+  fleet-daily-budget.py --ignore-weekly      # the pre-2026-09-23 behaviour
 """
 import argparse
 import json
@@ -73,6 +80,131 @@ def _load_guard():
     return m
 
 
+# ---------------------------------------------------------------------------
+# A VALODI korlat: a Claude heti ablaka, nem a mi napi token-proxynk
+# ---------------------------------------------------------------------------
+# 2026-09-23, es a gazda vette eszre (Telegram msg 3633): "Én azt hittem eddig is
+# azt nézi, nem csak egy kitalált számot". Igaza volt. Az 520M a MI szamunk; a
+# szamlat a Claude heti ablaka allitja ki, es azt ez a kapu eddig nem olvasta.
+#
+# A MERT ESET, amiert ez a szakasz letezik: 2026-09-22 23:13:21-kor a kapu
+# leallitotta Anorakot 13 perc munka utan (20 510 533 token), mikozben a heti
+# ablak 81%-on allt es masnap 05:59:59-kor nullazodott. A maradek 19% ugy veszett
+# el, hogy volt, aki dolgozott volna belole.
+#
+# A merce ezert ketto, es a ketto KULONBOZo IRANYBA hat:
+#
+#   (a) OVERRIDE (engedekenyebb). Ha a heti ablak a sajat linearis utemtervehez
+#       kepest tartalekos -- a felhasznalt % nem futott elore az ablakbol ELTELT
+#       %-hoz kepest --, akkor a napi proxy tullepese NEM ok a leallitasra.
+#
+#   (b) KEMENY PLAFON (szigorubb). Ha a heti ablak a sajat kuszobe fole er, a kapu
+#       AKKOR IS leallit, ha a napi proxy nyugodt. Ez nem szigoritasi kedv: ha a
+#       Claude SAJAT fala allit meg minket, az a fo-agenst is elnemitja, es akkor
+#       a gazdanak nincs mivel felengednie a kaput.
+#
+# A MEGENGEDETT ELoREFUTAS (--weekly-lead) azert nem nulla, mert a leallitas
+# gyakorlatilag visszafordithatatlan: a leallitott sub-agens NEM indul ujra
+# magatol (lasd a stop-ag uzenetenek kommentjet). Egy szoros linearis merce a nap
+# elejen egy fel szazalekpontnyi elorefutasert kilone az ejszakai munkat, es
+# reggelig senki nem inditana vissza.
+#
+# AMIT EZ NEM CSINAL: nem talal ki szamot. Ha a pillanatkep hianyzik, elavult,
+# vagy nem hiteles forrasbol jon, a fuggveny None-t ad, es a kapu a regi, napi
+# proxyval dolgozik tovabb. EGY NEM MERT HETI SZAM NEM ADHAT FELMENTEST.
+
+USAGE_SNAPSHOT = os.path.join(REPO, "store", "usage-latest.json")
+WEEKLY_WINDOW_SEC = 7 * 86400
+# A `usage-collect.py` negyedorankent ir. Egy oranal regebbi pillanatkep azt
+# jelenti, hogy a gyujto all -- olyankor a heti szam nem meres, hanem emlek.
+WEEKLY_MAX_AGE_MIN = 60
+_AUTHORITATIVE = ("authoritative", "authoritative_cached")
+
+
+def read_weekly(path=None, max_age_min=WEEKLY_MAX_AGE_MIN, now=None):
+    """A Claude heti ablaka a legfrissebb pillanatkepbol, vagy None, ha nem merheto.
+
+    A ket heti ablak (`seven_day` es `seven_day_opus`) kozul a NAGYOBB fogyasztasut
+    adja vissza: a szuk keresztmetszet allitja le a flottat, es ma nem mindig
+    ugyanaz a ketto kozul.
+    """
+    p = path or USAGE_SNAPSHOT
+    now = now if now is not None else time.time()
+    try:
+        with open(p, encoding="utf-8") as fh:
+            snap = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    cl = snap.get("claude") or {}
+    if not cl.get("ok") or cl.get("source") not in _AUTHORITATIVE:
+        return None
+
+    gen = snap.get("generated_at")
+    try:
+        gen_ts = datetime.fromisoformat(str(gen).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+    age_min = (now - gen_ts) / 60.0
+    if age_min > max_age_min or age_min < -5:
+        return None
+
+    best = None
+    for key in ("seven_day", "seven_day_opus"):
+        w = (cl.get("windows") or {}).get(key) or {}
+        used, resets = w.get("used_percent"), w.get("resets_at")
+        if used is None or not resets:
+            continue
+        if best is None or float(used) > best["used_pct"]:
+            best = {"window": key, "used_pct": float(used), "resets_at": float(resets)}
+    if best is None:
+        return None
+
+    remaining = best["resets_at"] - now
+    elapsed = WEEKLY_WINDOW_SEC - remaining
+    best["elapsed_pct"] = max(0.0, min(100.0, elapsed / WEEKLY_WINDOW_SEC * 100.0))
+    best["hours_left"] = max(0.0, remaining / 3600.0)
+    best["age_min"] = round(age_min, 1)
+    return best
+
+
+def weekly_verdict(w, hard_stop, lead):
+    """stop | override | neutral | unknown -- mit mond a HETI ablak a napi proxyrol.
+
+    stop     -- a heti ablak onmagaban leallitast indokol (a napi proxy nem szamit)
+    override -- van heti tartalek, a napi proxy tullepese nem ok a leallitasra
+    neutral  -- a heti ablak nem szol bele, a napi proxy dont (a regi viselkedes)
+    unknown  -- nincs merheto heti szam, a napi proxy dont (a regi viselkedes)
+    """
+    if not w:
+        return "unknown"
+    if w["used_pct"] >= hard_stop:
+        return "stop"
+    if w["used_pct"] < w["elapsed_pct"] + lead:
+        return "override"
+    return "neutral"
+
+
+def window_day(daily_from, now=None):
+    """Az allapotfajl NAP-kulcsa, UGYANAHHOZ az orahoz horgonyozva, mint a token-ablak.
+
+    MIERT NEM `datetime.now().date()`. A token-osszeget a `window_tokens` a napi
+    horgonytol (alapertelmezesben 06:00) szamolja, az allapotfajl `day` kulcsa
+    viszont 2026-09-23-ig naptari datum volt. A ketto ejfel es 06:00 kozott
+    KULONBOZIK, es ez nem elmeleti: ejfel utan a `day` atfordult, a `bands` es a
+    `stopped` halmaz kiurult, a token-osszeg viszont valtozatlanul a TEGNAPI
+    napbol jott -- tehat a kapu ujra elkuldte ugyanazt a riasztast, a tegnapi
+    szamokkal, es az ejfel utan ket perccel azt sugallta, hogy az UJ nap kerete
+    fogyott el.
+
+    Merve ket egymast koveto ejjel, a journalbol: 2026-09-22 00:02:57 es
+    2026-09-23 00:00:49 (99,1%). n=2, tehat nem egyszeri.
+    """
+    now = now or datetime.now()
+    if now.hour < daily_from:
+        now = now - timedelta(days=1)
+    return now.strftime("%Y-%m-%d")
+
+
 def load():
     try:
         with open(STATE, encoding="utf-8") as fh:
@@ -97,6 +229,19 @@ def main(argv=None):
     ap.add_argument("--warn-at", type=int, default=70, help="figyelmeztetesi szazalek")
     ap.add_argument("--stop-at", type=int, default=85, help="leallitasi szazalek")
     ap.add_argument("--daily-from", type=int, default=6, help="a nap kezdo oraja")
+    ap.add_argument("--weekly-stop-at", type=float, default=95.0,
+                    help="a Claude HETI ablakanak kemeny plafonja szazalekban. "
+                         "E folott a kapu akkor is leallit, ha a napi proxy nyugodt: "
+                         "a Claude sajat falaba futni rosszabb, mert az a fo-agenst "
+                         "is elnemitja.")
+    ap.add_argument("--weekly-lead", type=float, default=10.0,
+                    help="mennyi elorefutas megengedett szazalekpontban a heti ablak "
+                         "linearis utemtervehez kepest, mielott a napi proxy leallithat")
+    ap.add_argument("--weekly-max-age-min", type=float, default=WEEKLY_MAX_AGE_MIN,
+                    help="ennel regebbi pillanatkepet nem veszunk meresnek")
+    ap.add_argument("--ignore-weekly", action="store_true",
+                    help="a 2026-09-23 elotti viselkedes: CSAK a napi token-proxy dont. "
+                         "Visszaallashoz es teszthez.")
     ap.add_argument("--notify", action="store_true",
                     help="cselekedjen is: kuldjon es allitson le")
     ap.add_argument("--no-warn-notify", action="store_true",
@@ -119,8 +264,11 @@ def main(argv=None):
         total += tok
 
     pct = total / a.budget * 100 if a.budget else 0
+    heti = None if a.ignore_weekly else read_weekly(max_age_min=a.weekly_max_age_min)
+    itelet = weekly_verdict(heti, a.weekly_stop_at, a.weekly_lead)
     print(json.dumps({"total": total, "budget": a.budget, "pct": round(pct, 1),
-                      "per_agent": per_agent, "unmeasurable": missing},
+                      "per_agent": per_agent, "unmeasurable": missing,
+                      "weekly": heti, "weekly_verdict": itelet},
                      ensure_ascii=False))
 
     if missing:
@@ -132,7 +280,7 @@ def main(argv=None):
     if not a.notify:
         return 0
 
-    ma = datetime.now().strftime("%Y-%m-%d")
+    ma = window_day(a.daily_from)
     st = load()
     kuldott = set(st.get("bands") or []) if st.get("day") == ma else set()
     allitott = set(st.get("stopped") or []) if st.get("day") == ma else set()
@@ -145,7 +293,15 @@ def main(argv=None):
     # kuldes utan az allapotfajl ugy nez ki, mintha szoltunk volna, es az agensek
     # ugy allnak le, hogy arrol SENKI nem tud. Anorak jelezte 2026-09-17 01:0x-kor.
     fuggoben = sorted(st.get("stop_notify_pending") or []) if st.get("day") == ma else []
-    if pct >= a.stop_at:
+
+    # A DONTES, ket forrasbol. A napi proxy egymaga nem eleg (felesleges leallitas,
+    # mert nem ismeri a heti tartalekot), es a heti ablak egymaga sem (15 percenkent
+    # frissul, tehat egy hirtelen fogyasztast keson vesz eszre).
+    #   heti "stop"     -> leallitas akkor is, ha a nap nyugodt
+    #   heti "override" -> a napi tullepes NEM ok a leallitasra
+    #   egyebkent       -> a napi proxy dont, ahogy 2026-09-23 elott
+    kell_leallitani = (itelet == "stop") or (pct >= a.stop_at and itelet != "override")
+    if kell_leallitani:
         koltok = sorted(n for n in SUBS
                         if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott)
         sikeres = [n for n in koltok if g.stop_agent(n)]
@@ -153,11 +309,49 @@ def main(argv=None):
         # Ujraprobalas: akit egy korabbi korben leallitottunk, de a hir nem ment ki.
         hirlista = sorted(set(sikeres) | set(fuggoben))
         if hirlista:
-            msg = (f"FLOTTA NAPI KERET: {pct:.0f}% ({total:,} / {a.budget:,} token).\n\n"
+            # AZ EZRES-ELVALASZTO SZOKOZOSITESE A SZAMON TORTENJEN, NE A KESZ UZENETEN.
+            # A regi alak egy `.replace(",", " ")`-t futtatott az EGESZ msg-re, tehat a
+            # magyar mondatok vesszoit es a felsorolasot is szetverte. Anorak vette eszre
+            # 2026-09-19 23:4x, es a hiba REGEBBI, mint az aznapi szoveg-javitas: a
+            # kirenderelt uzenetben "cody  forgacs  roxy" allt, es "Aki ma nem koltott  azt
+            # nem allitom le" -- vagyis az EREDETI mondatot is rontotta.
+            # HOGY MIOTA, AZT NEM MERTEM MEG, es az elso valtozatom itt "evek ota
+            # eszrevetlen"-t mondott -- Anorak fogta meg, merve. Amit tudni lehet: e fajl
+            # legkorabbi sajat datum-horgonya 2026-09-16, es git-tortenet nincs alatta
+            # (2026-09-19-en, a 0349af6 commitban kerult be eloszor). A testverfajlban
+            # (agent-budget-guard.py) ugyanez a hiba allt, es ott a legkorabbi horgony
+            # 2026-08-31 -- de hogy a vesszo-irtas ABBAN mikor keletkezett, az sincs merve.
+            sz_total = f"{total:,}".replace(",", " ")
+            sz_budget = f"{a.budget:,}".replace(",", " ")
+            # MELYIK korlat sult el. A ket ok kulonbozo valaszt kivan a gazdatol:
+            # a napi proxy a MI szamunk (emelheto), a heti ablak a Claude-e (nem).
+            if itelet == "stop":
+                fejlec = (f"CLAUDE HETI KERET: {heti['used_pct']:.0f}% "
+                          f"(a {heti['window']} ablak, plafon {a.weekly_stop_at:.0f}%). "
+                          f"A napi keret {pct:.0f}%-on all.")
+            else:
+                fejlec = f"FLOTTA NAPI KERET: {pct:.0f}% ({sz_total} / {sz_budget} token)."
+                if heti:
+                    fejlec += (f" A heti ablak {heti['used_pct']:.0f}%, az ablakbol "
+                               f"{heti['elapsed_pct']:.0f}% telt el, tehat nincs heti "
+                               f"tartalek.")
+                else:
+                    fejlec += " A heti ablak MOST NEM MERHETO (a napi szam dontott)."
+            msg = (f"{fejlec}\n\n"
                    f"Leallitva a nap hatralevo reszere: {', '.join(hirlista)}.\n"
-                   f"Holnap 06:00-kor tiszta lappal indulnak.\n\n"
+                   # NE IGERJ INDULAST: semmi nem valtja be. Anorak merte 2026-09-19
+                   # ejjel, harom uton: a `fleet-safe-start.sh` KEZI eszkoz es semmi nem
+                   # hivja (nulla talalat a systemd unitokon es a scheduled-tasks alatt);
+                   # az auto-restart SZANDEKOSAN nem eleszt fel `stopped` agenst
+                   # (`src/web/auto-restart-runner.ts`, "'stopped' is also left alone");
+                   # sajat inditoja pedig csak Anoraknak es Margonak van. Aznap Cody,
+                   # Forgacs es Roxy 23-28 oran at allt, mikozben ez a mondat azt
+                   # mondta, hogy reggel elindulnak.
+                   f"A kovetkezo napi ablak 06:00-kor nyilik, de az INDITAS KEZI: "
+                   f"a teljes flottat szandekosan nem inditjuk automatikusan "
+                   f"(a gazda dontese, lasd scripts/fleet-safe-start.sh fejlece).\n\n"
                    "A fo-agens NEM all le: o a csatorna. Aki ma nem koltott, "
-                   "azt nem allitom le -- nem o okozta.").replace(",", " ")
+                   "azt nem allitom le -- nem o okozta.")
             kiment = g.notify(msg)
             if not kiment:
                 sys.stderr.write(
@@ -177,10 +371,25 @@ def main(argv=None):
         reszletek = "\n".join(f"  {n}: {per_agent.get(n,0)/1e6:.0f}M"
                               for n in sorted(per_agent, key=lambda x: -per_agent[x])
                               if per_agent.get(n, 0) > 0)
-        msg = (f"FLOTTA NAPI KERET: {pct:.0f}% ({total:,} / {a.budget:,} token).\n\n"
+        # Ugyanaz a javitas, mint a stop-agban: a szokozosites a SZAMON fut, nem a
+        # kesz uzeneten (lasd az ottani kommentet, Anorak lelete 2026-09-19).
+        sz_total = f"{total:,}".replace(",", " ")
+        sz_budget = f"{a.budget:,}".replace(",", " ")
+        if itelet == "override":
+            # A napi proxy mar a stop-sav folott jarhat, es MEGSEM allitunk le.
+            # Ha ezt nem mondjuk ki, a gazda egy "85%-nal leallnak" mondatot olvas,
+            # aztan reggel azt latja, hogy senki nem allt le -- es a kapuban fog
+            # ketelkedni, nem a mondatban.
+            zaras = (f"NEM allitok le senkit: a Claude heti ablaka {heti['used_pct']:.0f}%, "
+                     f"az ablakbol {heti['elapsed_pct']:.0f}% telt el, tehat van heti "
+                     f"tartalek. A napi keret a mi sajat becslesunk, a heti ablak a "
+                     f"valodi korlat. Errol a savrol ma tobbet nem szolok.")
+        else:
+            zaras = (f"{a.stop_at}%-nal a ma kolto sub-agensek leallnak a nap hatralevo "
+                     "reszere. Errol a savrol ma tobbet nem szolok.")
+        msg = (f"FLOTTA NAPI KERET: {pct:.0f}% ({sz_total} / {sz_budget} token).\n\n"
                f"{reszletek}\n\n"
-               f"{a.stop_at}%-nal a ma kolto sub-agensek leallnak a nap hatralevo "
-               "reszere. Errol a savrol ma tobbet nem szolok.").replace(",", " ")
+               f"{zaras}")
         if g.notify(msg):
             st = {"day": ma, "bands": sorted(kuldott | {a.warn_at}),
                   "stopped": sorted(allitott)}

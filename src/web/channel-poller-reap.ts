@@ -191,15 +191,127 @@ export function collectPollerEvidence(
 }
 
 /**
+ * Split env-scan candidates into the ones that belong to a LIVE session and the
+ * ones that are safe to kill. Pure: exported for tests.
+ *
+ * WHY THIS EXISTS (2026-09-19 incident, main session suicide loop).
+ * The env scan below was written when channels.sh launched the main `claude
+ * --channels` with NO *_STATE_DIR export -- so the scan physically could not
+ * see the main session, and killing everything it found was safe. #915
+ * (2026-09-09) started exporting TELEGRAM_STATE_DIR for the main session too,
+ * and that assumption silently died with it: the scan then matched the tmux
+ * client, the main `claude` ITSELF and its poller. The scheduled auto-restart
+ * reaps before respawning, so every due tick shot the live session in the head,
+ * the follow-up `respawn-pane` failed with "no server running", the due flag
+ * was never cleared, and it retried a minute later. 77 kills in one morning.
+ *
+ * THE LINE, and why it is drawn exactly here: the caller's intent is to kill a
+ * leftover POLLER, because `tmux respawn-pane -k` tears down the pane's claude
+ * but not its bun grandchild. So:
+ *   - a pid that IS a live pane leader        -> spare (that is the session)
+ *   - a `claude` binary under a live pane     -> spare (sub-agents run claude as
+ *                                                a child of the pane's `sh -c`)
+ *   - a `tmux` binary                         -> spare (server/client, never a
+ *                                                poller; its argv merely quotes
+ *                                                the launch command)
+ *   - anything else                           -> killable (this is the poller)
+ * A poller whose claude IS live stays killable on purpose: that is the whole
+ * point of reaping before a respawn.
+ */
+export function partitionLiveSessionPids(
+  candidates: number[],
+  procs: ProcRow[],
+  livePanePids: Set<number>,
+): { spared: number[]; killable: number[] } {
+  const byPid = new Map<number, ProcRow>()
+  for (const p of procs) byPid.set(p.pid, p)
+
+  const underLivePane = (pid: number): boolean => {
+    let cur = pid
+    const seen = new Set<number>()
+    for (let hops = 0; hops < 8; hops++) {
+      if (livePanePids.has(cur)) return true
+      if (seen.has(cur)) break
+      seen.add(cur)
+      const next = byPid.get(cur)?.ppid
+      if (next === undefined || next === cur || next <= 1) break
+      cur = next
+    }
+    return false
+  }
+
+  const spared: number[] = []
+  const killable: number[] = []
+  for (const pid of candidates) {
+    const row = byPid.get(pid)
+    const argv0 = (row?.command ?? '').trim().split(/\s+/, 1)[0] ?? ''
+    const base = argv0.split('/').pop() ?? ''
+    if (livePanePids.has(pid)) { spared.push(pid); continue }
+    if (base === 'tmux') { spared.push(pid); continue }
+    if (base === 'claude' && underLivePane(pid)) { spared.push(pid); continue }
+    killable.push(pid)
+  }
+  return { spared, killable }
+}
+
+/**
+ * Can this pid actually BE a channel poller? Pure: exported for tests.
+ *
+ * The env scan matches every process that INHERITED the state dir, not just
+ * pollers. Measured on the live tree 2026-09-19: alongside the real bun poller
+ * it returned a `sleep 5` (the channels.sh watchdog) and a `bash -c` that was a
+ * Bash tool call in progress. Killing those truncates someone else's work with
+ * no error anywhere, so the kill is restricted to a bun/node/deno runtime --
+ * or to whatever bot.pid names, since that one is the supervised poller by
+ * definition, whatever it happens to be written in.
+ *
+ * A pid missing from the snapshot counts as killable: it is already dead, so
+ * the kill is a no-op, and treating it as live would only mask a stale bot.pid.
+ */
+export function looksLikePoller(pid: number, procs: ProcRow[], botPid: number | null): boolean {
+  if (botPid != null && pid === botPid) return true
+  const row = procs.find((p) => p.pid === pid)
+  if (!row) return true
+  const base = (row.command.trim().split(/\s+/, 1)[0] ?? '').split('/').pop() ?? ''
+  return base === 'bun' || base === 'node' || base === 'deno'
+}
+
+// Live pane pids, distinguishing "tmux answered, nothing is live" from "the
+// query itself failed". `no server running` is a real answer (no panes exist),
+// so it returns an empty set; anything else returns null and the caller must
+// fail safe rather than guess.
+function livePanePidsOrNull(tmuxPath: string): Set<number> | null {
+  try {
+    const out = execSync(`${tmuxPath} list-panes -a -F '#{pane_pid}'`, { timeout: 5000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const s = new Set<number>()
+    for (const line of out.split('\n')) {
+      const n = parseInt(line.trim(), 10)
+      if (Number.isFinite(n) && n > 1) s.add(n)
+    }
+    return s
+  } catch (err) {
+    const e = err as { stderr?: unknown; message?: string }
+    const msg = `${String(e?.stderr ?? '')}\n${e?.message ?? ''}`
+    if (/no server running|no such file or directory/i.test(msg)) return new Set()
+    logger.warn({ err }, 'channel-poller-reap: live-pane query failed (not a "no server" answer)')
+    return null
+  }
+}
+
+/**
  * Reap every channel-plugin poller process associated with this agent.
  * Combines bot.pid (cheap, supervised pid) with a `ps eww -e` env-var scan
  * (catches orphans whose pid is no longer in bot.pid). SIGTERM first; after
  * a short grace period, SIGKILL any survivor. Safe to call multiple times
  * (process.kill on a missing pid is caught).
+ *
+ * Since 2026-09-19 it never kills a live session's claude or tmux -- see
+ * partitionLiveSessionPids for why the env scan alone stopped being safe.
  */
 export function reapChannelOrphans(
   provider: ChannelProviderType,
   agentDirPath: string,
+  opts: { tmuxPath?: string } = {},
 ): ReapResult {
   const chanDir = channelStateDir(provider, agentDirPath)
   const envVar = STATE_ENV_VAR[provider]
@@ -208,13 +320,37 @@ export function reapChannelOrphans(
   const fromEnvScan = listPollerPidsByStateDir(envVar, chanDir)
 
   // Deduplicate while preserving order so the bot.pid path is logged first.
-  const all: number[] = []
+  const candidates: number[] = []
   const seen = new Set<number>()
   for (const pid of [fromBotPid, ...fromEnvScan]) {
     if (pid && !seen.has(pid)) {
       seen.add(pid)
-      all.push(pid)
+      candidates.push(pid)
     }
+  }
+
+  let all = candidates
+  let spared: number[] = []
+  if (candidates.length > 0) {
+    const live = livePanePidsOrNull(opts.tmuxPath ?? 'tmux')
+    if (live === null) {
+      // Cannot tell a live session from a leftover -> kill nothing. A surviving
+      // orphan costs a 409 race; a killed live session costs a silent channel.
+      logger.warn({ provider, chanDir, candidates }, 'channel-poller-reap: live-pane set unavailable, skipping reap (fail-safe)')
+      return { reaped: [], source: { fromBotPid, fromEnvScan } }
+    }
+    const procs = snapshotProcs()
+    const split = partitionLiveSessionPids(candidates, procs, live)
+    // Second narrowing, same 2026-09-19 measurement: the env scan matches every
+    // process that INHERITED the state dir, not just pollers -- on the live tree
+    // that included a `sleep 5` (the channels.sh watchdog) and a `bash -c` that
+    // was a Bash tool call in progress. Killing those is a silent truncation of
+    // someone else's work, so restrict the kill to what a poller can actually
+    // be: a bun/node runtime, or whatever bot.pid names (the supervised one,
+    // whatever it is written in).
+    const isPoller = (pid: number): boolean => looksLikePoller(pid, procs, fromBotPid)
+    all = split.killable.filter(isPoller)
+    spared = [...split.spared, ...split.killable.filter((p) => !isPoller(p))]
   }
 
   // SIGTERM, give bun/node ~300ms to flush, then SIGKILL stragglers.
@@ -228,8 +364,8 @@ export function reapChannelOrphans(
     }
   }
 
-  if (all.length > 0) {
-    logger.info({ provider, chanDir, reaped: all, fromBotPid, fromEnvScan }, 'channel-poller-reap: orphans killed')
+  if (all.length > 0 || spared.length > 0) {
+    logger.info({ provider, chanDir, reaped: all, spared, fromBotPid, fromEnvScan }, 'channel-poller-reap: orphans killed')
   }
   return { reaped: all, source: { fromBotPid, fromEnvScan } }
 }
@@ -238,11 +374,18 @@ export function reapChannelOrphans(
 // Detached channel CLAUDE reaper (the parent-process leak, 2026-06-03).
 //
 // reapChannelOrphans (above) kills bun/node POLLERS by env-var scan + bot.pid.
-// That works for sub-agents (their claude+poller carry TELEGRAM_STATE_DIR=<dir>)
-// but MISSES the main channels session entirely: channels.sh launches the main
-// `claude --channels` with NO *_STATE_DIR export (the plugin uses its default
-// dir), so neither the main claude nor its poller match the env needle, and the
-// plugin never writes bot.pid. When a --continue respawn (channel-monitor
+//
+// OUTDATED AS OF #915 (2026-09-09), kept because the rest of the rationale
+// still holds: this used to say the env scan "MISSES the main channels session
+// entirely", because channels.sh launched the main `claude --channels` with no
+// *_STATE_DIR export. channels.sh now exports it (measured 2026-09-19 on the
+// live process tree: the tmux client, the main claude AND its bun poller all
+// carry TELEGRAM_STATE_DIR), so the env scan DOES see the main session -- which
+// is exactly why reapChannelOrphans had to grow the live-pane guard.
+//
+// The detached reaper below is still needed for a different reason: it finds a
+// detached claude that no longer matches any state dir at all. When a
+// --continue respawn (channel-monitor
 // respawn-pane / agent-process start) fails to tear down the prior claude, the
 // detached claude survives -- reparented to the tmux server -- and keeps a bun
 // poller hitting getUpdates on the SHARED bot token. 5 such orphans accumulated

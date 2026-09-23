@@ -123,6 +123,31 @@ except Exception:
       # Ezert: {{id}} EMLITES (literalis {id} lesz belole), {id} POINTER (cserelodik).
       # Egy eszkoz, ami nem tud kulonbseget tenni a ketto kozott, nem tudja atkuldeni a
       # sajat dokumentaciojat a sajat csatornajan.
+      #
+      # `notify: false`, ES EZ NEM OPCIO EZEN AZ AGON. Ez a flag SZERKEZETILEG mindig a
+      # "mar kulon valaszoltam" eset: ugyanez a hivas KULDI a tartalmat es ZARJA a sort,
+      # tehat a lezarasbol keletkezo nyugta olyan temarol ebreszti fel a cimzettet,
+      # amirol masodperccel korabban bovebben is olvasott. A kozos CLAUDE.md szabalya
+      # ("HA MAR KULON VALASZOLTAL RA, A LEZARAS LEGYEN notify: false") itt nem
+      # megitelés kerdese, hanem a flag definiciojabol kovetkezik.
+      # MERVE 2026-09-17, Roxy jelezte a sajat postajabol: aznap a bejovoje 46%-a
+      # (6/13) ilyen duplikalt nyugta volt, es MIND A HAT kulon erdemi uzenetre
+      # hivatkozott ("Reszletek: msg N"). Marveen visszamerte a sajat kimenojere:
+      # 15 nyugta EGY nap alatt, mind ezen az agon.
+      # Ha valaha kell a nyugta ezen az uton, az UJ flag legyen es lathato a
+      # parancssorban -- egy elhagyott kapcsolo nem dontes, csak feledés.
+      #
+      # ES AMIT NE "EGYSEGESITS" (Roxy kerte leirni, 2026-09-17): a NYERS
+      # `curl -X PUT /api/messages/<id>` agon a nyugta ERTESITO marad, es ez helyes --
+      # ott a lezaras tenyleg lehet az egyetlen jelzes. Harom ut van, harom kulonbozo
+      # helyes alapertelmezessel (kozvetlen DB-iras: nincs nyugta; nyers PUT: van;
+      # ez a helper: nincs). A tablazat a docs/marveen-agent-reference.md-ben all.
+      # Aki a harmat egy alapertelmezes ala rendezi, epp azt a kulonbseget tunteti el,
+      # amiert igy allnak.
+      #
+      # ES AMIERT EZ NEM SZOKASON ALL: a --close mellett is KOTELEZO mind a harom
+      # pozicionalis argumentum (lasd lentebb, `${1:?from required}`), tehat close-only
+      # hivas ezen az uton NEM LETEZIK -- aki zar, az ugyanabban a hivasban kuldott is.
       CB="$(RESULT="$RESULT" ID="$ID" python3 -c '
 import json, os
 SENT = "\x00ID\x00"
@@ -130,7 +155,7 @@ t = os.environ["RESULT"]
 t = t.replace("{{id}}", SENT)          # az emlitest kivonjuk a csere alol
 t = t.replace("{id}", os.environ["ID"])  # a pointer megkapja a MERT szamot
 t = t.replace(SENT, "{id}")            # az emlites literalisan ter vissza
-print(json.dumps({"status": "done", "result": t}))')"
+print(json.dumps({"status": "done", "result": t, "notify": False}))')"
       CR="$(curl -s -X PUT "http://localhost:${PORT}/api/messages/${CLOSE}" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "$CB" -w $'\n%{http_code}' 2>/dev/null || true)"
       CCODE="$(printf '%s' "$CR" | tail -n1)"
       if [ "$CCODE" = "200" ]; then echo "CLOSED $CLOSE"; else echo "FAIL close=$CLOSE http=${CCODE:-?}"; exit 1; fi

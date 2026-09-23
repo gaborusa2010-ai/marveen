@@ -17,7 +17,7 @@ import { sendSystemDirective } from './system-directive.js'
 import { notifyChannel } from '../notify.js'
 import { MAIN_CHANNELS_SESSION } from './main-agent.js'
 import { detectPaneState, paneShowsContextSaturation } from '../pane-state.js'
-import { readContextTokensFromProjectDir, readActiveModelFromProjectDir, readTranscriptMtimeFromProjectDir } from './active-model.js'
+import { readContextTokensFromProjectDir, readActiveModelFromProjectDir, readTranscriptMtimeFromProjectDir, mainAgentConfigDirForRead } from './active-model.js'
 import { readContextGuardConfig } from './context-guard-store.js'
 import { localMidnightMs } from '../auto-restart.js'
 import { recordRescueFailure, clearRescueFailures } from './rescue-failure-tracker.js'
@@ -31,6 +31,7 @@ import {
   DAILY_HANDOFF_REASON_PREFIX,
   IDLE_FLUSH_REASON_PREFIX,
   INITIAL_GUARD_STATE,
+  MIDTURN_DEFER_REASON_PREFIX,
   STALE_REFRESH_REASON_PREFIX,
   type GuardState,
   type HandoffStaleness,
@@ -247,7 +248,9 @@ function configDirFor(name: string): string | undefined {
   // resolveAgentConfigDirForRead, not readAgentClaudeConfigDir: an agent whose
   // config dir was auto-provisioned by the launcher has no field to read, and
   // reading the host default silently returns another agent's absence.
-  return name === MAIN_AGENT_ID ? undefined : (resolveAgentConfigDirForRead(name) ?? undefined)
+  return name === MAIN_AGENT_ID
+    ? mainAgentConfigDirForRead(PROJECT_ROOT)
+    : (resolveAgentConfigDirForRead(name) ?? undefined)
 }
 
 /** Raw observed context size (tokens) for the idle-flush tier's absolute threshold. */
@@ -458,6 +461,25 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
       logger.debug(
         { name, reason: decision.reason, contextTokens: inputs.contextTokens, idleMs: inputs.idleMs },
         'context-guard: idle-flush not acting',
+      )
+    }
+    // A mid-turn deferral is the one non-decision that COSTS money while it
+    // holds: the session is already past its hard threshold and keeps growing
+    // until the turn ends. Unlike idle-flush this goes to info, not debug --
+    // on 2026-09-23 the main agent deferred for 73 minutes and 203.9M tokens,
+    // and the log for that window was empty, so afterwards the delay was
+    // indistinguishable from a guard that never ran. One line per sweep makes
+    // the length of the wait and the growth over it a measurement instead of
+    // a reconstruction from transcripts.
+    if (decision.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)) {
+      logger.info(
+        {
+          name,
+          reason: decision.reason,
+          contextTokens: inputs.contextTokens,
+          pct: inputs.pct !== null ? Math.round(inputs.pct * 100) : null,
+        },
+        'context-guard: deferring restart, agent mid-turn (context still growing)',
       )
     }
     return

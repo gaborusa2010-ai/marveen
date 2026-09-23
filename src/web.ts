@@ -178,6 +178,33 @@ export function startWebServer(port = 3420): http.Server {
       return json(res, { lan_ip: detectLanIp(), port })
     }
 
+    // The mobile-login QR encodes `/?token=<dashboard token>`, and the client
+    // reads that token from localStorage. An owner who signed in through the
+    // BROWSER FORM has an mv_session cookie and NOTHING in localStorage, so the
+    // QR modal answered an already-authenticated owner with "log in first" --
+    // the one user who could not possibly need that advice. This endpoint hands
+    // the bootstrap token to a caller the gate has already authenticated.
+    //
+    // DELIBERATELY NARROWER THAN THE GATE. `session` and `token` pass; `device`
+    // and `federation` get a 403 even though resolveAuth() accepted them. Both
+    // are WEAKER principals than the master token (a device key is revocable
+    // per-device, a federation token is endpoint-scoped), so returning the
+    // master token to either would be privilege escalation dressed as
+    // convenience. The check is on auth.kind precisely because passing the gate
+    // is not the same as being allowed this particular answer.
+    if (path === '/api/auth/bootstrap-token' && method === 'GET') {
+      if (auth.kind !== 'session' && auth.kind !== 'token') {
+        logger.warn({ kind: auth.kind, path }, 'bootstrap-token: refused a non-session principal')
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' })
+        res.end(JSON.stringify({
+          error: 'Forbidden',
+          hint: 'bootstrap-token is for browser sessions only (device keys and federation peers are excluded on purpose)',
+        }))
+        return
+      }
+      return json(res, { token: DASHBOARD_TOKEN })
+    }
+
     try {
       const routeCtx: RouteContext = { req, res, path, method, url, fedPeer: fedPeerForCtx, auth: ctxAuth }
 

@@ -86,7 +86,22 @@ def save(d):
 
 
 CHAT_ID = "8547011582"
-TG_ENV = os.path.expanduser("~/.claude/channels/telegram/.env")
+
+
+def _tg_env():
+    """Bot token file: install-scoped first (#915), legacy HOME as fallback.
+
+    Measured 2026-09-16: ~/.claude/channels was empty while the real token sat
+    in <install>/.claude/channels/telegram/.env, so this module could not send
+    anything. The shell senders (scripts/limit-monitor.sh) already tried both.
+    """
+    local = os.path.join(REPO, ".claude", "channels", "telegram", ".env")
+    if os.path.exists(local):
+        return local
+    return os.path.expanduser("~/.claude/channels/telegram/.env")
+
+
+TG_ENV = _tg_env()
 
 
 def notify(item):

@@ -778,6 +778,17 @@ let kanbanAssigneeFilter = ''
 // fully user-controlled via the toolbar dropdown.
 let kanbanGroupBy = 'none'
 let kanbanGroupByInitialized = false
+// Free-text / card-number search box in the board toolbar. A query of the form
+// "295" or "#295" matches the card SEQUENCE NUMBER exactly (that is the number
+// the board prints on every card and the only one the owner sees); anything
+// else is a case-insensitive substring match on the title. Deliberately NOT
+// persisted: a filter that survives a reload and hides most of the board is a
+// trap, and this one is typed in a second.
+let kanbanSearchQuery = ''
+// Card order inside a column: 'manual' (sort_order, i.e. the drag order --
+// the default and the only one where drag & drop makes sense) | 'seq_asc' |
+// 'seq_desc'. Persisted like the groupBy choice.
+let kanbanSortBy = 'manual'
 // Which swimlane keys (assignee name or priority value) are collapsed. Lives
 // for the page session only -- intentionally not persisted across reloads.
 const kanbanCollapsedLanes = new Set()
@@ -843,6 +854,12 @@ async function loadKanban() {
         const storedHiddenCols = JSON.parse(localStorage.getItem('marveen.kanbanHiddenColumns') || '[]')
         if (Array.isArray(storedHiddenCols)) kanbanHiddenColumns = new Set(storedHiddenCols)
       } catch { /* ignore malformed storage */ }
+      const storedSort = localStorage.getItem('marveen.kanbanSortBy')
+      if (storedSort === 'seq_asc' || storedSort === 'seq_desc') {
+        kanbanSortBy = storedSort
+        const sortSel = document.getElementById('kanbanSortBy')
+        if (sortSel) sortSel.value = storedSort
+      }
     }
     const [cardsRes, assigneesRes, projectsRes, labelsRes] = await Promise.all([
       fetch('/api/kanban'),
@@ -866,6 +883,27 @@ async function loadKanban() {
 document.getElementById('kanbanGroupBy').addEventListener('change', (e) => {
   kanbanGroupBy = e.target.value
   localStorage.setItem('marveen.kanbanGroupBy', kanbanGroupBy)
+  renderKanban()
+})
+
+document.getElementById('kanbanSortBy')?.addEventListener('change', (e) => {
+  kanbanSortBy = e.target.value
+  localStorage.setItem('marveen.kanbanSortBy', kanbanSortBy)
+  renderKanban()
+})
+
+// 'input' rather than 'change' so the board narrows while typing -- with a few
+// hundred cards the whole render is a few milliseconds, so no debounce is
+// needed. Escape clears, because a search box you cannot empty in one key is
+// the reason filters get left on by accident.
+document.getElementById('kanbanSearch')?.addEventListener('input', (e) => {
+  kanbanSearchQuery = e.target.value
+  renderKanban()
+})
+document.getElementById('kanbanSearch')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return
+  e.target.value = ''
+  kanbanSearchQuery = ''
   renderKanban()
 })
 
@@ -1012,7 +1050,35 @@ function setupAssigneeFilter() {
 // chip counts are computed against, independent of which labels are
 // currently active, so a chip's count stays meaningful whether it's the one
 // being toggled or not.
+// Does the card match the toolbar search box? Two modes, decided by the shape
+// of the query, so one field serves both needs:
+//   "295" / "#295"  -> exact card-number (seq) match, nothing else
+//   anything else   -> case-insensitive substring of the title
+// The number mode is exact on purpose: "29" must not drag in 129 and 295 when
+// the point of typing a number is to land on one card.
+function kanbanCardMatchesSearch(card) {
+  const q = kanbanSearchQuery.trim()
+  if (!q) return true
+  const num = q.match(/^#?(\d+)$/)
+  if (num) return card.seq != null && Number(card.seq) === Number(num[1])
+  return String(card.title || '').toLowerCase().includes(q.toLowerCase())
+}
+
+// Comparator for the cards inside one column, per the sort dropdown. Cards
+// without a seq (there should be none, but the field is nullable) sort last in
+// both directions rather than jumping to the top on a NaN comparison.
+function kanbanCardSorter() {
+  if (kanbanSortBy === 'seq_asc') {
+    return (a, b) => (a.seq ?? Infinity) - (b.seq ?? Infinity)
+  }
+  if (kanbanSortBy === 'seq_desc') {
+    return (a, b) => (b.seq ?? -Infinity) - (a.seq ?? -Infinity)
+  }
+  return (a, b) => a.sort_order - b.sort_order
+}
+
 function kanbanCardMatchesBaseFilters(card) {
+  if (!kanbanCardMatchesSearch(card)) return false
   if (kanbanProjectFilter && (card.project || '') !== kanbanProjectFilter) return false
   const assigneeFilter = kanbanAssigneeFilter.toLowerCase()
   if (assigneeFilter && String(card.assignee || '').trim().toLowerCase() !== assigneeFilter) return false
@@ -1076,11 +1142,292 @@ function renderKanbanQuickFilters() {
   }
 }
 
+// One line next to the search box saying what the query actually found. Two
+// cases deserve their own words, because in both of them the board legitimately
+// shows nothing and the reason is not the query:
+//   - every match sits in a column the user hid (the chips above)
+//   - no match at all, which for a card number usually means it is archived,
+//     and the archived view is a separate tab that this search does not reach
+function renderKanbanSearchHint() {
+  const hintEl = document.getElementById('kanbanSearchHint')
+  if (!hintEl) return
+  if (!kanbanSearchQuery.trim()) { hintEl.textContent = ''; return }
+  const matches = kanbanCards.filter((c) => kanbanCardMatchesSearch(c))
+  const hiddenCount = matches.filter((c) => kanbanHiddenColumns.has(c.status)).length
+  if (matches.length === 0) {
+    hintEl.textContent = t('kanban.filter.search_none')
+  } else if (hiddenCount === matches.length) {
+    hintEl.textContent = t('kanban.filter.search_all_hidden', { n: matches.length })
+  } else if (hiddenCount > 0) {
+    hintEl.textContent = t('kanban.filter.search_some_hidden', { n: matches.length, h: hiddenCount })
+  } else {
+    hintEl.textContent = t('kanban.filter.search_hits', { n: matches.length })
+  }
+}
+
+// Board-wide totals in the header row. The board's per-column counters answer
+// "how many are planned"; this answers the question they cannot -- how much is
+// open in total, which is the number you want before deciding the board has
+// grown out of hand. Counted over ALL loaded cards, not the filtered view, so
+// it does not move when a filter is set; the filtered figure is appended
+// separately when a filter actually hides something.
+// Archived cards are not in kanbanCards at all (a separate endpoint feeds the
+// Archived tab), so they are deliberately not counted here rather than guessed.
+// The owner's own queue, above the board and OUTSIDE every filter.
+//
+// Why it ignores the filters: this answers "what is the process waiting on me
+// for", which is a question about the person, not about the current view. A
+// queue that an unrelated project filter can silently empty would be worse
+// than no queue, because an empty strip reads as "nothing to do".
+//
+// Order: priority first (urgent > high > normal > low), then card number, so
+// the oldest card wins inside a priority. Done cards never appear.
+function renderKanbanOwnerStrip() {
+  const el = document.getElementById('kanbanOwnerStrip')
+  if (!el) return
+  const owner = ownerAssigneeName()
+  if (!owner) { el.hidden = true; return }
+  const mine = kanbanCards
+    .filter((c) => c.status !== 'done' && String(c.assignee || '').trim().toLowerCase() === owner.toLowerCase())
+    .sort((a, b) => {
+      const pa = KANBAN_PRIORITY_ORDER.indexOf(a.priority || 'normal')
+      const pb = KANBAN_PRIORITY_ORDER.indexOf(b.priority || 'normal')
+      if (pa !== pb) return pa - pb
+      return (a.seq ?? Infinity) - (b.seq ?? Infinity)
+    })
+  if (mine.length === 0) { el.hidden = true; return }
+  el.hidden = false
+
+  const collapsed = localStorage.getItem('marveen.kanbanOwnerStripCollapsed') === '1'
+  el.classList.toggle('collapsed', collapsed)
+  el.innerHTML = ''
+
+  const head = document.createElement('div')
+  head.className = 'kanban-owner-strip-head'
+  // His portrait belongs here, because since 2026-09-22 this strip is the ONLY
+  // place his cards are drawn (see kanbanHideFromLanes).
+  const face = document.createElement('span')
+  face.className = 'kanban-team-avatar owner kanban-owner-strip-avatar'
+  face.textContent = (owner[0] || '?').toUpperCase()
+  kanbanDecorateAvatar(face, owner)
+  const label = document.createElement('span')
+  label.textContent = t('kanban.owner_strip.title')
+  // His own nickname had nowhere to show: this strip replaced his lane, and the
+  // lane header was the only place a nickname was drawn (owner, Telegram msg 3572).
+  const ownerNick = kanbanSwimlaneMeta(owner).nickname
+  const nick = document.createElement('span')
+  nick.className = 'kanban-nickname'
+  if (ownerNick) nick.textContent = ownerNick
+  const count = document.createElement('span')
+  count.className = 'kanban-owner-strip-count'
+  count.textContent = mine.length
+  const toggle = document.createElement('span')
+  toggle.className = 'kanban-owner-strip-toggle'
+  toggle.textContent = collapsed ? t('kanban.owner_strip.show') : t('kanban.owner_strip.hide')
+  head.append(face, label, nick, count, toggle)
+  head.addEventListener('click', () => {
+    const now = !el.classList.contains('collapsed')
+    localStorage.setItem('marveen.kanbanOwnerStripCollapsed', now ? '1' : '0')
+    renderKanbanOwnerStrip()
+  })
+  el.appendChild(head)
+
+  const items = document.createElement('div')
+  items.className = 'kanban-owner-strip-items'
+  for (const card of mine) {
+    const chip = document.createElement('div')
+    chip.className = 'kanban-owner-strip-item'
+    chip.title = card.title
+    const dot = document.createElement('span')
+    dot.className = 'dot ' + (card.priority || 'normal')
+    const seq = document.createElement('span')
+    seq.className = 'seq'
+    seq.textContent = card.seq != null ? '#' + card.seq : ''
+    const title = document.createElement('span')
+    title.className = 'title'
+    title.textContent = card.title
+    chip.append(dot, seq, title)
+    chip.addEventListener('click', () => showCardDetail(card))
+    items.appendChild(chip)
+  }
+  el.appendChild(items)
+}
+
+// === Team view: one row per person, not one column per status ===
+//
+// The owner asked for it (Telegram msg 3427, 2026-09-22): "a csapat tagonkent
+// felsorolva, hogy eppen min dolgozik, mi lesz a kovetkezo". The swimlane board
+// already groups BY assignee, but it still answers "where are the cards", and
+// he is asking "where are the people".
+//
+// MOST comes from the column (in_progress) and KOVETKEZO from the priority
+// scheme he set the same morning (normal = this is next), so neither is a guess
+// on my part -- both are states somebody set.
+//
+// What this view deliberately does NOT show is an estimated finish date. The
+// only honest source would be measured in_progress -> done times, and on
+// 2026-09-22 the whole history held 20 such cards with a 0.0 to 98.9 hour
+// spread and n=1 for most agents. A number printed from that would look like a
+// measurement and be a guess. The elapsed figure below is labelled for what it
+// actually measures: time since the card last moved, not time spent working.
+function renderKanbanTeamView() {
+  const host = document.getElementById('kanbanTeamView')
+  if (!host) return
+  host.innerHTML = ''
+
+  // The owner's own queue is the strip above the board, not a row here: he
+  // asked why his cards appeared twice (Telegram msg 3547). See kanbanHideFromLanes.
+  const open = kanbanCards.filter((c) => c.status !== 'done' && !kanbanHideFromLanes(c))
+  const keyOf = (c) => {
+    const raw = c.assignee ? String(c.assignee).trim() : ''
+    if (!raw) return '__unassigned__'
+    const m = kanbanAssignees.find((a) => a.name.toLowerCase() === raw.toLowerCase())
+    return m ? m.name : raw
+  }
+  const byPerson = new Map()
+  for (const c of open) {
+    const k = keyOf(c)
+    if (!byPerson.has(k)) byPerson.set(k, [])
+    byPerson.get(k).push(c)
+  }
+  // People with something in progress first, then by workload. A row that is
+  // idle is not hidden: "nobody is working on this person's queue" is exactly
+  // the thing the owner wants to see at a glance.
+  const rows = [...byPerson.entries()].sort((a, b) => {
+    const ai = a[1].some((c) => c.status === 'in_progress') ? 0 : 1
+    const bi = b[1].some((c) => c.status === 'in_progress') ? 0 : 1
+    if (ai !== bi) return ai - bi
+    return b[1].length - a[1].length
+  })
+
+  if (rows.length === 0) {
+    host.innerHTML = `<p class="naplo-empty">${t('kanban.team.empty')}</p>`
+    return
+  }
+
+  for (const [key, cards] of rows) {
+    const meta = kanbanSwimlaneMeta(key)
+    const now = Date.now() / 1000
+    const doing = cards.filter((c) => c.status === 'in_progress')
+    const next = cards
+      .filter((c) => c.status !== 'in_progress' && (c.priority === 'normal' || c.priority === 'urgent'))
+      .sort((a, b) => (a.seq ?? Infinity) - (b.seq ?? Infinity))
+
+    const row = document.createElement('div')
+    row.className = 'kanban-team-row' + (doing.length ? '' : ' idle')
+
+    const head = document.createElement('div')
+    head.className = 'kanban-team-head'
+    head.innerHTML = `<span class="kanban-team-avatar ${meta.avatarClass}">${escapeHtml(meta.avatarChar || '')}</span>` +
+      `<span class="kanban-team-name">${escapeHtml(meta.label)}</span>` +
+      (meta.nickname ? `<span class="kanban-nickname">${escapeHtml(meta.nickname)}</span>` : '') +
+      `<span class="kanban-team-open">${t('kanban.team.open_n', { n: cards.length })}</span>`
+    kanbanDecorateAvatar(head.querySelector('.kanban-team-avatar'), key)
+    row.appendChild(head)
+
+    const cell = (titleKey, list, emptyKey) => {
+      const box = document.createElement('div')
+      box.className = 'kanban-team-cell'
+      const h = document.createElement('div')
+      h.className = 'kanban-team-cell-head'
+      h.textContent = t(titleKey)
+      box.appendChild(h)
+      if (list.length === 0) {
+        const e = document.createElement('div')
+        e.className = 'kanban-team-none'
+        e.textContent = t(emptyKey)
+        box.appendChild(e)
+        return box
+      }
+      for (const c of list.slice(0, 3)) {
+        const item = document.createElement('div')
+        item.className = 'kanban-team-card'
+        const age = Math.max(0, now - (c.updated_at || c.created_at || now))
+        const ageTxt = age >= 86400
+          ? t('kanban.team.moved_d', { n: Math.floor(age / 86400) })
+          : t('kanban.team.moved_h', { n: Math.max(1, Math.floor(age / 3600)) })
+        // For a card being worked on right now the owner asked for the time
+        // already spent on it, which is a different number from "last moved":
+        // it sums every stay in the column, and it keeps running while the card
+        // sits there. Cards that are NOT in progress keep the moved-ago text --
+        // for those, time-in-progress is history, and how stale the card is is
+        // the live question.
+        const activeTxt = c.status === 'in_progress' ? formatActiveTime(c.active_seconds, 'short') : null
+        const rightTxt = activeTxt ?? ageTxt
+        const rightTip = activeTxt ? t('kanban.active.tooltip') : t('kanban.team.moved_tooltip')
+        item.innerHTML = `<span class="seq">#${c.seq ?? '?'}</span><span class="title">${escapeHtml(c.title)}</span>` +
+          `<span class="age" title="${escapeHtml(rightTip)}">${escapeHtml(rightTxt)}</span>`
+        item.addEventListener('click', () => showCardDetail(c))
+        box.appendChild(item)
+      }
+      if (list.length > 3) {
+        const more = document.createElement('div')
+        more.className = 'kanban-team-none'
+        more.textContent = t('kanban.team.more', { n: list.length - 3 })
+        box.appendChild(more)
+      }
+      return box
+    }
+
+    const body = document.createElement('div')
+    body.className = 'kanban-team-body'
+    body.append(
+      cell('kanban.team.now', doing, 'kanban.team.now_none'),
+      cell('kanban.team.next', next, 'kanban.team.next_none'),
+    )
+    row.appendChild(body)
+    host.appendChild(row)
+  }
+
+  const note = document.createElement('p')
+  note.className = 'kanban-team-note'
+  note.textContent = t('kanban.team.estimate_note')
+  host.appendChild(note)
+}
+
+// Card.active_seconds -> human text. Two forms: `long` for the detail panel,
+// `short` for the one-line chip on a team row.
+//
+// undefined means the card has no status-change history at all, which is NOT
+// the same as zero and must not render as "0m" -- the event table starts
+// mid-history, so an old card that never moved since would otherwise claim a
+// measured zero it has not got.
+function formatActiveTime(sec, form = 'long') {
+  if (sec === undefined || sec === null) return null
+  const s = Math.max(0, Math.floor(sec))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (form === 'short') {
+    if (d >= 1) return t('kanban.active.short_d', { d })
+    if (h >= 1) return t('kanban.active.short_h', { h })
+    return t('kanban.active.short_m', { m })
+  }
+  if (s === 0) return t('kanban.active.zero')
+  if (d >= 1) return t('kanban.active.d_h', { d, h })
+  if (h >= 1) return t('kanban.active.h_m', { h, m })
+  return t('kanban.active.m', { m })
+}
+
+function renderKanbanTotals(visibleCardIds) {
+  const el = document.getElementById('kanbanTotals')
+  if (!el) return
+  const open = kanbanCards.filter((c) => c.status !== 'done').length
+  let txt = t('kanban.totals', { open, all: kanbanCards.length })
+  if (visibleCardIds && visibleCardIds.size !== kanbanCards.length) {
+    txt += ' ' + t('kanban.totals_filtered', { n: visibleCardIds.size })
+  }
+  el.textContent = txt
+}
+
 function renderKanban() {
   const cardById = new Map(kanbanCards.map(c => [c.id, c]))
 
   renderKanbanColumnChips()
   renderKanbanQuickFilters()
+  renderKanbanSearchHint()
+  renderKanbanOwnerStrip()
+  renderKanbanTeamView()
 
   // Determine which top-level cards are visible under current filters.
   const visibleCardIds = new Set()
@@ -1089,6 +1436,8 @@ function renderKanban() {
     if (!kanbanCardMatchesLabelFilter(card)) continue
     visibleCardIds.add(card.id)
   }
+
+  renderKanbanTotals(visibleCardIds)
 
   // A subtask is "embedded" when its parent is visible AND both share the same
   // column. Embedded subtasks are hidden as standalone cards and rendered
@@ -1125,12 +1474,12 @@ function renderKanban() {
     for (const [status, cards] of Object.entries(grouped)) {
       const col = document.querySelector(`#kanbanBoard .kanban-col-body[data-status="${status}"]`)
       col.innerHTML = ''
-      cards.sort((a, b) => a.sort_order - b.sort_order)
+      cards.sort(kanbanCardSorter())
 
       for (const card of cards) {
         const embeddedChildren = kanbanCards
           .filter(c => c.parent_id === card.id && embeddedSubtaskIds.has(c.id))
-          .sort((a, b) => a.sort_order - b.sort_order)
+          .sort(kanbanCardSorter())
         col.appendChild(createCardEl(card, embeddedChildren))
       }
     }
@@ -1196,7 +1545,70 @@ function kanbanSwimlaneMeta(key) {
   if (key === '__unassigned__') return { label: t('kanban.unassigned'), avatarClass: 'unknown', avatarChar: '?' }
   const match = kanbanAssignees.find(a => a.name === key)
   const label = match ? (match.displayName || match.name) : key
-  return { label, avatarClass: match ? match.type : 'unknown', avatarChar: (label[0] || '?').toUpperCase() }
+  return {
+    label,
+    // The character name behind the portrait, from store/team-nicknames.json.
+    // Empty when nobody set one, and the lane then shows the plain name.
+    nickname: (match && match.nickname) ? match.nickname : '',
+    avatarClass: match ? match.type : 'unknown',
+    avatarChar: (label[0] || '?').toUpperCase(),
+  }
+}
+
+// === Character portraits on the board (owner asked, Telegram msg 3547) ===
+//
+// "szeretnem ha lenne profilkepuk a csapattagoknak a kanbanban ... egy karakter
+// kep ... a Disney-Pixar style-ban". Until then the lanes carried a coloured
+// circle with the first letter of the name.
+//
+// The image is served by the SAME endpoints the agents page already uses, so no
+// new storage and no new upload path: agents/<name>/avatar.png for an agent,
+// store/marveen-avatar.png for the bot, store/owner-avatar.png for the owner.
+//
+// Why an <img> laid OVER the letter instead of asking first whether a picture
+// exists: the board would otherwise need a per-assignee "hasAvatar" round trip
+// before it could draw a single lane. The letter is rendered first and the image
+// covers it; if the file is missing the request 404s, the <img> removes itself,
+// and the letter is already underneath. One less thing that can be stale, and a
+// half-populated set of portraits degrades one lane at a time instead of all.
+function kanbanAvatarUrlFor(key) {
+  if (kanbanGroupBy === 'priority') return null
+  if (!key || key === '__unassigned__') return null
+  const m = kanbanAssignees.find(a => a.name === key)
+  if (!m) return null
+  if (m.type === 'owner') return '/api/marveen/owner-avatar' + avatarBust()
+  if (m.type === 'bot') return '/api/marveen/avatar' + avatarBust()
+  if (m.type === 'agent') return `/api/agents/${encodeURIComponent(m.name)}/avatar` + avatarBust()
+  return null
+}
+
+function kanbanDecorateAvatar(spanEl, key) {
+  if (!spanEl) return
+  const url = kanbanAvatarUrlFor(key)
+  if (!url) return
+  const img = document.createElement('img')
+  img.className = 'kanban-avatar-img'
+  img.alt = ''
+  img.addEventListener('error', () => img.remove())
+  img.src = url
+  spanEl.appendChild(img)
+}
+
+// The owner's cards live in the strip above the board, OUTSIDE every filter
+// (see renderKanbanOwnerStrip). Before 2026-09-22 they were also drawn as a
+// swimlane and as a team row, so he saw the same card twice and asked why
+// (Telegram msg 3547). The strip wins: it is always visible and no filter can
+// empty it.
+//
+// Only his OPEN cards are dropped, not the lane itself. The strip deliberately
+// omits done cards, so if one of his is closed and still on the board, the lane
+// reappears carrying exactly what the strip does not show. Nothing can fall
+// between the two.
+function kanbanHideFromLanes(card) {
+  if (card.status === 'done') return false
+  const owner = ownerAssigneeName()
+  if (!owner) return false
+  return String(card.assignee || '').trim().toLowerCase() === owner.toLowerCase()
 }
 
 function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
@@ -1205,7 +1617,10 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
 
   const presentKeys = new Set()
   for (const cards of Object.values(grouped)) {
-    for (const c of cards) presentKeys.add(kanbanSwimlaneKeyFor(c))
+    for (const c of cards) {
+      if (kanbanHideFromLanes(c)) continue
+      presentKeys.add(kanbanSwimlaneKeyFor(c))
+    }
   }
 
   const canonicalOrder = kanbanGroupBy === 'priority'
@@ -1224,7 +1639,7 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
     const laneCardsByStatus = {}
     let totalCount = 0
     for (const def of KANBAN_STATUS_DEFS) {
-      const cards = grouped[def.status].filter(c => kanbanSwimlaneKeyFor(c) === key)
+      const cards = grouped[def.status].filter(c => !kanbanHideFromLanes(c) && kanbanSwimlaneKeyFor(c) === key)
       laneCardsByStatus[def.status] = cards
       if (!kanbanHiddenColumns.has(def.status)) totalCount += cards.length
     }
@@ -1239,9 +1654,11 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
     header.innerHTML = `
       <span class="kanban-swimlane-avatar ${meta.avatarClass}">${escapeHtml(meta.avatarChar)}</span>
       <span class="kanban-swimlane-name">${escapeHtml(meta.label)}</span>
+      ${meta.nickname ? `<span class="kanban-nickname">${escapeHtml(meta.nickname)}</span>` : ''}
       <span class="kanban-swimlane-count">${totalCount}</span>
       <button class="kanban-swimlane-toggle" type="button" aria-expanded="${!collapsed}" title="${collapsed ? t('kanban.swimlane.expand') : t('kanban.swimlane.collapse')}">${collapsed ? '▶' : '▼'}</button>
     `
+    kanbanDecorateAvatar(header.querySelector('.kanban-swimlane-avatar'), key)
     header.querySelector('.kanban-swimlane-toggle').addEventListener('click', (e) => {
       e.stopPropagation()
       if (kanbanCollapsedLanes.has(key)) kanbanCollapsedLanes.delete(key)
@@ -1265,11 +1682,11 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
       colBody.className = 'kanban-col-body kanban-swimlane-col-body'
       colBody.dataset.status = def.status
 
-      const cards = laneCardsByStatus[def.status].sort((a, b) => a.sort_order - b.sort_order)
+      const cards = laneCardsByStatus[def.status].sort(kanbanCardSorter())
       for (const card of cards) {
         const embeddedChildren = kanbanCards
           .filter(c => c.parent_id === card.id && embeddedSubtaskIds.has(c.id))
-          .sort((a, b) => a.sort_order - b.sort_order)
+          .sort(kanbanCardSorter())
         colBody.appendChild(createCardEl(card, embeddedChildren))
       }
       wireKanbanColumnDnD(colBody)
@@ -1354,7 +1771,11 @@ function createCardEl(card, embeddedChildren = []) {
   el.className = 'kanban-card'
   el.dataset.id = card.id
   el.dataset.priority = card.priority
-  el.draggable = true
+  // Drag & drop rewrites sort_order, which is what 'manual' order shows. Under
+  // a seq sort the drop would be accepted and then have no visible effect --
+  // a move that looks like it failed. So the card is simply not draggable
+  // there; the touch path reads the same flag.
+  el.draggable = kanbanSortBy === 'manual'
 
   // Assignee chip. Match the card's assignee against the known list
   // case-insensitively (a card stored as "gorcsevivan" must still match the
@@ -1368,8 +1789,13 @@ function createCardEl(card, embeddedChildren = []) {
   // Display the persona displayName (falling back to the id) per #216, while
   // keeping the robust match above and the raw-name fallback chip below.
   const assigneeLabel = assignee ? (assignee.displayName || assignee.name) : ''
+  // The nickname rides along with the name here too (owner's ask, Telegram msg
+  // 3563). It matters most on the FLAT board: with no swimlanes there are no
+  // lane headers, so this chip is the only place a person is named at all.
+  const assigneeNick = (assignee && assignee.nickname)
+    ? `<span class="kanban-nickname">${escapeHtml(assignee.nickname)}</span>` : ''
   const assigneeHtml = assignee
-    ? `<span class="kanban-card-assignee"><span class="assignee-dot ${assignee.type}">${escapeHtml(assigneeLabel[0])}</span>${escapeHtml(assigneeLabel)}</span>`
+    ? `<span class="kanban-card-assignee"><span class="assignee-dot ${assignee.type}">${escapeHtml(assigneeLabel[0])}</span>${escapeHtml(assigneeLabel)}${assigneeNick}</span>`
     : rawAssignee
       ? `<span class="kanban-card-assignee"><span class="assignee-dot unknown">${escapeHtml(rawAssignee[0])}</span>${escapeHtml(rawAssignee)}</span>`
       : ''
@@ -1745,6 +2171,7 @@ async function kanbanTouchEnd(e) {
 function wireKanbanCardTouchDnD(el, card) {
   el.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return
+    if (!el.draggable) return
     const p = e.touches[0]
     endTouchDrag()
     touchDrag = {
@@ -2098,7 +2525,7 @@ async function showCardDetail(card) {
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.assignee')}</span>
-      <span class="meta-value meta-value-editable" id="metaAssigneeValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${escapeHtml(assigneeDisplay)}</span>
+      <span class="meta-value meta-value-editable" id="metaAssigneeValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${escapeHtml(assigneeDisplay)}</span>${(assignee && assignee.nickname) ? `<span class="kanban-nickname">${escapeHtml(assignee.nickname)}</span>` : ''}
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.priority')}</span>
@@ -2111,6 +2538,10 @@ async function showCardDetail(card) {
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.deadline')}</span>
       <span class="meta-value">${card.due_date ? new Date(card.due_date * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU') : t('kanban.meta.none')}</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">${t('kanban.meta.active')}</span>
+      <span class="meta-value" title="${escapeHtml(formatActiveTime(card.active_seconds) ? t('kanban.active.tooltip') : t('kanban.active.tooltip_none'))}">${escapeHtml(formatActiveTime(card.active_seconds) ?? t('kanban.active.none'))}</span>
     </div>
   `
 
@@ -3511,7 +3942,7 @@ function renderAgents() {
       <div class="agent-card-top">
         <div class="agent-avatar gradient-1"><img src="/api/marveen/avatar${avatarBust()}" alt="${escapeHtml(displayName)}"></div>
         <div class="agent-card-info">
-          <div class="agent-name">${escapeHtml(displayName)} <span class="marveen-badge">${t('agents.main_badge')}</span></div>
+          <div class="agent-name">${escapeHtml(displayName)}${m.nickname ? ` <span class="agent-nickname">${escapeHtml(m.nickname)}</span>` : ''} <span class="marveen-badge">${t('agents.main_badge')}</span></div>
           <div class="agent-desc">${escapeHtml(m.description || '')}</div>
         </div>
       </div>
@@ -3574,7 +4005,7 @@ function renderAgents() {
       <div class="agent-card-top">
         <div class="agent-avatar ${gradientClass}">${avatarHtml}</div>
         <div class="agent-card-info">
-          <div class="agent-name">${escapeHtml(label)}</div>
+          <div class="agent-name">${escapeHtml(label)}${agent.nickname ? ` <span class="agent-nickname">${escapeHtml(agent.nickname)}</span>` : ''}</div>
           <div class="agent-desc">${escapeHtml(agent.description || '')}</div>
         </div>
       </div>
@@ -16968,7 +17399,22 @@ async function openResearchDoc(agent, name) {
   const closeBtn = document.getElementById('mobileLoginClose')
 
   async function render() {
-    const token = localStorage.getItem('marveen-dashboard-token')
+    let token = localStorage.getItem('marveen-dashboard-token')
+    if (!token) {
+      // A browser-form login leaves NOTHING in localStorage -- only the
+      // mv_session cookie -- so this branch used to tell an already-signed-in
+      // owner to sign in. The cookie authenticates us to the server, so ask it
+      // for the bootstrap token instead. Deliberately NOT written back to
+      // localStorage: the desktop is authenticated by cookie and should stay
+      // that way; the token is needed for the QR payload and nothing else.
+      try {
+        const r = await fetch('/api/auth/bootstrap-token')
+        if (r.ok) {
+          const d = await r.json()
+          if (d && d.token) token = d.token
+        }
+      } catch { /* leave token empty and fall through to the message below */ }
+    }
     if (!token) {
       qrBox.innerHTML = `<p class="muted">${t('mobile_login.no_token')}</p>`
       return
@@ -17627,6 +18073,8 @@ async function openResearchDoc(agent, name) {
 
     const boardBtn  = document.getElementById('kanbanViewBoard')
     const ganttBtn  = document.getElementById('kanbanViewGantt')
+    const teamBtn   = document.getElementById('kanbanViewTeam')
+    const teamEl    = document.getElementById('kanbanTeamView')
     const boardFilters = document.getElementById('kanbanBoardFilters')
     const ganttFilters = document.getElementById('kanbanGanttFilters')
     const boardEls  = [document.getElementById('kanbanBoard'), document.getElementById('kanbanSwimlaneBoard')]
@@ -17635,24 +18083,44 @@ async function openResearchDoc(agent, name) {
     function activateBoard() {
       boardBtn.classList.add('active')
       ganttBtn.classList.remove('active')
+      teamBtn?.classList.remove('active')
       boardFilters.style.display = 'flex'
       ganttFilters.style.display = 'none'
       boardEls.forEach(el => { if (el) el.style.removeProperty('display') })
       ganttEl.style.display = 'none'
+      if (teamEl) teamEl.style.display = 'none'
     }
 
     function activateGantt() {
       ganttBtn.classList.add('active')
       boardBtn.classList.remove('active')
+      teamBtn?.classList.remove('active')
       ganttFilters.style.display = 'flex'
       boardFilters.style.display = 'none'
       boardEls.forEach(el => { if (el) el.style.display = 'none' })
       ganttEl.style.display = 'block'
+      if (teamEl) teamEl.style.display = 'none'
       renderGantt()
+    }
+
+    // The team view reuses the board's data, so it needs no filter row of its
+    // own: it always shows the whole team. A filtered "who is working on what"
+    // would answer a question nobody asks.
+    function activateTeam() {
+      teamBtn?.classList.add('active')
+      boardBtn.classList.remove('active')
+      ganttBtn.classList.remove('active')
+      boardFilters.style.display = 'none'
+      ganttFilters.style.display = 'none'
+      boardEls.forEach(el => { if (el) el.style.display = 'none' })
+      ganttEl.style.display = 'none'
+      if (teamEl) teamEl.style.display = 'block'
+      if (typeof renderKanbanTeamView === 'function') renderKanbanTeamView()
     }
 
     boardBtn.addEventListener('click', activateBoard)
     ganttBtn.addEventListener('click', activateGantt)
+    if (teamBtn) teamBtn.addEventListener('click', activateTeam)
 
     // Archived button: navigates AWAY to the archived page (its sidebar entry
     // was removed -- this button is now the entry point). It never takes the

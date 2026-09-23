@@ -55,6 +55,7 @@ Exit 2 only when something actually broke.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -139,7 +140,25 @@ def message(job, hours):
 
 
 def send(text):
-    """True only when Telegram itself says ok."""
+    """True only when Telegram itself says ok.
+
+    EZ A HIVAS NEM HAGY NYOMOT A `conversation_log`-BAN, es ezt tudni kell, mielott
+    valaki a kezbesitest onnan probalja visszamerni. Kozvetlenul a Telegram Bot
+    API-nak megy, tehat megkeruli a channels-plugin retegét, ami a conversation_log-ot
+    irja. Merve 2026-09-20: az itt kikuldott kerdes zaro mondata
+    ("Ha azon a napon nem dolgozott...") a tabla 1954 soraban, 2026-08-21 ota
+    NULLASZOR fordul elo -- nem csak egy napon, hanem EGYSZER SEM.
+
+    Amiert ez elsult: Forgacs 2026-09-19-re azt merte, hogy a hianyzo-munkanap jelzes
+    "nem ert celba", mert a conversation_log-ban nincs rola sor. A meres pontos volt,
+    csak nem arra a kerdesre valaszolt: ezen a csatornan SOHA nincs sor. Amit a
+    kezbesitesrol tudni lehet, az a `store/munkanaplo-zaras-seen.json`: a `save_state`
+    CSAK sikeres `send()` utan fut, es a `send()` csak akkor ad True-t, ha a Telegram
+    `ok: true`-t valaszolt. Tehat egy beirt `hiany_date` azt jelenti, hogy a Telegram
+    ATVETTE az uzenetet a 8547011582-es chatre.
+
+    Amit EZ SEM bizonyit: hogy a gazda elolvasta. Arra a Bot API nem ad meroeszkozt.
+    """
     try:
         env = open(TG_ENV, encoding="utf-8", errors="replace").read()
     except OSError as e:
@@ -246,13 +265,31 @@ def main(argv=None):
 
     # (2) missing day -- once a day at most, because it is a standing question
     # and not an event: the same day would otherwise come up every evening.
-    if not a.no_hiany and st.get("hiany_date") != now.strftime("%Y-%m-%d"):
-        hiany = missing_days()
+    #
+    # A CSILLAPITO A KERDES TARTALMAT IS NEZI, NEM CSAK A NAPOT (2026-09-20).
+    # Forgacs vette eszre: a `hiany_date` a FUTAS napjat tarolja, nem azt, MELYIK
+    # napra szolt a kerdes. Igy ha ugyanazon a napon egy MASIK nap is hianyzani
+    # kezd (pl. a gazda dolgozott ma, es este meg nincs rola sor), a csillapito
+    # ugyanannak a kerdesnek latja, es a masodik, UJ kerdes nem megy ki -- pedig
+    # az mar nem ismetles. A datum onmagaban nem tudja megkulonboztetni oket.
+    #
+    # A megoldas nem datum-parszolas a szovegbol: az a `--ember` kimenet alakjara
+    # kotne minket, es a fenti kommentek epp ez ellen szolnak. Helyette a kikuldott
+    # kerdes sha256-ja all a csillapitoban. Azonos kerdes ugyanazon a napon -> csend;
+    # MAS kerdes ugyanazon a napon -> megy, mert az mas kerdes.
+    if not a.no_hiany:
+        hiany = missing_days() if (st.get("hiany_date") != now.strftime("%Y-%m-%d")
+                                   or st.get("hiany_sha")) else None
         if hiany:
-            parts.append(hiany + "\n\nHa azon a napon nem dolgozott, csak ird meg, "
-                         "es lezarom, tobbe nem kerdezem. Ha dolgozott, mondd meg a "
-                         "kezdest es a vegzest, es potolom a naploban.")
-            new_state["hiany_date"] = now.strftime("%Y-%m-%d")
+            sha = hashlib.sha256(hiany.encode("utf-8")).hexdigest()
+            mar_kerdeztuk = (st.get("hiany_date") == now.strftime("%Y-%m-%d")
+                             and st.get("hiany_sha") == sha)
+            if not mar_kerdeztuk:
+                parts.append(hiany + "\n\nHa azon a napon nem dolgozott, csak ird meg, "
+                             "es lezarom, tobbe nem kerdezem. Ha dolgozott, mondd meg a "
+                             "kezdest es a vegzest, es potolom a naploban.")
+                new_state["hiany_date"] = now.strftime("%Y-%m-%d")
+                new_state["hiany_sha"] = sha
 
     if not parts:
         return rc

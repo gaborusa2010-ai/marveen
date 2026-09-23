@@ -34,8 +34,14 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 **(2) Home-relative — under `$HOME` (`home/` group in the archive)**
 - `~/.claude/skills/**` — the self-built skill library
 - `~/.claude/scheduled-tasks/**` — file-based scheduled tasks (SKILL.md + task-config.json)
-- `~/.claude/channels/*/.env` — MAIN orchestrator channel token
-- `~/.claude/channels/*/access.json`, `invites.json`, `approved/**` — pairing allowlist + approvals
+- `<repo>/.claude/channels/*/.env` — MAIN orchestrator channel token. **Install-scoped since
+  #915** (a shared `~/.claude/channels/` meant any other Claude Code session on the host
+  loaded the same bot token and silently took the bot over). `~/.claude/channels/*/` is a
+  legacy fallback that a migrated install leaves empty.
+- `<repo>/.claude/channels/*/access.json`, `invites.json`, `approved/**` — pairing allowlist
+  + approvals. Same scoping; copy the home path too only if it is non-empty.
+- `agents/<name>/.claude/channels/*/` — the sub-agents' own channel state, always
+  install-scoped, never under `$HOME`.
 - `~/Library/LaunchAgents/com.<MAIN_AGENT_ID>.*.plist` — launchd jobs (prefix is your `MAIN_AGENT_ID`, `marveen` by default)
 
 **(3) Docker volumes — NOT in the tarball, migrate separately**
@@ -96,7 +102,7 @@ the Docker volumes (3) are **separate** and must be moved on their own.
    rsync -a /tmp/restore/repo/  <repo>/         # repo group -> project root
    rsync -a /tmp/restore/home/  "$HOME/"        # home group -> $HOME
    ```
-   Verify perms: `ls -l <repo>/store/.dashboard-token ~/.claude/channels/*/.env`
+   Verify perms: `ls -l <repo>/store/.dashboard-token <repo>/.claude/channels/*/.env`
    should show `-rw-------`.
 4. **Build the app** (do NOT copy `dist/` or `node_modules/` from the old box):
    ```bash

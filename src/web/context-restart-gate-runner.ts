@@ -10,7 +10,7 @@ import { agentSessionName, capturePane } from './agent-process.js'
 import { sendSystemDirective } from './system-directive.js'
 import { detectPaneState } from '../pane-state.js'
 import { detectsUsageLimit } from '../model-fallback.js'
-import { readContextTokensFromProjectDir, projectsDirFor } from './active-model.js'
+import { readContextTokensFromProjectDir, projectsDirFor, mainAgentConfigDirForRead } from './active-model.js'
 import { MAIN_CHANNELS_SESSION } from './main-agent.js'
 import { withSessionSendLock } from './session-send-lock.js'
 import { getHardGuardPhase } from './context-guard-runner.js'
@@ -178,7 +178,9 @@ function configDirFor(name: string): string | undefined {
   // reading the host default returns a stale transcript instead of nothing --
   // which is worse than the null this comment warns about, because the gate
   // then believes it can see.
-  return name === MAIN_AGENT_ID ? undefined : (resolveAgentConfigDirForRead(name) ?? undefined)
+  return name === MAIN_AGENT_ID
+    ? mainAgentConfigDirForRead(PROJECT_ROOT)
+    : (resolveAgentConfigDirForRead(name) ?? undefined)
 }
 
 function agentIdForLedger(name: string): string {

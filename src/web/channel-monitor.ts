@@ -827,7 +827,10 @@ export function respawnMainSessionFresh(): void {
   // but leaves grandchild pollers alive, and two pollers on one bot token race
   // for getUpdates (409). Reap BEFORE respawning, never after.
   try {
-    reapChannelOrphans(provider.type, PROJECT_ROOT)
+    // tmuxPath so the reap can resolve live panes and spare THIS session's
+    // claude: since #915 the main session carries TELEGRAM_STATE_DIR, so the
+    // env scan matches it (2026-09-19 suicide loop).
+    reapChannelOrphans(provider.type, PROJECT_ROOT, { tmuxPath: tmuxBin() })
   } catch (err) {
     logger.warn({ err }, 'respawnMainSessionFresh: pre-respawn reap failed (continuing)')
   }
@@ -883,15 +886,15 @@ export async function resumeMarveenSession(): Promise<boolean> {
     // --continue session would race a still-alive poller for the same bot
     // token (409 Conflict on getUpdates).
     try {
-      reapChannelOrphans(provider.type, PROJECT_ROOT)
+      reapChannelOrphans(provider.type, PROJECT_ROOT, { tmuxPath: tmuxBin() })
     } catch (err) {
       logger.warn({ err }, 'resumeMarveenSession: pre-respawn reap failed (continuing)')
     }
 
-    // Also reap DETACHED main-session claudes. reapChannelOrphans (env-scan)
-    // cannot see the main session: channels.sh launches it without a
-    // *_STATE_DIR export, so neither the claude nor its bun poller match the
-    // env needle, and bot.pid is never written. A --continue respawn that did
+    // Also reap DETACHED main-session claudes. Since #915 the env scan DOES
+    // match the main session (it now carries *_STATE_DIR), but it only sees
+    // processes whose env still points at THIS chanDir; a detached claude from
+    // an older config does not, and bot.pid is never written for it. A --continue respawn that did
     // not tear down the prior claude leaves it detached (reparented to the tmux
     // server) with a live poller hammering the shared token. Pane attribution
     // spares the live session (this pane) and kills only the leftovers.

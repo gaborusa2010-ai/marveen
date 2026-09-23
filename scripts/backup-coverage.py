@@ -46,6 +46,14 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(REPO, "store", ".last-backup-manifest.txt")
+# THE SECOND ARCHIVE. Since 2026-09-22 the pictures and PDFs are not in the
+# nightly archive at all -- they have their own (the owner's decision, Telegram
+# msg 3536; scripts/backup-images.sh). A coverage report that only reads the
+# nightly manifest would call 1426 files uncovered while they sit safely in an
+# uploaded image archive, and a report that cries wolf about 1426 files is one
+# nobody reads. So this file is read too, and it is the file the exclusion in
+# backup.sh keys off, not a second hand-kept list of the same paths.
+IMAGE_STATE = os.path.join(REPO, "store", "backup-images-state.json")
 HOME = os.path.expanduser("~")
 
 # Directories whose contents are rebuildable, enormous, or deliberately
@@ -169,6 +177,32 @@ def read_manifest(path=MANIFEST):
     return repo, home, mtime
 
 
+def read_image_state(path=IMAGE_STATE):
+    """The repo-relative paths held by the last UPLOADED image archive.
+
+    Only paths whose recorded mtime+size still match the file on disk count.
+    That is the same test scripts/backup-images.sh `covered` applies and the
+    same one backup.sh trusts when it drops a file from the nightly archive --
+    so a picture re-rendered since the last image upload shows up here as
+    uncovered, which is exactly what it is until one of the two archives
+    catches up.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            covered = json.load(fh).get("covered") or {}
+    except (OSError, ValueError):
+        return set()
+    out = set()
+    for rel, want in covered.items():
+        try:
+            st = os.lstat(os.path.join(REPO, rel))
+        except OSError:
+            continue
+        if [int(st.st_mtime), int(st.st_size)] == want:
+            out.add(rel)
+    return out
+
+
 def covered_by(paths, rel):
     """Is `rel` inside something the backup took?
 
@@ -243,8 +277,17 @@ def walk_files(base, top, skip_names, newer_than=None):
     return out
 
 
-def scan(base, tops, taken, skip_names, tracked=None, group="repo", newer_than=None):
-    """Per top-level directory: how many files, how many covered, by what."""
+def scan(base, tops, taken, skip_names, tracked=None, group="repo", newer_than=None,
+         in_images=None):
+    """Per top-level directory: how many files, how many covered, by what.
+
+    `in_images` is the set of repo-relative paths held by the image archive
+    (empty for the home/ group, which has none). It is counted as backup cover,
+    because it is: a second archive, uploaded to its own Drive folder, verified
+    the same way. It gets its own column so the report never hides WHICH copy a
+    file depends on.
+    """
+    images = in_images or set()
     rows = []
     for top in sorted(tops):
         files = walk_files(base, top, skip_names, newer_than)
@@ -252,12 +295,15 @@ def scan(base, tops, taken, skip_names, tracked=None, group="repo", newer_than=N
             continue
         in_backup = [f for f in files if covered_by(taken, f)]
         rest = [f for f in files if f not in set(in_backup)]
+        in_image = [f for f in rest if f in images]
+        rest = [f for f in rest if f not in images]
         in_git = [f for f in rest if tracked and f in tracked]
         uncovered = [f for f in rest if not (tracked and f in tracked)]
         rows.append({
             "dir": top,
             "files": len(files),
             "in_backup": len(in_backup),
+            "in_image_archive": len(in_image),
             "git_only": len(in_git),
             "uncovered": len(uncovered),
             "blind": blind_subdirs(base, group, files, uncovered),
@@ -338,11 +384,13 @@ def main(argv=None):
 
     age_days = round((time.time() - mtime) / 86400, 1)
     tracked = git_tracked_clean(REPO)
+    in_images = read_image_state()
 
     repo_tops = [d for d in os.listdir(REPO)
                  if os.path.isdir(os.path.join(REPO, d))
                  and d not in SKIP_REPO and not is_backup_copy(d)]
-    repo_rows = scan(REPO, repo_tops, repo_taken, SKIP_REPO, tracked, group="repo", newer_than=mtime)
+    repo_rows = scan(REPO, repo_tops, repo_taken, SKIP_REPO, tracked, group="repo",
+                     newer_than=mtime, in_images=in_images)
 
     claude = os.path.join(HOME, ".claude")
     home_rows = []
@@ -373,10 +421,10 @@ def main(argv=None):
     # prints a wall of green on every alert teaches its reader to skim, and then
     # the one line that mattered is skimmed too.
     if not a.quiet:
-        print(f"{'konyvtar':34} {'fajl':>6} {'mentesben':>10} {'csak git':>9} {'SEHOL':>7}")
+        print(f"{'konyvtar':34} {'fajl':>6} {'mentesben':>10} {'keparch':>8} {'csak git':>9} {'SEHOL':>7}")
         for r in repo_rows + home_rows:
             mark = "  <<<" if r["uncovered"] else ""
-            print(f"{r['dir'][:34]:34} {r['files']:6} {r['in_backup']:10} {r['git_only']:9} {r['uncovered']:7}{mark}")
+            print(f"{r['dir'][:34]:34} {r['files']:6} {r['in_backup']:10} {r.get('in_image_archive', 0):8} {r['git_only']:9} {r['uncovered']:7}{mark}")
     if bad:
         # One directory, one line. The home side scans `.claude/agents`,
         # `.claude/hooks` and friends as separate tops, so their common ancestor

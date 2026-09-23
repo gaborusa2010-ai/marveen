@@ -8,6 +8,7 @@ import { isModelProfileId, MODEL_PROFILE_IDS } from '../../model-profiles.js'
 import { MAIN_AGENT_ID, currentBotName, PROJECT_ROOT } from '../../config.js'
 import { createAgentMessage, listPendingChannelRequests, updateChannelRequestStatus, getDb, claimPendingForAgent, markMessageFailed, countNewerMessagesFromSameSender,
   getAgentToolActivity, getAgentMessageActivity, getAgentCurrentCards } from '../../db.js'
+import { nicknameFor } from '../team-nicknames.js'
 import { deriveAgentStatus, AGENT_STATUS_THRESHOLDS } from '../agent-status.js'
 import type { AgentStatusSignals, AgentStatusRow } from '../agent-status.js'
 import { classifyAgentMessage, wrapAgentMessageForDelivery } from '../agent-message-wrap.js'
@@ -112,7 +113,7 @@ import {
 import { addDesiredAgent, removeDesiredAgent } from '../agent-desired-state.js'
 import { RemoteStatusCache } from '../remote-status-cache.js'
 import type { AgentRunState } from '../ssh-tmux.js'
-import { readActiveModelFromProjectDir, readContextTokensFromProjectDir } from '../active-model.js'
+import { readActiveModelFromProjectDir, readContextTokensFromProjectDir, mainAgentConfigDirForRead } from '../active-model.js'
 import { detectPaneState, detectPermissionMode } from '../../pane-state.js'
 import { checkAgentPutFields, checkConfigPutFields, AGENT_PUT_WRITABLE_FIELDS } from '../agent-put-fields.js'
 import { detectReauthNeeded } from '../reauth-detect.js'
@@ -424,6 +425,8 @@ interface AgentSummary {
   remoteWorkdir: string | null
   session?: string
   hasAvatar: boolean
+  /** Character nickname from store/team-nicknames.json; undefined when unset. */
+  nickname?: string
   autoRestart: AutoRestartConfig
   /** Per-agent context-guard config, carried here for the same reason as
    *  autoRestart: the settings pane renders both from one detail fetch. */
@@ -444,6 +447,8 @@ interface AgentDetail extends AgentSummary {
   mcpJson: string
   skills: { name: string; hasSkillMd: boolean }[]
   hasAvatar: boolean
+  /** Character nickname from store/team-nicknames.json; undefined when unset. */
+  nickname?: string
   hasApiKey: boolean
 }
 
@@ -477,11 +482,10 @@ export function resolveTranscriptLocation(name: string): { workingDir: string; c
   if (!isMainChannelsAgent(name)) {
     return { workingDir: agentDir(name), configDir: resolveAgentConfigDir(name).configDir ?? undefined }
   }
-  const isolated = join(PROJECT_ROOT, '.channels-config')
-  return {
-    workingDir: PROJECT_ROOT,
-    configDir: existsSync(join(isolated, 'projects')) ? isolated : undefined,
-  }
+  // Same resolver the three runners use (MAINCFG920): one owner for "where does
+  // the main agent's transcript live", because this fix existing HERE and not
+  // there is exactly what let the runners read a nine-hour-stale directory.
+  return { workingDir: PROJECT_ROOT, configDir: mainAgentConfigDirForRead(PROJECT_ROOT) }
 }
 
 function getAgentSummary(name: string): AgentSummary {
@@ -558,6 +562,11 @@ function getAgentSummary(name: string): AgentSummary {
     remoteWorkdir: remote.workdir,
     session,
     hasAvatar: findAvatarForAgent(name) !== null,
+    // Character nickname, shown NEXT TO the name on the team page. The owner
+    // asked for it there twice (Telegram msg 3563, then 3568: "a becenevek rossz
+    // helyre kerultek... nem a nevek mellett vannak") -- until now it only lived
+    // inside the free-text description, buried mid-sentence.
+    nickname: nicknameFor(name),
     autoRestart: readAutoRestartConfig(name),
     contextGuard: readContextGuardConfig(name),
     // GATECTX910: same location the activeModel read above uses. The previous
@@ -599,6 +608,7 @@ function getAgentDetail(name: string): AgentDetail {
     mcpJson,
     skills,
     hasAvatar: findAvatarForAgent(name) !== null,
+    nickname: nicknameFor(name),
     hasApiKey: getSecret(`agent-${name}-api-key`) !== null,
   }
 }
@@ -649,7 +659,8 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     const orCatalog = loadOpenRouterCatalog()
     json(res, {
       claude: [
-        { id: 'claude-opus-5', label: 'Opus 5 (legújabb Opus)' },
+        { id: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M kontextus, legújabb)' },
+        { id: 'claude-opus-5', label: 'Opus 5' },
         { id: 'claude-sonnet-5', label: 'Sonnet 5' },
         { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
         { id: 'claude-fable-5', label: 'Fable 5' },
@@ -1115,8 +1126,10 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
   if (avatarUploadMatch && method === 'GET') {
     const name = decodeURIComponent(avatarUploadMatch[1])
     const avatarPath = findAvatarForAgent(name)
-    // 1h client cache: see /api/marveen/avatar for the staleness trade-off.
-    if (avatarPath) { serveFile(req, res, avatarPath, { cacheSeconds: 3600 }); return true }
+    // no-cache, not a 1h max-age: agent portraits are written to disk by
+    // agents, not through the upload route, so no browser gets told. See
+    // /api/marveen/avatar for the measured case.
+    if (avatarPath) { serveFile(req, res, avatarPath); return true }
     res.writeHead(404); res.end()
     return true
   }

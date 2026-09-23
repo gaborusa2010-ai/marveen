@@ -102,12 +102,32 @@ interface TelegramWebhookInfoBody {
  * `status === 0` is the caller's marker for "the HTTP call never completed",
  * which must NOT be read as a bad token: our own network being down would
  * otherwise page the owner about every agent at once.
+ *
+ * A 5xx is the same mistake one step further out, and it BIT US on 2026-09-23
+ * 02:12: Telegram answered Margo's getWebhookInfo with 502 Bad Gateway, every
+ * non-200 fell into the branch below, and the owner got "a Telegram elutasitotta
+ * a bot tokent (Bad Gateway)". The token was fine -- getMe returned 200 on the
+ * same token eight minutes later. A 5xx is Telegram's server failing, not a
+ * verdict on our credentials, so it reads as missing evidence exactly like
+ * status 0 does. Only a 4xx (401 unauthorized, 404 bot deleted) is Telegram
+ * actually refusing the token, and that still alerts.
  */
 export function parseIntakeProbe(status: number, body: unknown): IntakeProbe {
   if (status === 0) {
     return { reachable: false, tokenOk: true, pendingUpdates: null, webhookUrl: null, lastErrorMessage: null }
   }
   const parsed = (body ?? {}) as TelegramWebhookInfoBody
+  if (status >= 500) {
+    // Keep the upstream text: it is what tells a later reader this was a 502
+    // and not a silent drop.
+    return {
+      reachable: false,
+      tokenOk: true,
+      pendingUpdates: null,
+      webhookUrl: null,
+      lastErrorMessage: parsed.description ?? null,
+    }
+  }
   if (status !== 200 || parsed.ok !== true || !parsed.result) {
     return {
       reachable: true,

@@ -92,10 +92,22 @@ else
   BRIEF="$(printf '%s' "$LOG" | grep -c 'eligazitas kikuldve')"
   FAILED="$(printf '%s' "$LOG" | grep -c 'FIGYELEM: az inditas nem igazolt')"
 
+  # 2026-09-22, ket este egymas utan (09-21 es 09-22, azonos szoveggel): a unit
+  # "Agent is already running"-ot kapott, mert az agens mar futott, es ez az ag
+  # BIZONYTALAN-t irt ra -- holott ugyanabban a logban ott allt a KET fuggetlen
+  # igazolas (runState=running tmux=igen). A jelentes tehat pontos volt es
+  # megis felrevezeto: a fo-agensnek mindket este kezzel kellett visszamernie,
+  # hogy nincs baj. Egy naponta ismetlodo, helyes riasztas ket agens forduloját
+  # viszi el. A "mar futott" sajat verdikt, nem bizonytalansag.
+  ALREADY=no
   if [ "$FAILED" -gt 0 ]; then
     VERDICT="INDULAS NEM IGAZOLT"
   elif printf '%s' "$LOG" | grep -q 'anorak start ok'; then
     VERDICT="ELINDULT"
+  elif printf '%s' "$LOG" | grep -qE 'mar ebben az allapotban|Agent is already running' \
+       && [ "$STATE" = "runState=running tmux=igen" ]; then
+    VERDICT="MAR FUTOTT"
+    ALREADY=yes
   else
     VERDICT="BIZONYTALAN"
   fi
@@ -113,19 +125,29 @@ else
     BRIEF_TXT="eligazitas-fajl: NEM volt az inditaskor (ettol meg kaphat eligazitast uzenetben, es tipikusan epp ezutan kap)"
   fi
   DETAIL="varakozas: ${WAIT:-nincs adat} | igazolas: ${STATE:-nincs adat} | $BRIEF_TXT"
+  if [ "$ALREADY" = yes ]; then
+    DETAIL="$DETAIL
+A unit egy MAR ELO agenst talalt, es helyesen nem inditott masodikat. Ez a unit
+szempontjabol nem hiba. Amit viszont NEM igazol: hogy friss kontextussal kezdi
+az ejszakat -- azt a lenti contextTokens mondja meg."
+  fi
 fi
 
 # A start is not proven by the unit's own log alone. Ask the API too, the way
 # the start script itself does: two independent sources, never one.
 TOKEN="$(cat "$BASE/store/.dashboard-token" 2>/dev/null)"
-NOW_STATE="$(curl -s -m 20 -H "Authorization: Bearer $TOKEN" "http://localhost:3420/api/agents" 2>/dev/null \
-  | AGENT=anorak python3 "$BASE/scripts/agent-runstate.py" 2>/dev/null)"
+AGENTS_JSON="$(curl -s -m 20 -H "Authorization: Bearer $TOKEN" "http://localhost:3420/api/agents" 2>/dev/null)"
+NOW_STATE="$(printf '%s' "$AGENTS_JSON" | AGENT=anorak python3 "$BASE/scripts/agent-runstate.py" 2>/dev/null)"
+# A kontextus merete az egyetlen szam, ami eldonti, hogy erdemes-e friss indulast
+# kerni -- es eddig kezzel kellett lekerni. Ures marad, ha az API nem valaszol.
+CTX_INFO="$(printf '%s' "$AGENTS_JSON" | AGENT=anorak python3 "$BASE/scripts/agent-context-info.py" 2>/dev/null)"
 TMUX_NOW=nem
 tmux ls 2>/dev/null | grep -q 'agent-anorak' && TMUX_NOW=igen
 
 MSG="ANORAK EJSZAKAI INDULAS -- $VERDICT
 $DETAIL
 Most (a jelentes pillanataban): runState=${NOW_STATE:-ismeretlen} tmux=$TMUX_NOW
+Kontextus: ${CTX_INFO:-nincs adat (az /api/agents nem valaszolt)}
 
 A journal nyers sorai:
 $(printf '%s' "$LOG" | tail -12)"

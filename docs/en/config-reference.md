@@ -166,9 +166,9 @@ Every dashboard-editable setting is a registry entry with the following fields:
 
 | Key | Type | Default | Platform | Restart |
 |-----|------|---------|----------|---------|
-| `MAIN_AGENT_ISOLATED_CONFIG` | boolean | `0` (off) | macOS only | yes |
+| `MAIN_AGENT_ISOLATED_CONFIG` | boolean | `0` (off) | any | yes |
 
-#### `MAIN_AGENT_ISOLATED_CONFIG` -- main-agent config isolation (macOS)
+#### `MAIN_AGENT_ISOLATED_CONFIG` -- main-agent config isolation (any platform)
 
 **What it is for.** An opt-in fix for the periodic `401 Invalid authentication
 credentials` / "Please run /login" the main channels agent hits on macOS. Symptom:
@@ -194,9 +194,17 @@ call this helper, so the toggle governs them uniformly:
 2. the dashboard channel-monitor `--continue` resume respawn,
 3. the dashboard channel-monitor fresh hard-restart respawn.
 
-**Gating (when it is a no-op).** No effect (keeps the shared `~/.claude`) when: not
-macOS; no valid fleet setup-token; or no built `dist/`. On Linux the rotating
-`credentials.json` is handled by the separate credentials-guard instead.
+**Gating (when it is a no-op).** No effect (keeps the shared `~/.claude`) when: there is
+no valid fleet setup-token; or there is no built `dist/`. **There is NO platform gate** --
+measured 2026-09-19 against the running build (`dist/web/agent-process.js`):
+`ensureMainAgentIsolatedConfigDir` gates on exactly two conditions (the setting being
+`'1'` AND the setup-token existing); it accepts a `platform` argument but never reads it,
+and `provisionIsolatedConfigDir` contains no `darwin`/`process.platform` reference either.
+The `config-registry` description says "any platform" too. (Until 2026-09-19 this
+paragraph claimed a "not macOS" no-op gate; that was STALE, and on Linux it implied the
+switch does nothing, when in fact it does.) On Linux the rotating `credentials.json` may
+additionally be handled by the separate credentials-guard, but that one is OPT-IN
+(`CLAUDE_CREDENTIALS_GUARD`) and off by default -- so it does not replace this switch.
 
 **Enabling.** Dashboard: *Settings → Channels → `MAIN_AGENT_ISOLATED_CONFIG`* (the
 toggle writes to `store/config-overrides.json`). Or by hand: `MAIN_AGENT_ISOLATED_CONFIG=1`
@@ -331,12 +339,20 @@ Each task lives in its own folder with two files. Detailed description: [schedul
 
 ---
 
-## ~/.claude/channels/ -- Channel Access
+## .claude/channels/ -- Channel Access
+
+**The path is relative to the install root, NOT to `$HOME`.** Since #915 the main agent's
+channel state is install-scoped, the way sub-agents' always was: a shared
+`~/.claude/channels/` meant ANY other Claude Code session on the host loaded the same bot
+token and silently took the bot over. `~/.claude/channels/` is now a legacy fallback the
+code uses only while it still holds the `.env` AND the install-scoped dir does not
+(`resolveMainChannelStateDir`, `src/channel-provider.ts`).
 
 | File | Description |
 |------|-------------|
-| `~/.claude/channels/telegram/access.json` | Telegram allowFrom list, paired senders |
-| `~/.claude/channels/slack/access.json` | Slack allowFrom list |
+| `<repo>/.claude/channels/telegram/access.json` | Telegram allowFrom list, paired senders |
+| `<repo>/.claude/channels/slack/access.json` | Slack allowFrom list |
+| `agents/<name>/.claude/channels/<provider>/access.json` | the sub-agents' own, always install-scoped |
 
 ---
 

@@ -87,9 +87,41 @@ TOKEN_FIELDS = ("input_tokens", "output_tokens",
 MAIN_AGENT_DIRNAME = "-home-gabor-marveen"
 
 
+# The main agent runs under its own CLAUDE_CONFIG_DIR, so its transcripts are NOT
+# under ~/.claude/projects. Every other agent is, which is why this went unnoticed.
+MAIN_AGENT_PROJECTS = os.path.join(
+    "/home/gabor/marveen/.channels-config", "projects")
+
+
 def project_dir(agent):
-    """Claude Code names a project dir after its cwd, with / replaced by -."""
+    """Claude Code names a project dir after its cwd, with / replaced by -.
+
+    BLINDSPOT901 (Anorak, 2026-09-20; Marveen verified independently with this very
+    function). The main agent's config root is CLAUDE_CONFIG_DIR=<install>/.channels-config,
+    so Claude Code writes its transcripts under THAT root, not under ~/.claude. The old
+    path still EXISTS -- it holds sessions from before the switch -- so nothing looked
+    broken. It simply had no file newer than today's cutoff.
+
+    WHAT THAT COST, measured the day it was found: the fleet gate reported 413M tokens
+    (79.5% of the daily budget) while the real total was 610M (117.3%). The 85% stop band
+    was never crossed on paper, so the gate stopped nobody all morning -- and the owner
+    enabled extra credit on the strength of the wrong number.
+
+    WHY SILENTZERO901 DID NOT CATCH IT, and this is the part worth keeping: that guard
+    returns missing=True when the project dir is ABSENT. This directory was present and
+    EMPTY-for-today. `os.path.isdir` passed, every old file fell out on `mt < cutoff`, and
+    window_tokens returned a CONFIDENT zero with missing=False. The protection covers the
+    missing directory, not the emptied one -- and Forgacs' own comment on it demands the
+    caller be able to tell "nothing used" from "nothing measured". At the single biggest
+    consumer, it could not.
+
+    A fallback rather than a replacement: if the new path has no directory, the old one is
+    still returned, so a rollback of the config root does not blind this the other way.
+    """
     if agent == "marveen":
+        primary = os.path.join(MAIN_AGENT_PROJECTS, MAIN_AGENT_DIRNAME)
+        if os.path.isdir(primary):
+            return primary
         return os.path.join(PROJECTS, MAIN_AGENT_DIRNAME)
     return os.path.join(PROJECTS, "-home-gabor-marveen-agents-" + agent)
 
@@ -342,12 +374,19 @@ def main(argv=None):
         # way to reach the fleet, so here the ceiling is a warning, not a gate.
         # The repeat guard below still applies -- one message per run, not one
         # every tick.
+        # A szokozosites a SZAMOKON fut, nem a kesz uzeneten. A regi alak az EGESZ
+        # msg-re futott, tehat a magyar mondatok vesszoit is szetverte ("Kuszob: X  a
+        # napi plafon Y"). Anorak vette eszre 2026-09-19 a testverfajlban; ugyanaz a
+        # hiba itt HAROM helyen allt. Javitva mind a harmon.
+        sz_total, sz_trigger, sz_cap = (f"{total:,}".replace(",", " "),
+                                        f"{trigger:,}".replace(",", " "),
+                                        f"{a.cap:,}".replace(",", " "))
         msg = (f"{a.agent}: elerted a napi figyelmeztetesi kuszobot.\n\n"
-               f"{total:,} token {ablak}.\n"
-               f"Kuszob: {trigger:,}, a napi plafon {a.cap:,}.\n"
+               f"{sz_total} token {ablak}.\n"
+               f"Kuszob: {sz_trigger}, a napi plafon {sz_cap}.\n"
                f"Idopont: {when}.\n\n"
                "Ez NEM allitott le semmit: a fo-agenst leallitani annyi, mint a "
-               "csatornat elnemitani. A dontes a tied.").replace(",", " ")
+               "csatornat elnemitani. A dontes a tied.")
         sent = notify(msg)
         if sent:
             kuldott.add(sav)
@@ -370,16 +409,19 @@ def main(argv=None):
         return 0
 
     ok = stop_agent(a.agent)
+    sz_total, sz_trigger, sz_cap = (f"{total:,}".replace(",", " "),
+                                    f"{trigger:,}".replace(",", " "),
+                                    f"{a.cap:,}".replace(",", " "))
     msg = (f"{a.agent} le lett allitva a token-plafon ELOTT.\n\n"
-           f"{total:,} token {ablak}.\n"
-           f"Leallitasi kuszob: {trigger:,}, a plafon {a.cap:,}.\n"
+           f"{sz_total} token {ablak}.\n"
+           f"Leallitasi kuszob: {sz_trigger}, a plafon {sz_cap}.\n"
            f"Idopont: {when}.\n\n"
            "Ez a sajat merese, nem a teljes fiokod. "
-           "Ujrainditani a dashboardon lehet.").replace(",", " ")
+           "Ujrainditani a dashboardon lehet.")
     if not ok:
         msg = (f"{a.agent} elerte a leallitasi kuszobot, de A LEALLITAS NEM SIKERULT.\n\n"
-               f"{total:,} token {ablak}, a kuszob {trigger:,}, a plafon {a.cap:,}.\n"
-               "Kezzel kell leallitani a dashboardon.").replace(",", " ")
+               f"{sz_total} token {ablak}, a kuszob {sz_trigger}, a plafon {sz_cap}.\n"
+               "Kezzel kell leallitani a dashboardon.")
     sent = notify(msg)
 
     # Record ONLY when the stop actually worked: an uncommitted failure must be

@@ -1028,7 +1028,11 @@ main {
   display: flex;
   align-items: center;
   gap: 3px;
+  min-width: 0;
 }
+/* On a card the nickname must never push the name out: it shrinks first and
+   ellipsises, while the name keeps its full width. */
+.kanban-card-assignee .kanban-nickname { font-size: 10px; opacity: 0.85; }
 .assignee-dot {
   width: 14px;
   height: 14px;
@@ -1189,14 +1193,47 @@ main {
   position: relative;
   overflow: hidden;
 }
-.kanban-card[data-priority="urgent"] { border-left: 3px solid var(--danger); }
-.kanban-card[data-priority="high"] { border-left: 3px solid var(--accent); }
-.kanban-card[data-priority="normal"] { border-left: 3px solid transparent; }
-.kanban-card[data-priority="low"] { border-left: 3px solid var(--border); }
+/* === Priority: the WHOLE card carries the colour, not a 3px edge ===
+   The owner asked for it directly (Telegram msg 3427, 2026-09-22): "a
+   szinkodozas legyen az egesz kartyan, ne csak egy vekony csik". On a board
+   with 135 open cards a 3px stripe is not readable at a glance.
+
+   The tint is layered OVER --bg-card with a two-stop gradient instead of being
+   written as a background colour. That matters: --bg-card differs between the
+   light and dark themes, and a hard-coded tint would go muddy in one of them.
+   This way the same rgba sits on whichever card background is current.
+
+   The left edge stays, thicker, because the card-aging feature overrides it
+   (--card-aging-color) and needs somewhere visible to land. */
+.kanban-card[data-priority] {
+  --card-tint: transparent;
+  --card-edge: var(--border);
+  background: linear-gradient(var(--card-tint), var(--card-tint)), var(--bg-card);
+  border-left: 4px solid var(--card-edge);
+}
+/* The scale is deliberately NOT four equal steps. Under the owner's rule
+   (Telegram msg 3427) high means "being worked on right now", so only the top
+   two levels should pull the eye; normal is the neutral middle and low should
+   recede. Tinting all four would turn the whole board into colour and tell you
+   nothing, which is the state we are fixing. */
+.kanban-card[data-priority="urgent"] { --card-tint: rgba(191, 77, 67, 0.20); --card-edge: var(--danger); }
+.kanban-card[data-priority="high"]   { --card-tint: rgba(217, 119, 87, 0.18); --card-edge: var(--accent); }
+.kanban-card[data-priority="normal"] { --card-tint: transparent;              --card-edge: var(--border); }
+.kanban-card[data-priority="low"]    { --card-tint: rgba(20, 20, 19, 0.035);  --card-edge: var(--border); }
+/* Low also steps back in contrast, not just in hue: a background tint alone is
+   too weak to read as "background work" on a dense board. */
+.kanban-card[data-priority="low"] .kanban-card-title { color: var(--text-dim); }
+
+/* Dark theme needs both a stronger tint and the opposite direction for `low`:
+   the same alpha that reads on a white card is invisible on #1f1e1d, and a
+   dark wash on a dark card would be indistinguishable from a shadow. */
+[data-theme="dark"] .kanban-card[data-priority="urgent"] { --card-tint: rgba(191, 77, 67, 0.32); }
+[data-theme="dark"] .kanban-card[data-priority="high"]   { --card-tint: rgba(217, 119, 87, 0.28); }
+[data-theme="dark"] .kanban-card[data-priority="low"]    { --card-tint: rgba(250, 249, 245, 0.03); }
 
 /* Card aging: left stripe overrides priority border when card is stale.
-   Colour is set as --card-aging-color via inline style by JS. */
-.kanban-card[data-aging] { border-left: 3px solid var(--card-aging-color); }
+   Colour is set as --card-aging-color via inline style by JS. The 4px width is
+   set with the priority block above. */
 
 /* Aging badge: hourglass + day/hour counter, top-right (left of the ⚡ action) */
 .kanban-card-aging-badge {
@@ -1246,14 +1283,20 @@ main {
   padding: 0 4px;
   background: var(--bg);
 }
+/* 40px, not the 28 this used to be. Roxy measured the finished portraits on a
+   circle-cropped contact sheet (agents/roxy/work/kanban-avatarok/vegso-korproba.png):
+   at 28px NO prop is readable on any of the seven -- only the background colour
+   and the coarse silhouette separate them -- while at 48px every one of the seven
+   jobs is recognisable. 40 is what the lane header carries without reflowing, and
+   it buys most of that back. The colours still do the work at a glance. */
 .kanban-swimlane-avatar {
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   color: #fff;
   flex-shrink: 0;
@@ -1266,13 +1309,60 @@ main {
 .kanban-swimlane-avatar.priority-high { background: var(--accent); }
 .kanban-swimlane-avatar.priority-normal { background: var(--text-muted); }
 .kanban-swimlane-avatar.priority-low { background: var(--border); }
+
+/* Character portrait laid over the initial. See kanbanDecorateAvatar in app.js:
+   the letter is painted first and this covers it, so a missing picture needs no
+   round trip -- the <img> removes itself on error and the letter is underneath. */
+.kanban-swimlane-avatar,
+.kanban-team-avatar { position: relative; overflow: hidden; }
+.kanban-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.kanban-team-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+/* The character name next to the person's name. Quiet on purpose: it is
+   flavour, and the name is what you navigate by. */
+.kanban-nickname {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.kanban-owner-strip-avatar { width: 34px; height: 34px; font-size: 14px; }
+.kanban-team-avatar.owner { background: var(--accent); }
+.kanban-team-avatar.bot { background: var(--info); }
+.kanban-team-avatar.agent { background: var(--success); }
+.kanban-team-avatar.unknown { background: var(--text-muted); }
 .kanban-swimlane-name {
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
-  margin-right: auto;
 }
+/* The nickname belongs NEXT TO THE NAME, not out at the right edge -- the owner
+   said so twice (Telegram msg 3568, then msg 3572: "en a kanban oldalon neztem,
+   hogy rossz helyen vannak"). It used to be the NAME that carried
+   `margin-right: auto`, which shoved everything after it -- nickname included --
+   against the card count. The push now starts at the count instead. */
 .kanban-swimlane-count {
+  margin-left: auto;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
@@ -7689,4 +7779,133 @@ body {
   color: #b45309;
   background: color-mix(in srgb, #f59e0b 18%, transparent);
   border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
+}
+
+/* === Owner strip: "what is waiting on YOU" ===
+   The owner asked for it (Telegram msg 3427, 2026-09-22): a single row, ordered
+   by priority, of the cards the process is blocked on until the person acts.
+   It sits ABOVE the filter row and deliberately ignores every filter: it is a
+   personal queue, not a view of the board, and a queue that a stray filter can
+   empty is worse than no queue at all. */
+.kanban-owner-strip {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-card);
+}
+.kanban-owner-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.kanban-owner-strip-count {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--bg-card);
+}
+.kanban-owner-strip-toggle { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.kanban-owner-strip-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.kanban-owner-strip.collapsed .kanban-owner-strip-items { display: none; }
+.kanban-owner-strip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.kanban-owner-strip-item:hover { border-color: var(--accent); }
+.kanban-owner-strip-item .seq { font-family: monospace; font-size: 11px; color: var(--text-muted); }
+.kanban-owner-strip-item .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.kanban-owner-strip-item .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.kanban-owner-strip-item .dot.urgent { background: var(--danger); }
+.kanban-owner-strip-item .dot.high   { background: var(--accent); }
+.kanban-owner-strip-item .dot.normal { background: var(--info); }
+.kanban-owner-strip-item .dot.low    { background: var(--border); }
+
+/* === Team view: one row per person === */
+.kanban-team-view { display: flex; flex-direction: column; gap: 10px; }
+.kanban-team-row {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  padding: 10px 12px;
+}
+/* An idle row is not hidden, only quieted: "nobody is working on this queue"
+   is information, and hiding it would turn the view into a list of the busy. */
+.kanban-team-row.idle { border-left-color: var(--border); }
+.kanban-team-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.kanban-team-name { font-weight: 600; font-size: 14px; color: var(--text); }
+.kanban-team-open { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.kanban-team-body { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 820px) { .kanban-team-body { grid-template-columns: 1fr; } }
+.kanban-team-cell { min-width: 0; }
+.kanban-team-cell-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.kanban-team-card {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.kanban-team-card:hover { border-color: var(--accent); }
+.kanban-team-card .seq { font-family: monospace; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.kanban-team-card .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kanban-team-card .age { margin-left: auto; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.kanban-team-none { font-size: 13px; color: var(--text-dim); font-style: italic; padding: 5px 0; }
+.kanban-team-note { font-size: 12px; color: var(--text-muted); margin: 4px 2px 0; line-height: 1.5; }
+
+/* Character nickname beside a team member's name on the Team page. The owner
+   asked for it next to the NAME (Telegram msg 3563, then 3568 after the first
+   attempt put it only on the kanban cards): until now it was only buried
+   mid-sentence inside the free-text description. */
+.agent-nickname {
+  font-size: 12px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text-muted);
+  white-space: nowrap;
 }

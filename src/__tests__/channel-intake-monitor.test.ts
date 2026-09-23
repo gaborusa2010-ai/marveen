@@ -65,6 +65,33 @@ describe('parseIntakeProbe', () => {
     expect(r.tokenOk).toBe(true)
     expect(r.pendingUpdates).toBeNull()
   })
+
+  // Regression for the false alarm the owner received on 2026-09-23 02:12:
+  // "margo: a Telegram elutasitotta a bot tokent (Bad Gateway)". Telegram's own
+  // 502 was being read as a refused token. getMe on the same token returned 200
+  // eight minutes later, so nothing was actually wrong with the credentials.
+  it('treats a Telegram 5xx as missing evidence, not as a refused token', () => {
+    const r = parseIntakeProbe(502, { ok: false, error_code: 502, description: 'Bad Gateway' })
+    expect(r.tokenOk).toBe(true)
+    expect(r.reachable).toBe(false)
+    expect(r.pendingUpdates).toBeNull()
+    // The upstream text survives so a later reader can tell 502 from a silent drop.
+    expect(r.lastErrorMessage).toBe('Bad Gateway')
+  })
+
+  it('still treats a bare 500 with no body as missing evidence', () => {
+    const r = parseIntakeProbe(500, null)
+    expect(r.tokenOk).toBe(true)
+    expect(r.reachable).toBe(false)
+    expect(r.lastErrorMessage).toBeNull()
+  })
+
+  // The other direction: the fix must not silence a genuinely dead token.
+  it('still marks the token invalid on 404 (bot deleted)', () => {
+    const r = parseIntakeProbe(404, { ok: false, error_code: 404, description: 'Not Found' })
+    expect(r.tokenOk).toBe(false)
+    expect(r.reachable).toBe(true)
+  })
 })
 
 describe('decideIntakeVerdict', () => {

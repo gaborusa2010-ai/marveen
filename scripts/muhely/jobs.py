@@ -22,6 +22,8 @@ Usage
   jobs.py list   [--client X] [--open]
   jobs.py show   <id>
   jobs.py invoice <id> [--out job.json]     # feeds scripts/muhely/invoice.py
+  jobs.py szamla 18 19 20 21 22             # TOBB nap -> EGY szamla-bemenet
+  jobs.py szamlazva 10016 18 19 20 21 22    # a mar kiadott szamla szamat rajuk
 
 Times are stored as UTC epoch and shown in local time. A day that runs past
 midnight is still one job, because the clock does not end the work.
@@ -38,6 +40,13 @@ STORE = os.path.join(REPO, "store")
 LEDGER = os.path.join(STORE, "muhely-jobs.json")
 PHOTOS = os.path.join(STORE, "job-photos")
 BUSINESS = os.path.join(STORE, "muhely-business.json")
+# The work log stores a SHORT client name ("Palmer Furniture"); an invoice needs
+# the addressee and the postal address. Measured 2026-09-20 by rebuilding the
+# 10016 input from the ledger: the generated file said "Palmer Furniture" with
+# no address, where the issued invoice says "Mr Fred Palmer, Palmer Furniture,
+# 24 Riverside Rd, SW17 0BA". A short name on a real invoice is not a cosmetic
+# difference -- it is what the customer's accounts department matches on.
+CLIENTS = os.path.join(STORE, "muhely-ugyfelek.json")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -308,18 +317,38 @@ def cmd_start(a):
 
 
 def cmd_photo(a):
+    """Photo onto the open job, or onto a named one with --id.
+
+    The --id mirrors `note --id`, and for the same reason: a photo can arrive
+    after the job is closed, or -- as on 2026-09-16 -- three weeks later, when
+    someone finally notices that 28 workshop photos are sitting in the channel
+    inbox and not one of them is attached to a job.
+    """
     rows = _load()
-    live = _open_job(rows)
-    if not live:
-        print("Nincs nyitott munka. Elobb: jobs.py start ...")
-        return 1
+    if getattr(a, "id", None):
+        live = next((x for x in rows if x["id"] == a.id), None)
+        if not live:
+            print(f"Nincs #{a.id} munka.")
+            return 1
+    else:
+        live = _open_job(rows)
+        if not live:
+            print("Nincs nyitott munka. Lezart munkahoz add meg: photo <fajl> --id <n>")
+            return 1
     if not os.path.exists(a.file):
         print(f"Nincs ilyen fajl: {a.file}")
         return 1
 
     os.makedirs(PHOTOS, exist_ok=True)
     ext = os.path.splitext(a.file)[1] or ".jpg"
-    dest = os.path.join(PHOTOS, f"job{live['id']}-{int(time.time())}{ext}")
+    # A nev masodperc-felbontasu volt, es egy cikluson belul tobb foto UGYANAZT a
+    # nevet kapta volna: a masodik felulirja az elsot, nemán. Merve 2026-09-16, a
+    # visszamenoleges besorolas elott -- a 09-04-i napon egyedul 17 foto all.
+    base = os.path.join(PHOTOS, f"job{live['id']}-{int(time.time())}")
+    dest, n = base + ext, 1
+    while os.path.exists(dest):
+        dest = f"{base}-{n}{ext}"
+        n += 1
     with open(a.file, "rb") as src, open(dest, "wb") as dst:
         dst.write(src.read())        # keep our own copy: the inbox gets cleaned
 
@@ -412,9 +441,26 @@ def cmd_note(a):
         if not live:
             print("Nincs nyitott munka. Lezart munkahoz add meg: note --id <n>")
             return 1
-    live.setdefault("notes", []).append({"at": time.time(), "text": a.text})
+    # A lone "-" means "read the note from stdin", the same way naplo.py takes it.
+    # It is not decoration: a workshop note carries backticks, $(...) and quotes
+    # (part codes, the owner's own words), and those get EXECUTED by bash before
+    # this script ever starts if the text rides on the command line.
+    #
+    # WHY IT IS HERE AT ALL: until 2026-09-21 this branch had no stdin support,
+    # so `jobs.py note --id 23 - < file` stored a literal hyphen AND printed
+    # "jegyzet hozzaadva". A silent loss with a success message -- the worst shape
+    # a failure can take. It had already eaten the note on job #22 before anyone
+    # noticed. An EMPTY stdin is refused rather than stored, so the same command
+    # with no redirect cannot quietly blank a note.
+    text = a.text
+    if text == "-":
+        text = sys.stdin.read().strip()
+        if not text:
+            print("Ures jegyzet a stdin-en. Nem irok be semmit.")
+            return 2
+    live.setdefault("notes", []).append({"at": time.time(), "text": text})
     _save(rows)
-    print(f"#{live['id']} jegyzet hozzaadva.")
+    print(f"#{live['id']} jegyzet hozzaadva ({len(text)} karakter).")
     return 0
 
 
@@ -660,6 +706,240 @@ def cmd_edit(a):
     return 0
 
 
+def _szamla_cimzett(short):
+    """(name, address list, warning or None) for the invoice header.
+
+    Falls back to the short name rather than refusing: a new customer has to be
+    invoiceable on the first day, before anyone has written his address down.
+    But it says so, because a silent fallback here puts an incomplete addressee
+    on a document that goes out for money.
+    """
+    try:
+        with open(CLIENTS, encoding="utf-8") as fh:
+            book = json.load(fh).get("ugyfelek", {})
+    except (OSError, ValueError):
+        book = {}
+    e = book.get(short)
+    if not e:
+        return short, [], (
+            f"FIGYELEM: a(z) {short!r} nincs a store/muhely-ugyfelek.json "
+            f"jegyzekben, ezert a MUNKANAPLO rovid neve megy a szamlara, cim "
+            f"nelkul. Kerd el a gazdatol a teljes cimzettet es a cimet, es vedd "
+            f"fel a jegyzekbe -- ne talald ki.")
+    return e.get("name") or short, list(e.get("address") or []), None
+
+
+def cmd_szamla(a):
+    """Build ONE invoice input from SEVERAL work days.
+
+    WHY, measured 2026-09-20: every multi-day invoice this business has issued
+    was typed by hand. Invoice 10016 covered five days, and the five lines,
+    the five dates, the five descriptions and the 1000 pound total were all
+    hand-entered from what `list` printed. Nothing checked them against the
+    ledger, and nothing told the ledger which days went out -- so the days
+    stayed `kesz` and the Sunday sentry would have offered them up again.
+
+    A week of day work is the NORMAL shape here: five of the six invoices
+    issued so far cover more than one day. The single-day `invoice` command was
+    the exception being used as the rule.
+
+    Deliberately built ON TOP of `invoice` rather than beside it. That function
+    holds the overtime rule, the fixed/daily/hourly branches, the rounding
+    comments and the no_charge refusal, and every one of those is a decision
+    somebody had to make once. A second copy of that logic would be a second
+    place to fix a money bug in.
+    """
+    rows = _load()
+    by_id = {r["id"]: r for r in rows}
+    missing = [i for i in a.ids if i not in by_id]
+    if missing:
+        print(f"Nincs ilyen munka: {', '.join(str(i) for i in missing)}")
+        return 1
+    seen, ids = set(), []
+    for i in a.ids:
+        if i not in seen:
+            seen.add(i)
+            ids.append(i)
+
+    # ONE customer per invoice. The invoicing skill says it in words ("Tobb
+    # ugyfel eseten NE fogd ossze oket egy szamlaba"), and a rule that only
+    # lives in words is a rule until the first busy morning.
+    clients = {by_id[i]["client"] for i in ids}
+    if len(clients) > 1:
+        print(f"TOBB UGYFEL egy szamlan: {', '.join(sorted(clients))}.\n"
+              f"  Ugyfelenkent kulon szamla es kulon sorszam. Bontsd ket hivasra.")
+        return 1
+    cis = {bool(by_id[i].get("cis")) for i in ids}
+    if len(cis) > 1:
+        print("A megadott napok kozott VAN es NINCS CIS-es is. A levonas a szamla "
+              "egeszere all vagy nem all; ket kulon szamla kell.")
+        return 1
+
+    import argparse as _ap
+    import contextlib, io, tempfile
+    lines, notes, photos, jobs_desc, rc = [], [], [], [], 0
+    nyers_leiras = set()
+    for i in ids:
+        tmp = tempfile.NamedTemporaryFile("r", suffix=".json", delete=False)
+        tmp.close()
+        sub = _ap.Namespace(id=i, out=tmp.name)
+        buf = io.StringIO()
+        # The per-day chatter is noise here; the WARNINGS are not. Anything the
+        # child wrote to stderr (unresolved overtime, a derived-rule note) is
+        # replayed below, because a warning that only the swallowed stream saw
+        # is the same as no warning.
+        with contextlib.redirect_stdout(buf):
+            r_i = cmd_invoice(sub)
+        try:
+            with open(tmp.name, encoding="utf-8") as fh:
+                part = json.load(fh)
+        except (OSError, ValueError):
+            part = None
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+        if r_i not in (0,) or not part:
+            print(f"#{i}: a nap elokeszitese nem ment at (exit {r_i}). "
+                  f"Futtasd kulon: jobs.py invoice {i}")
+            rc = max(rc, r_i or 1)
+            continue
+        d = datetime.fromtimestamp(by_id[i]["started_at"]).astimezone()
+        for ln in part.get("lines", []):
+            ln = dict(ln)
+            # The DATE goes in front of every line. On 10015 and 10016 the owner
+            # wrote them that way by hand, and the customer reads the invoice as
+            # a list of days, not a list of tasks.
+            # The date, then WHAT WAS DONE. The owner wrote his two multi-day
+            # invoices this way by hand, and he is right: next to a Qty of 1 and
+            # a Unit of 200, the words "Labour, 1 day" tell the customer
+            # nothing he cannot already see in the two columns beside them.
+            # The overtime line keeps its own wording, because there the words
+            # ARE the information.
+            base = ln["desc"]
+            if base.startswith("Labour,") and by_id[i].get("job"):
+                base = by_id[i]["job"]
+                nyers_leiras.add(i)
+            ln["desc"] = f"{d.strftime('%d/%m/%y')}  {base}"
+            lines.append(ln)
+        if part.get("_notes"):
+            notes.append(f"#{i} ({d:%Y-%m-%d}): {part['_notes']}")
+        photos.extend(part.get("_photos") or [])
+        jobs_desc.append(by_id[i]["job"])
+    if not lines:
+        print("Egyetlen nap sem adott szamlazhato sort.")
+        return rc or 1
+
+    first = by_id[ids[0]]
+    cim_nev, cim_sorok, cim_warn = _szamla_cimzett(first["client"])
+    if cim_warn:
+        print(cim_warn)
+    if not cim_sorok and first.get("address"):
+        cim_sorok = [first["address"]]
+    job = {
+        "client": {"name": cim_nev, "address": cim_sorok},
+        "job": a.leiras or _osszefoglalo(jobs_desc, ids, by_id),
+        "cis": bool(first.get("cis")),
+        "lines": lines,
+        "_notes": "\n".join(notes),
+        # THE POINT OF THE WHOLE COMMAND. invoice.py reads this and writes the
+        # issued number back onto every one of these days, so `list` stops
+        # calling them unbilled and the Sunday sentry stops offering them up.
+        "_job_ids": ids,
+        "_photos": photos,
+    }
+    out = a.out or f"szamla-{'-'.join(str(i) for i in ids)}.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(job, fh, indent=2, ensure_ascii=False)
+    total = sum(float(l["qty"]) * float(l["unit"]) for l in lines)
+    print(f"Kiirva: {out}")
+    print(f"{len(ids)} nap, {len(lines)} sor, osszesen {total:,.2f}.")
+    print(f"  napok: {', '.join('#' + str(i) for i in ids)}")
+    if nyers_leiras:
+        # Named, not silently shipped. The ledger is written in Hungarian for
+        # the workshop; the invoice is read by the customer in English. Nothing
+        # here can translate that, so the one thing it must not do is let it
+        # through unremarked.
+        print(f"FIGYELEM: {len(nyers_leiras)} sor szovege a MUNKANAPLOBOL jon, "
+              f"magyarul. A szamlat a vevo olvassa: ird at angolra a {out} "
+              f"fajlban, MIELOTT PDF-et csinalsz belole.")
+    print(f"Ellenorizd a sorokat es az osszeget, aztan:")
+    print(f"  python3 scripts/muhely/invoice.py invoice {out} --out szamla.pdf")
+    return rc
+
+
+def _osszefoglalo(jobs_desc, ids, by_id):
+    """A heading for the invoice when the caller did not give one.
+
+    Not a join of every day's description: on 10015 that would have been six
+    near-identical lines in the title. The month comes from the days themselves,
+    so a week spanning a month boundary says both.
+    """
+    months = []
+    for i in ids:
+        d = datetime.fromtimestamp(by_id[i]["started_at"]).astimezone()
+        m = d.strftime("%B %Y")
+        if m not in months:
+            months.append(m)
+    return "Day work, " + " / ".join(months)
+
+
+def cmd_szamlazva(a):
+    """Write an already-issued invoice number onto the work days it covers.
+
+    The hole this fills, measured 2026-09-20: a MULTI-DAY invoice is built from
+    a hand-written job file, so nothing tells the work log which days went out
+    on it. Those days keep reading `kesz`, and the Sunday invoicing sentry --
+    which reads exactly that -- offers them up to be billed a second time. It
+    is the trap the invoicing skill warns about, one file over, and it was a
+    manual edit of the ledger until this command existed.
+
+    invoice.py now does this by itself when the job file names its days
+    (`_job_ids`). This is the repair path for the invoices issued before that,
+    and for anything written entirely by hand.
+
+    Refuses rather than overwrites when a day already carries a DIFFERENT
+    number: two invoices claiming one day is a question for a person.
+    """
+    rows = _load()
+    by_id = {r["id"]: r for r in rows}
+    missing = [i for i in a.ids if i not in by_id]
+    if missing:
+        print(f"Nincs ilyen munka: {', '.join(str(i) for i in missing)}")
+        return 1
+    ref = str(a.ref)
+    touched, already, conflict, open_job = [], [], [], []
+    for i in a.ids:
+        r = by_id[i]
+        if r.get("stopped_at") is None:
+            open_job.append(i)
+            continue
+        old = r.get("invoice_ref")
+        if old and str(old) == ref:
+            already.append(i)
+        elif old:
+            conflict.append((i, old))
+        else:
+            r["invoice_ref"] = ref
+            touched.append(i)
+    if open_job:
+        print(f"MEG FUTO munka, ezt nem jelolom szamlazottnak: "
+              f"{', '.join('#' + str(i) for i in open_job)}. Elobb: jobs.py stop")
+    for i, old in conflict:
+        print(f"#{i}: MAR a {old} szamu szamla all rajta, a {ref} nem irja felul. "
+              f"Ha tenyleg atkerult, eloszor dontsd el, melyik a jo.")
+    if already:
+        print(f"Mar a {ref} allt rajtuk: "
+              f"{', '.join('#' + str(i) for i in already)}")
+    if touched:
+        _save(rows)
+        print(f"{ref} bevezetve ide: {', '.join('#' + str(i) for i in touched)}")
+    elif not (conflict or open_job or already):
+        print("Nem volt mit bevezetni.")
+    return 1 if (conflict or open_job) else 0
+
+
 def cmd_invoice(a):
     rows = _load()
     r = next((x for x in rows if x["id"] == a.id), None)
@@ -691,6 +971,18 @@ def cmd_invoice(a):
               f"nem dijat megadni.")
         return 0
     hours = _hours(r)
+    # Set BEFORE the branches, not inside each one. Until 2026-09-18 only `fixed`
+    # and `daily` produced this name, while the closing print below uses it after
+    # ALL THREE -- so the hourly branch crashed with UnboundLocalError. Cody
+    # measured it, on a copy, the live ledger untouched.
+    # What made it worse than a plain crash: the job file is ALREADY WRITTEN, and
+    # correctly, before the traceback. Whoever looks at the FILE sees good input
+    # and would carry on to invoice.py; whoever looks at `$?` stops. This is the
+    # mirror image of the 2026-09-09 lesson in this same function, where the code
+    # said too little and exited 0 -- here it says enough, but too late.
+    # A default up here is not only the smaller fix: it is the one a FOURTH
+    # billing mode cannot forget. Every branch below still sets its own value.
+    days = round(hours / 8.0, 2)
     lines = []
     overtime_unresolved = False
     if r.get("billing") == "fixed":
@@ -768,8 +1060,18 @@ def cmd_invoice(a):
         # ha a leirasban 1.12 allna, a kesz lapon ket kulonbozo napszam nezne
         # egymassal szembe ugyanabban a sorban. Ezert itt is `:g`.
         qty = hours / 8.0
+        # The EXACT quotient, not the rounded default set above: the comment
+        # block over this branch is about a truncated thousandth costing a whole
+        # pound, and the closing line the owner reads in the workshop has to
+        # match the invoice.
+        days = qty
         if r.get("rate"):
-            lines.append({"desc": f"Labour, {hours} hours ({qty:g} days)",
+            # "1 days" went out on the customer's PDF until 2026-09-18. The daily
+            # branch had the singular from the start; this one never did. A
+            # fraction stays plural in English (1.125 days), so the test is
+            # equality with one, not "less than two".
+            lines.append({"desc": f"Labour, {hours} hours "
+                                  f"({qty:g} day{'' if qty == 1 else 's'})",
                           "qty": qty, "unit": float(r["rate"]),
                           "cis": bool(r.get("cis"))})
     job = {
@@ -853,11 +1155,12 @@ def main(argv):
     p.set_defaults(fn=cmd_start)
 
     p = sub.add_parser("photo"); p.add_argument("file"); p.add_argument("--note")
+    p.add_argument("--id", type=int, help="lezart munkahoz is, mint a note --id")
     p.add_argument("--hely", action="store_true",
                    help="a foto GPS-koordinatajat vedd at a MUNKA helyenek is. "
                         "Alapbol nem: a kep helye nem a munka helye")
     p.set_defaults(fn=cmd_photo)
-    p = sub.add_parser("note"); p.add_argument("text")
+    p = sub.add_parser("note"); p.add_argument("text", help='a jegyzet szovege, vagy "-" a stdin-rol')
     p.add_argument("--id", type=int, help="lezart munkahoz is")
     p.set_defaults(fn=cmd_note)
     p = sub.add_parser("edit"); p.add_argument("id", type=int)
@@ -876,6 +1179,15 @@ def main(argv):
     p = sub.add_parser("list"); p.add_argument("--client")
     p.add_argument("--open", action="store_true"); p.set_defaults(fn=cmd_list)
     p = sub.add_parser("show"); p.add_argument("id", type=int); p.set_defaults(fn=cmd_show)
+    p = sub.add_parser("szamla")
+    p.add_argument("ids", type=int, nargs="+", help="a napok azonositoi")
+    p.add_argument("--out", help="a job JSON utja")
+    p.add_argument("--leiras", help="a szamla fejlec-sora, ha nem az automatikus kell")
+    p.set_defaults(fn=cmd_szamla)
+    p = sub.add_parser("szamlazva")
+    p.add_argument("ref", help="a MAR KIADOTT szamla sorszama, pl. 10016")
+    p.add_argument("ids", type=int, nargs="+", help="a napok azonositoi")
+    p.set_defaults(fn=cmd_szamlazva)
     p = sub.add_parser("invoice"); p.add_argument("id", type=int)
     p.add_argument("--out"); p.set_defaults(fn=cmd_invoice)
 

@@ -373,6 +373,25 @@ export const STALE_REFRESH_REASON_PREFIX = 'stale-handoff-refresh'
 export const DAILY_HANDOFF_REASON_PREFIX = 'daily-handoff'
 
 /**
+ * Reason prefix for EVERY mid-turn deferral (hard tier, await-handoff hard
+ * tier, handoff timeout). These are `none` decisions, and `none` does not log,
+ * so the deferral was invisible: on 2026-09-23 the main agent sat 73 minutes
+ * above its hard threshold while a single turn ran, spent 203.9M tokens over
+ * the line (39% of the 520M daily fleet budget), and the dashboard log held
+ * NOT ONE context-guard line for the window -- indistinguishable from a guard
+ * that never ran.
+ *
+ * The deferral itself is correct and stays (2026-07-27: agents restarted
+ * mid-work lost dispatched instructions). What was wrong is that its COST was
+ * unmeasurable. The runner matches this constant to log each deferral with the
+ * context size that is being deferred, so the blind spot has a number.
+ *
+ * Exported so the runner matches a constant rather than re-typing the string,
+ * and so a test can pin all three call sites.
+ */
+export const MIDTURN_DEFER_REASON_PREFIX = 'midturn-defer'
+
+/**
  * Whether the daily tier can actually fire for this config.
  *
  * ONE predicate, two readers: the tier itself, and the auto-restart runner
@@ -614,11 +633,11 @@ export function decideGuard(
       // sweep that finds the pane no longer busy; a turn that saturates
       // mid-flight is caught by the paneSaturated branch above.
       if (inputs.pct !== null && inputs.pct >= cfg.hardPct) {
-        if (inputs.paneBusy) return none('hard threshold during await-handoff but agent mid-turn -- deferring restart')
+        if (inputs.paneBusy) return none(`${MIDTURN_DEFER_REASON_PREFIX}: hard threshold during await-handoff but agent mid-turn -- deferring restart`)
         return restartDecision(nowMs, 'hard threshold during await-handoff', handoffStaleMinutes(inputs))
       }
       if (nowMs >= state.deadlineMs) {
-        if (inputs.paneBusy) return none('handoff timeout but agent mid-turn -- deferring restart')
+        if (inputs.paneBusy) return none(`${MIDTURN_DEFER_REASON_PREFIX}: handoff timeout but agent mid-turn -- deferring restart`)
         // No handoff in time (agent wedged or ignored the prompt). Restart
         // anyway: taskstate + kanban + hot memories are the fallback context.
         // An OLD HANDOFF.md may still exist; measure how far behind it is so
@@ -672,7 +691,10 @@ function decideWedgeTiers(
     // a turn that tips into saturation is caught by the saturation net,
     // which deliberately ignores the busy signal.
     if (inputs.paneBusy) {
-      return none(`hard threshold (${Math.round(pct * 100)}%) but agent mid-turn -- deferring restart`, cleared)
+      return none(
+        `${MIDTURN_DEFER_REASON_PREFIX}: hard threshold (${Math.round(pct * 100)}%) but agent mid-turn -- deferring restart`,
+        cleared,
+      )
     }
     return restartDecision(
       nowMs,

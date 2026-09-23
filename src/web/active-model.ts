@@ -154,3 +154,43 @@ export function readTranscriptMtimeFromProjectDir(workingDir: string, configDir?
     return newest
   } catch { return null }
 }
+
+// Where the MAIN agent's session log actually lives.
+//
+// MAINCFG920 (2026-09-20). Three runners each carried their own copy of
+// "the main agent needs no configDir":
+//
+//   configDir: agentName === MAIN_AGENT_ID ? undefined : resolveAgentConfigDirForRead(...)
+//
+// `undefined` sends projectsDirFor() to ~/.claude/projects/<encoded>. On an
+// install with main-agent isolation the session writes under
+// <root>/.channels-config/projects/<encoded> instead, so every one of those
+// reads landed on a directory that EXISTS and holds OLD sessions -- the same
+// shape as GH #816, where the shared root was not missing but simply stale,
+// which is why nothing ever errored.
+//
+// Measured here at 16:48 BST, same encoded name, same moment:
+//   ~/.claude/projects/-home-gabor-marveen        newest jsonl 07:36:10  (176 files)
+//   .channels-config/projects/-home-gabor-marveen newest jsonl 16:48:21  (29 files)
+// Nine hours stale, and the live transcript was being written every second.
+//
+// WHAT IT COST, and why it bit the cheapest rounds hardest: schedule-runner
+// uses this mtime as the `sawTurn` evidence that an injected task started a
+// turn. A stale mtime is never newer than injectedAt, so the only remaining
+// evidence was catching the pane 'busy' on a 30s sweep. A LONG turn is caught;
+// a short one -- the silent heartbeat round that is supposed to cost nothing --
+// is not, and gets declared 'lost' and re-injected every ~30 seconds. Measured
+// in store/dashboard.log for 2026-09-20: 38 false-lost re-injections across
+// memoria-heartbeat (18), ledger-live-drain (14) and google-token-orzo (6). The
+// 16:45 heartbeat re-fired four times and stopped the instant a turn ran long
+// enough to be sampled busy, which is the mechanism in one observation.
+//
+// The correct resolver already existed and was already tested -- in
+// routes/agents.ts, where GH #816 was fixed. It never reached the runners.
+// It lives here now so there is one owner: probe for the directory rather than
+// re-deriving the launcher's isolation decision, for the same reason
+// resolveAgentConfigDirForRead does.
+export function mainAgentConfigDirForRead(projectRoot: string): string | undefined {
+  const isolated = join(projectRoot, '.channels-config')
+  return existsSync(join(isolated, 'projects')) ? isolated : undefined
+}

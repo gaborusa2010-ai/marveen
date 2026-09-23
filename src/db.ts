@@ -2096,6 +2096,15 @@ export interface KanbanCard {
   // is woken (kanban -> agent dispatch). NULL = never dispatched; the once-only
   // guard so re-dragging a card does not re-prompt the agent.
   dispatched_at: number | null
+  // Seconds this card has spent SITTING IN in_progress, summed over every stay
+  // there (kanban_card_events), plus the open stay up to now when it is in
+  // progress right now. This is wall-clock time in the column, NOT hours of
+  // work: nobody clocks in and out, so a card left in the column overnight
+  // counts the night. undefined = the card has no event rows at all (it
+  // predates the event table, or it has never moved), which is different from
+  // 0 and must stay distinguishable -- 0 would claim a measurement we do not
+  // have. Every reader must carry the distinction into what it renders.
+  active_seconds?: number
 }
 
 // A card as referenced FROM another card (blocker links). Deliberately narrow:
@@ -2130,12 +2139,71 @@ export function listKanbanCards(): KanbanCard[] {
   // comments more than anyone, so ageing measured on updated_at is mostly
   // measuring the watcher, not the work. Falls back to created_at for cards
   // that have never moved (no event rows), which is the honest age for those.
-  return db
+  const cards = db
     .prepare(`SELECT c.rowid AS seq, c.*,
                      COALESCE((SELECT MAX(e.created_at) FROM kanban_card_events e
                                WHERE e.card_id = c.id), c.created_at) AS last_status_at
               FROM kanban_cards c WHERE c.archived_at IS NULL ORDER BY c.sort_order ASC`)
     .all() as KanbanCard[]
+  const active = sumInProgressSeconds(cards.map((c) => c.id))
+  for (const c of cards) {
+    const v = active.get(c.id)
+    if (v !== undefined) c.active_seconds = v
+  }
+  return cards
+}
+
+// How long each card has stood in in_progress, summed over every separate stay.
+//
+// Read off kanban_card_events, which records from_status -> to_status per move.
+// A stay opens on any event whose to_status is 'in_progress' and closes on the
+// next event for that card; a card sitting in the column right now has an open
+// stay that runs to `now`.
+//
+// WHAT THIS NUMBER IS NOT. It is wall-clock time in the column, not time worked.
+// An agent that picks a card up at 09:00 and hands it back at 17:00 having spent
+// twenty minutes on it scores eight hours here. We have no per-card clock-in, so
+// this is the honest upper bound and nothing better is available today; every
+// place that shows it says so.
+//
+// Cards with no event rows return NO entry rather than 0. The event table starts
+// mid-history, so "never moved, or moved before we logged moves" and "moved, and
+// spent zero time in progress" are genuinely different, and collapsing them into
+// 0 would dress an absent measurement up as a measured zero.
+export function sumInProgressSeconds(cardIds: string[]): Map<string, number> {
+  const out = new Map<string, number>()
+  if (cardIds.length === 0) return out
+  const rows = db
+    .prepare('SELECT card_id, to_status, created_at FROM kanban_card_events ORDER BY card_id, created_at ASC, id ASC')
+    .all() as { card_id: string; to_status: string; created_at: number }[]
+  const wanted = new Set(cardIds)
+  const now = Math.floor(Date.now() / 1000)
+  let openedAt: number | null = null
+  let current = ''
+  const flush = () => {
+    // An open stay at the end of a card's event list is still running: the card
+    // is in in_progress now, so it is charged up to the present moment.
+    if (current && wanted.has(current) && openedAt !== null) {
+      out.set(current, (out.get(current) ?? 0) + Math.max(0, now - openedAt))
+    }
+    openedAt = null
+  }
+  for (const r of rows) {
+    if (r.card_id !== current) {
+      flush()
+      current = r.card_id
+      // A card seen in the event table gets an entry even if it never entered
+      // in_progress: that is a measured zero, unlike a card with no rows at all.
+      if (wanted.has(current) && !out.has(current)) out.set(current, 0)
+    }
+    if (openedAt !== null) {
+      if (wanted.has(current)) out.set(current, (out.get(current) ?? 0) + Math.max(0, r.created_at - openedAt))
+      openedAt = null
+    }
+    if (r.to_status === 'in_progress') openedAt = r.created_at
+  }
+  flush()
+  return out
 }
 
 export function getKanbanCard(id: string): KanbanCard | undefined {
@@ -2200,6 +2268,30 @@ function touchAncestorChain(parentId: string | null | undefined, now: number, st
   }
 }
 
+// The column is INTEGER and every reader does `due_date * 1000`, but SQLite is
+// dynamically typed and the HTTP layer never coerced, so a caller that sent
+// "2026-09-12" (the natural shape when an agent writes a date, and the exact
+// shape an <input type="date"> produces before conversion) stored a STRING.
+// It read back as `"2026-09-12" * 1000` = NaN, printed "Invalid Date" on the
+// card and silently dropped the card out of the timeline view. Measured
+// 2026-09-22: two of the three non-null due dates on the board were strings.
+//
+// Normalising on the WAY IN, not on every read: there are four read sites in
+// the dashboard plus the timeline, and a tolerant reader would have to be
+// remembered at each new one. A single coercion at the boundary cannot be
+// forgotten.
+function normaliseDueDate(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  if (typeof v === 'number') return Number.isFinite(v) ? Math.floor(v) : null
+  if (typeof v === 'string') {
+    const trimmed = v.trim()
+    if (/^\d+$/.test(trimmed)) return Number(trimmed)           // epoch sent as text
+    const ms = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00` : trimmed)
+    return Number.isNaN(ms) ? null : Math.floor(ms / 1000)      // ISO date, local midnight
+  }
+  return null
+}
+
 export function createKanbanCard(card: {
   id: string
   title: string
@@ -2224,8 +2316,21 @@ export function createKanbanCard(card: {
   ).run(
     card.id, card.title, card.description ?? null, status,
     card.assignee ?? null, card.priority ?? 'normal',
-    card.project ?? null, card.parent_id ?? null, card.due_date ?? null, sortOrder, now, now
+    card.project ?? null, card.parent_id ?? null, normaliseDueDate(card.due_date), sortOrder, now, now
   )
+  // A card BORN in a status other than 'planned' gets its opening event row
+  // here, because nothing else will ever write one for it: kanban_card_events
+  // is only appended on a MOVE, so a card created straight into in_progress had
+  // no history at all and its time-in-progress read "not measured" forever.
+  // Measured 2026-09-22 on card #299, created in_progress via POST /api/kanban:
+  // zero event rows, active_seconds absent. from_status is NULL, which is the
+  // honest value -- the card came into being here, it did not move from
+  // somewhere.
+  if (status !== 'planned') {
+    db.prepare(
+      'INSERT INTO kanban_card_events (card_id, from_status, to_status, actor, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(card.id, null, status, card.assignee ?? null, now)
+  }
   // Filing a new subcard is work on the thread.
   touchAncestorChain(card.parent_id, now, card.id)
 }
@@ -2254,7 +2359,13 @@ export function updateKanbanCard(
   const card = getKanbanCard(id)
   if (!card) return false
   const now = Math.floor(Date.now() / 1000)
-  const f = { ...card, ...fields, updated_at: now }
+  // Coerce only what the CALLER sent, never the merged record: normalising a
+  // legacy string already in the row would make an unrelated PUT look like a
+  // real change and stamp updated_at, which is exactly the #1023 staleness
+  // signal the check below exists to protect.
+  const incoming = { ...fields }
+  if ('due_date' in incoming) incoming.due_date = normaliseDueDate(incoming.due_date)
+  const f = { ...card, ...incoming, updated_at: now }
   // #1023: bump updated_at ONLY when a writable column actually changes. The
   // UPDATE below always matches the row, so a no-op PUT (an unknown field, or a
   // known field echoed back unchanged) used to stamp updated_at=now and report
@@ -2321,6 +2432,35 @@ export function moveKanbanCard(id: string, status: KanbanCard['status'], sortOrd
       'INSERT INTO kanban_card_events (card_id, from_status, to_status, actor, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(id, prev, status, actor ?? null, now)
   }
+  // Priority follows the column, because the owner decided what priority MEANS
+  // (Telegram msg 3427/3430, 2026-09-22): high = "being worked on right now",
+  // normal = "this is next", low = background. Measured the morning he asked:
+  // 19 cards claimed high or urgent while 2 were actually in progress, so the
+  // field carried a wish, not a state.
+  //
+  // Coupled HERE, at the column boundary, and nowhere else. The alternative --
+  // re-applying the rule on a timer -- would stomp a priority somebody set by
+  // hand a few minutes earlier, which is how a helpful rule becomes one people
+  // work around.
+  //
+  // Two deliberate exceptions:
+  //   - `urgent` is never touched. It sits ABOVE the three levels and is always
+  //     a human's explicit call.
+  //   - leaving in_progress drops to `normal`, not `low`: a card someone just
+  //     put down is the strongest candidate for "what is next", and burying it
+  //     at the bottom is how work gets lost between two people.
+  if (changed && prev !== undefined && prev !== status) {
+    const pr = db.prepare('SELECT priority FROM kanban_cards WHERE id=?').get(id) as
+      { priority: string } | undefined
+    if (pr && pr.priority !== 'urgent') {
+      let next: string | null = null
+      if (status === 'in_progress') next = 'high'
+      else if (prev === 'in_progress') next = status === 'done' ? 'low' : 'normal'
+      if (next && next !== pr.priority) {
+        db.prepare('UPDATE kanban_cards SET priority=? WHERE id=?').run(next, id)
+      }
+    }
+  }
   return changed
 }
 
@@ -2343,6 +2483,12 @@ export function unarchiveKanbanCard(id: string): boolean {
 
 export interface ArchivedKanbanCard {
   id: string
+  // The human-facing card number (sqlite rowid), the same value the board
+  // prints as #<seq>. It was missing from this query until 2026-09-22, so
+  // every archived card rendered without its number and could not be looked
+  // up by it -- exactly what the owner asked for when he asked that closed
+  // cards stay findable (Telegram msg 3430).
+  seq: number
   title: string
   status: string
   project: string | null
@@ -2362,7 +2508,7 @@ export function listArchivedKanbanCards(opts: {
 }): ArchivedKanbanCard[] {
   const { q, project, label, from, to, limit } = opts
   let sql = `
-    SELECT DISTINCT kc.id, kc.title, kc.status, kc.project, kc.priority, kc.assignee, kc.archived_at, kc.updated_at
+    SELECT DISTINCT kc.rowid AS seq, kc.id, kc.title, kc.status, kc.project, kc.priority, kc.assignee, kc.archived_at, kc.updated_at
     FROM kanban_cards kc
   `
   const params: unknown[] = []
@@ -2378,9 +2524,19 @@ export function listArchivedKanbanCards(opts: {
   if (from)    { sql += ' AND kc.archived_at >= ?'; params.push(from) }
   if (to)      { sql += ' AND kc.archived_at <= ?'; params.push(to) }
   if (q) {
-    sql += ' AND (kc.title LIKE ? OR kc.project LIKE ? OR kc.assignee LIKE ?)'
-    const like = `%${q}%`
-    params.push(like, like, like)
+    // A query shaped like "295" or "#295" means the CARD NUMBER, and then it
+    // means only that: an exact rowid match, never a substring. Same rule as
+    // the board's search box, so one habit works in both places. "29" must not
+    // pull in 129 and 295 when the point of typing a number is one card.
+    const num = /^#?(\d+)$/.exec(q)
+    if (num) {
+      sql += ' AND kc.rowid = ?'
+      params.push(Number(num[1]))
+    } else {
+      sql += ' AND (kc.title LIKE ? OR kc.project LIKE ? OR kc.assignee LIKE ?)'
+      const like = `%${q}%`
+      params.push(like, like, like)
+    }
   }
   sql += ' ORDER BY kc.archived_at DESC LIMIT ?'
   params.push(limit)

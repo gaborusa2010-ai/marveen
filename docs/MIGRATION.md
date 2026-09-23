@@ -34,8 +34,15 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 **(2) Home-relative — under `$HOME` (`home/` group in the archive)**
 - `~/.claude/skills/**` — the self-built skill library
 - `~/.claude/scheduled-tasks/**` — file-based scheduled tasks (SKILL.md + task-config.json)
-- `~/.claude/channels/*/.env` — MAIN orchestrator channel token
-- `~/.claude/channels/*/access.json`, `invites.json`, `approved/**` — pairing allowlist + approvals
+- `<repo>/.claude/channels/*/.env` — MAIN orchestrator channel token. **Install-scoped since
+  #915** (a shared `~/.claude/channels/` meant any other Claude Code session on the host
+  loaded the same bot token and silently took the bot over). `~/.claude/channels/*/` is a
+  legacy fallback that a migrated install leaves empty -- measured 2026-09-23 on this
+  install: zero entries under `$HOME`, the live files all under `<repo>/`.
+- `<repo>/.claude/channels/*/access.json`, `invites.json`, `approved/**` — pairing allowlist
+  + approvals. Same scoping; copy the home path too only if it is non-empty.
+- `agents/<name>/.claude/channels/*/` — the sub-agents' own channel state, always
+  install-scoped, never under `$HOME`.
 - `~/Library/LaunchAgents/com.<MAIN_AGENT_ID>.*.plist` -- launchd jobs (the prefix is your `MAIN_AGENT_ID`, `marveen` by default)
 
 **(3) Docker volumes — NOT in the tarball, migrate separately**
@@ -89,15 +96,48 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 2. **Clone the repo** to the same absolute path if possible
    (`/Users/<user>/marveen`). A different path means every launchd plist and
    any absolute reference must be updated (see pitfalls).
-3. **Restore the tarball**, preserving modes (the token files are `0600`):
+3. **Restore the tarballs**, preserving modes (the token files are `0600`).
+
+   **SINCE 2026-09-22 THIS IS TWO FILES, NOT ONE.** The nightly archive is
+   differential: `-full.tar.gz` is the weekly base, `-diff.tar.gz` holds
+   everything that changed since that base. Take the newest full and the newest
+   diff, and **extract the full FIRST** so the diff overwrites it. Archives
+   dated before 2026-09-22 carry no suffix and are complete on their own.
+
    ```bash
-   mkdir -p /tmp/restore && tar -xpzf claudeclaw-YYYYmmdd-HHMMSS.tar.gz -C /tmp/restore
-   # inspect /tmp/restore/MANIFEST.txt, then:
+   mkdir -p /tmp/restore
+   tar -xpzf claudeclaw-YYYYmmdd-HHMMSS-full.tar.gz -C /tmp/restore   # base, first
+   tar -xpzf claudeclaw-YYYYmmdd-HHMMSS-diff.tar.gz -C /tmp/restore   # newest diff, over it
+   # inspect /tmp/restore/MANIFEST.txt -- a diff's manifest names its base, then:
    rsync -a /tmp/restore/repo/  <repo>/         # repo group -> project root
    rsync -a /tmp/restore/home/  "$HOME/"        # home group -> $HOME
    ```
-   Verify perms: `ls -l <repo>/store/.dashboard-token ~/.claude/channels/*/.env`
-   should show `-rw-------`.
+
+   **Only those two.** Intermediate diffs are redundant: every diff is measured
+   against the full, not against the previous night, so the newest one already
+   contains what the earlier ones did. Nothing breaks if you extract them in
+   date order anyway.
+
+   **A differential restore brings back deleted files.** A diff records what
+   changed and what was added, never what was removed, so a file deleted during
+   the week reappears. That is the safe direction for a backup, but it is real:
+   after a restore, the tree may be a superset of what the old machine had.
+
+   Verify perms: `ls -l <repo>/store/.dashboard-token <repo>/.claude/channels/*/.env`
+   should show `-rw-------`. (`scripts/backup.sh` already archives BOTH the install-scoped
+   and the legacy home path -- measured 2026-09-23, lines 545-558 -- so a restore from the
+   tarball is complete either way; this manual step is the one that used to miss it.)
+
+3b. **The pictures and PDFs are in a separate archive** (`backups/kepek/kepek-*.tar.gz`,
+   Drive folder "Marveen Kepek"). They are NOT in the nightly archives, by the
+   owner's decision of 2026-09-22 (see `docs/GAZDA-DONTESEK.md`): 1476 files and
+   2.9 GB that almost never change. It is unencrypted and extracts at the repo
+   root, paths already relative to it:
+   ```bash
+   tar -xzf kepek-YYYYmmdd-HHMMSS.tar.gz -C <repo>
+   ```
+   Skip it only if the new machine does not need the artwork; the fleet runs
+   without it, Roxy's work does not.
 4. **Build the app** (do NOT copy `dist/` or `node_modules/` from the old box):
    ```bash
    cd <repo> && npm install && npm run build

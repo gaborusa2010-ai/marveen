@@ -165,13 +165,39 @@ def upload(path, folder_id, token, chunk=CHUNK, verbose=True):
 
 
 def prune(folder_id, keep, token):
+    """Keep the newest `keep` files -- but never break a restore chain.
+
+    Since 2026-09-22 the nightly archive is DIFFERENTIAL: a `-diff.tar.gz` is
+    only restorable together with the `-full.tar.gz` it was measured against
+    (scripts/backup-delta.py). A plain "newest N" sweep therefore has a failure
+    mode that only shows up during a restore, which is the worst moment to
+    discover it: delete the full, and every differential after it becomes a bag
+    of loose files with no base.
+
+    So the newest full archive and everything created after it are pinned,
+    whatever `keep` says. With a weekly full and nightly differentials the
+    chain is 7 files, well inside the default keep=8 -- the pin is the guard
+    that makes that arithmetic something other than a coincidence.
+    """
     r = g.call(DRIVE, params={
         "q": f"'{folder_id}' in parents and trashed=false",
         "orderBy": "createdTime desc",
         "fields": "files(id,name,createdTime)"}, token=token)
     files = r.get("files") or []
+
+    # files is newest-first, so the first full archive in it is the newest one.
+    # Archives from before the differential split carry no suffix and are full.
+    pinned = len(files)
+    for i, f in enumerate(files):
+        if not f["name"].startswith("claudeclaw-"):
+            continue
+        if "-diff.tar.gz" not in f["name"]:
+            pinned = i + 1          # this full and everything newer than it
+            break
+
+    cut = max(keep, pinned)
     removed = []
-    for f in files[keep:]:
+    for f in files[cut:]:
         g.call(f"{DRIVE}/{f['id']}", method="DELETE", token=token)
         removed.append(f["name"])
     return removed

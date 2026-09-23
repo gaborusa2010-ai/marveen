@@ -58,7 +58,12 @@ send_night_briefing() {
   # agent-msg.sh, which reports FAIL on a rejected send -- the file is only
   # retired after a confirmed id, so a failed delivery is retried next start
   # instead of vanishing.
-  BRIEF="$BASE/store/night-briefing-$AGENT.txt"
+  # 2026-09-20: a szkript mar nem csak ejszakai muszakra megy (Cody es Roxy
+  # reggeli inditoja is ezt hivja, a gazda kerese, Telegram msg 3124). Az uj,
+  # semleges nev az elsodleges; a regi megmarad, hogy Anorak folyamatban levo
+  # esti rendje egy sorral se valtozzon.
+  BRIEF="$BASE/store/briefing-$AGENT.txt"
+  [ -s "$BRIEF" ] || BRIEF="$BASE/store/night-briefing-$AGENT.txt"
   if [ -s "$BRIEF" ]; then
     if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen "$AGENT" - < "$BRIEF" 2>&1)"; then
       case "$OUT" in
@@ -86,7 +91,7 @@ send_night_briefing() {
     # o az, aki meg tudja irni -- az ejszakai munkasnak ebbol nincs haszna.
     echo "$(date '+%F %T') $AGENT NINCS eligazitas-fajl ($BRIEF), ures prompton indul"
     if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen marveen - <<EOF
-[EJSZAKAI INDULAS ELIGAZITAS NELKUL] $AGENT elindult, es NINCS eligazitas-fajl: $BRIEF
+[INDULAS ELIGAZITAS NELKUL] $AGENT elindult, es NINCS eligazitas-fajl: $BRIEF
 Ures prompton all. Ha van mit atadni neki, kuldd el kozvetlen uzenetben most.
 Ezt a sort az agent-night-shift.sh irja, nem maga az agens.
 EOF

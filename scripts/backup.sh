@@ -35,8 +35,47 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # real backup directory (and its retention sweep).
 BACKUP_DIR="${BACKUP_DIR:-${REPO_ROOT}/backups}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}.tar.gz"
-KEEP=14
+
+# --- FULL or DIFFERENTIAL? ------------------------------------------------
+# Until 2026-09-22 every run was a full copy. The owner asked for the change
+# after seeing the size (Telegram msg 3533): "csak azt mentsuk el ami
+# valtozott,ami hozza lett adva...". Measured that evening on the tree this
+# script actually takes: 5452 files / 3371.7 MB whole, 204 files / 225.7 MB
+# changed in 24 hours, 1023 files / 518.8 MB changed in 7 days.
+#
+# DIFFERENTIAL, not incremental: every nightly archive is compared against the
+# last FULL one, never against yesterday's. A restore is therefore always
+# exactly two files (newest full + newest differential) and no archive can be
+# broken by a bad one in between. The reasoning in full: scripts/backup-delta.py.
+#
+# Forcing a full run: `BACKUP_MODE=full scripts/backup.sh` or `--full`.
+# Overridable for the same reason BACKUP_DIR is: a test must be able to
+# exercise the full/differential pair without touching the real baseline.
+BASELINE="${BASELINE:-${REPO_ROOT}/store/backup-baseline.json}"
+FULL_EVERY_DAYS="${FULL_EVERY_DAYS:-7}"
+BACKUP_MODE="${BACKUP_MODE:-auto}"
+[[ "${1:-}" == "--full" ]] && BACKUP_MODE=full
+if [[ "${BACKUP_MODE}" == "auto" ]]; then
+  if python3 "${REPO_ROOT}/scripts/backup-delta.py" due \
+       --baseline "${BASELINE}" --backup-dir "${BACKUP_DIR}" \
+       --max-age-days "${FULL_EVERY_DAYS}"; then
+    BACKUP_MODE=full
+  else
+    BACKUP_MODE=diff
+  fi
+fi
+if [[ "${BACKUP_MODE}" == "full" ]]; then
+  ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}-full.tar.gz"
+else
+  ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}-diff.tar.gz"
+fi
+echo "backup: mode=${BACKUP_MODE}  archive=$(basename "${ARCHIVE}")"
+
+# Retention is chain-aware now: a full archive may not be pruned while a
+# differential still depends on it, so a flat "keep the newest 14" would break
+# restores. KEEP_FULL full archives are kept, plus every differential newer
+# than the oldest kept full.
+KEEP_FULL="${KEEP_FULL:-2}"
 
 mkdir -p "${BACKUP_DIR}"
 cd "${REPO_ROOT}"
@@ -55,7 +94,21 @@ HOMELIST="$(mktemp -t claudeclaw-home.XXXXXX)"
 MANIFEST="$(mktemp -t claudeclaw-manifest.XXXXXX)"
 STAGE="$(mktemp -d -t claudeclaw-stage.XXXXXX)"
 BUNDLE=""
-trap 'rm -f "${REPOLIST}" "${HOMELIST}" "${MANIFEST}"; [[ -n "${BUNDLE}" ]] && rm -f "${BUNDLE}"; rm -rf "${STAGE}"' EXIT
+# Declared up front so every trap below can name them unconditionally: the
+# differential filter (further down) only fills them in when it runs.
+REPOLIST_FULL="${REPOLIST}"
+HOMELIST_FULL="${HOMELIST}"
+REPOLIST_DIFF=""
+HOMELIST_DIFF=""
+cleanup() {
+  rm -f "${REPOLIST}" "${HOMELIST}" "${REPOLIST_FULL}" "${HOMELIST_FULL}" "${MANIFEST}" ${ARCHIVE_LIST:+"${ARCHIVE_LIST}"}
+  [[ -n "${REPOLIST_DIFF}" ]] && rm -f "${REPOLIST_DIFF}"
+  [[ -n "${HOMELIST_DIFF}" ]] && rm -f "${HOMELIST_DIFF}"
+  [[ -n "${BUNDLE}" ]] && rm -f "${BUNDLE}"
+  rm -rf "${STAGE}"
+  return 0
+}
+trap cleanup EXIT
 
 # add_if <listfile> <base> <relpath>  -- append relpath when <base>/<relpath> exists.
 add_if() {
@@ -249,7 +302,24 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/briefs
 #                               A kvota megmerve ugyanakkor: 54,5 / 214,7 GB
 #                               hasznalt, 160 GB szabad. Elfer.
 #   .claude-config           -- per-agent plugin/cache tree, reinstalled
-#   inbox/, progress/        -- channel runtime: raw attachments and seen-markers
+#   progress/                -- channel runtime: seen-markers and the progress
+#                               debug log. Still excluded; that one really is
+#                               transient.
+#   (inbox/ WAS excluded here until 2026-09-16.) Forgacs measured the assumption
+#                               under it and it did not hold: the exclusion was
+#                               argued as "the raw attachment is disposable
+#                               because whatever matters is copied out by
+#                               `jobs.py photo`". Of HIS 28 inbox photos exactly
+#                               2 exist in store/, and both are hand-named, so
+#                               the photo command did not put them there -- 26
+#                               live only in the inbox. Measured across the fleet
+#                               the same morning: 47 files, 5,1 MB in the
+#                               sub-agent inboxes (cody 16, forgacs 28, margo 3,
+#                               all JPG), and the work-log records carry ZERO
+#                               photos in all 20 rows. The Telegram Bot API
+#                               serves no history, so a lost attachment is gone
+#                               for good. 5,1 MB against a 2,99 GB archive is
+#                               0,17 percent.
 #   *.pid                    -- channel runtime too: four 7-byte process ids that
 #                               are wrong the moment the bot restarts. Named here
 #                               because backup-coverage.py otherwise reports
@@ -284,15 +354,77 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/briefs
 #                               Ha a `agents/*/CLAUDE.md` valaha gitbe kerul (kartya
 #                               94883820), ez a kizaras VISSZATEHETO.
 if [[ -d agents ]]; then
+  # EGY NAPRA SZOLO, MAGATOL LEJARO KIZARAS -- store/backup-skip-once.txt
+  #
+  # Az elso sor egy DATUM (YYYY-MM-DD), a tobbi sor egy-egy `find -path` minta.
+  # A kizaras CSAK akkor hat, ha az elso sor a MAI nap. Holnap a fajl magatol
+  # hatastalan lesz, tehat egy elfelejtett bejegyzes nem tunteti el csendben
+  # ugyanazt a mappat het napon at. Ures vagy hianyzo fajl = a mai viselkedes,
+  # beture valtozatlanul.
+  #
+  # Miert kellett (2026-09-16 19:4x): harom napja nem volt ELLENORZOTT, gepen
+  # kivuli masolat. A helyi archivum es a gpg RENDBEN elkeszult (2,99 GB), a
+  # FELTOLTES allt meg 1152/2848 MB-nal. A gazda engedelye erre az egy estere:
+  # Telegram 2899, "mehet", valaszul a 2898-ra, amiben pontosan ezt kertem.
+  # EZ NEM VONJA VISSZA a 2026-09-05-i dontesét ("Mentes.", a teljes valtozat):
+  # az marad az alapertelmezes, ez egyetlen futasra szol.
+  _SKIP_FILE="${REPO_ROOT}/store/backup-skip-once.txt"
+  _skip_args=()
+  if [[ -f "${_SKIP_FILE}" ]]; then
+    _skip_day="$(head -1 "${_SKIP_FILE}" | tr -d '\r\n ')"
+    if [[ "${_skip_day}" == "$(date +%Y-%m-%d)" ]]; then
+      while IFS= read -r _pat; do
+        _pat="$(printf '%s' "${_pat}" | tr -d '\r')"
+        [[ -z "${_pat}" || "${_pat}" == \#* ]] && continue
+        _skip_args+=( -not -path "${_pat}" )
+        echo "backup: EGY-NAPOS KIZARAS aktiv: ${_pat}" >&2
+      done < <(tail -n +2 "${_SKIP_FILE}")
+    else
+      echo "backup: store/backup-skip-once.txt van, de a datuma (${_skip_day}) nem a mai -- FIGYELMEN KIVUL HAGYVA." >&2
+    fi
+  fi
   find agents -type f \
     -not -path '*/.claude-config/*' \
-    -not -path '*/inbox/*' \
     -not -path '*/progress/*' \
     -not -path '*/__pycache__/*' \
     -not -path '*/node_modules/*' \
     -not -path '*/.venv/*' \
     -not -name '*.pid' \
+    "${_skip_args[@]}" \
     -print >> "${REPOLIST}"
+
+  # THE PICTURES AND PDFs LIVE IN THEIR OWN ARCHIVE SINCE 2026-09-22.
+  # The owner's decision (Telegram msg 3536/3539). Measured that evening: 1476
+  # files, 2973.7 MB -- 88% of everything this script carried, and the part
+  # that changes least. scripts/backup-images.sh takes them once and rebuilds
+  # only when they move.
+  #
+  # `covered` is the load-bearing word. It does NOT print every image; it
+  # prints only the ones whose current mtime+size match a version already
+  # inside an UPLOADED image archive. A picture rendered an hour ago is not on
+  # that list, so it stays in tonight's archive until the image backup catches
+  # up. The failure this shape rules out is the one that matters: a file in
+  # NEITHER archive. A file in both is merely wasteful.
+  #
+  # If backup-images.sh has never run, `covered` prints nothing and this block
+  # subtracts nothing -- the nightly archive keeps carrying all of it, exactly
+  # as before. Nothing is removed from cover by installing this; cover is
+  # removed only by an image archive that provably holds the file.
+  if [[ -x "${REPO_ROOT}/scripts/backup-images.sh" ]]; then
+    _IMG_COVERED="$(mktemp -t claudeclaw-imgcov.XXXXXX)"
+    if bash "${REPO_ROOT}/scripts/backup-images.sh" covered > "${_IMG_COVERED}" 2>/dev/null \
+       && [[ -s "${_IMG_COVERED}" ]]; then
+      _before="$(wc -l < "${REPOLIST}" | tr -d ' ')"
+      _KEPT="$(mktemp -t claudeclaw-kept.XXXXXX)"
+      # -F -x -f: whole-line, fixed-string matching, so a path is never treated
+      # as a pattern and never matches a longer path that merely contains it.
+      grep -F -x -v -f "${_IMG_COVERED}" "${REPOLIST}" > "${_KEPT}" || true
+      mv "${_KEPT}" "${REPOLIST}"
+      _after="$(wc -l < "${REPOLIST}" | tr -d ' ')"
+      echo "backup: $((_before - _after)) kep/PDF kihagyva (a keparchivum mar tartalmazza oket)"
+    fi
+    rm -f "${_IMG_COVERED}"
+  fi
 fi
 
 # The PROJECT's own Claude configuration: settings.json (which wires up the
@@ -405,8 +537,11 @@ add_if "${HOMELIST}" "${HOME}" .claude/tools
 if [[ -d "${HOME}/.claude/projects" ]]; then
   ( cd "${HOME}" && find .claude/projects -maxdepth 2 -type d -name memory -print ) >> "${HOMELIST}"
 fi
-# MAIN orchestrator channel tokens + pairing state, per provider. bot.pid and
-# inbox/ are runtime/transient and intentionally excluded. Since #915 the
+# MAIN orchestrator channel tokens + pairing state, per provider. bot.pid is
+# runtime/transient and intentionally excluded. NOT inbox/ any more: see the
+# 2026-09-16 note in the header list. On a migrated install the main inbox is
+# already carried by the repo-root .claude block further up; this HOME branch
+# only matters for an unmigrated one. Since #915 the
 # main state dir is install-scoped (<repo>/.claude/channels/<provider>); the
 # HOME base only still holds it on an unmigrated install -- take both, each
 # from its own list so restore puts them back where they came from.
@@ -477,9 +612,52 @@ if [[ ! -s "${REPOLIST}" && ! -s "${HOMELIST}" ]]; then
   exit 0
 fi
 
+# --- Coverage manifest: ALWAYS the full picture. ---------------------------
+# scripts/backup-coverage.py answers "what does the backup set NOT cover?" from
+# store/.last-backup-manifest.txt. That question is about the whole protected
+# set, not about tonight's delta, so this copy is written from the UNFILTERED
+# lists -- before the differential filter runs below. Writing a differential's
+# short list here would make every unchanged file look uncovered.
+{
+  echo "Marveen backup coverage ${STAMP} (mode=${BACKUP_MODE}; this list is the FULL protected set, not the archive contents)"
+  echo "--- repo/ ---"; sed 's,^,repo/,' "${REPOLIST}" 2>/dev/null || true
+  echo "--- home/ ---"; sed 's,^,home/,' "${HOMELIST}" 2>/dev/null || true
+} > "${REPO_ROOT}/store/.last-backup-manifest.txt" 2>/dev/null || true
+
+# REPOLIST_FULL / HOMELIST_FULL were pinned to the unfiltered lists at the top:
+# the baseline snapshot after a successful FULL run must describe the whole set,
+# not whatever subset got archived.
+
+# --- Differential filter. --------------------------------------------------
+# Drops every file byte-identical (mtime + size) to the last FULL backup.
+# Directories in the lists are expanded to files first, because that is what
+# `cp -pR` would actually stage.
+if [[ "${BACKUP_MODE}" == "diff" ]]; then
+  REPOLIST_DIFF="$(mktemp -t claudeclaw-repo-diff.XXXXXX)"
+  HOMELIST_DIFF="$(mktemp -t claudeclaw-home-diff.XXXXXX)"
+  if python3 "${REPO_ROOT}/scripts/backup-delta.py" filter \
+       --baseline "${BASELINE}" --repo-root "${REPO_ROOT}" --home "${HOME}" \
+       --repolist "${REPOLIST_FULL}" --homelist "${HOMELIST_FULL}" \
+       --out-repo "${REPOLIST_DIFF}" --out-home "${HOMELIST_DIFF}"; then
+    REPOLIST="${REPOLIST_DIFF}"
+    HOMELIST="${HOMELIST_DIFF}"
+  else
+    # The filter refuses rather than guesses when the baseline is unusable.
+    # Falling through to a full archive is the safe direction: a too-large
+    # backup costs bandwidth, a too-small one costs data.
+    echo "backup: the differential filter failed -- falling back to a FULL archive" >&2
+    BACKUP_MODE=full
+    ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}-full.tar.gz"
+  fi
+fi
+
 # --- Manifest (stored at the archive root for self-description). -----------
 {
   echo "Marveen backup ${STAMP}"
+  echo "mode: ${BACKUP_MODE}$( [[ "${BACKUP_MODE}" == "diff" ]] && echo "   base: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive"])' "${BASELINE}" 2>/dev/null || echo '?')" )"
+  if [[ "${BACKUP_MODE}" == "diff" ]]; then
+    echo "RESTORE NEEDS TWO ARCHIVES: the base named above, extracted first, then this one over it."
+  fi
   echo "host: $(hostname 2>/dev/null || echo '?')   user: ${USER:-?}   home: ${HOME}"
   echo "repo root: ${REPO_ROOT}"
   echo "Restore: tar -xpzf <archive> -C <tmp>; copy repo/* -> project root, home/* -> \$HOME."
@@ -511,7 +689,7 @@ cp "${MANIFEST}" "${STAGE}/MANIFEST.txt"
 # this file cannot drift from what was archived; a second copy of the list-
 # building logic would have become wrong the first time either half changed.
 # Read it with scripts/backup-coverage.py.
-cp "${MANIFEST}" "${REPO_ROOT}/store/.last-backup-manifest.txt" 2>/dev/null || true
+# (Written ABOVE, from the unfiltered lists -- see the coverage-manifest block.)
 
 stage_group() {  # stage_group <listfile> <base> <group>
   local list="$1" base="$2" group="$3" rel parent
@@ -554,7 +732,7 @@ echo "backup: wrote ${ARCHIVE} ($(wc -c < "${ARCHIVE}" | awk '{print $1}') bytes
 #     small and useless -- the 09-04 shape -- shows up here even if the
 #     manifest itself was built wrong).
 ARCHIVE_LIST="$(mktemp -t claudeclaw-verify.XXXXXX)"
-trap 'rm -f "${REPOLIST}" "${HOMELIST}" "${MANIFEST}" "${ARCHIVE_LIST}"; [[ -n "${BUNDLE}" ]] && rm -f "${BUNDLE}"; rm -rf "${STAGE}"' EXIT
+trap cleanup EXIT   # ARCHIVE_LIST is picked up by the same cleanup()
 tar -tzf "${ARCHIVE}" > "${ARCHIVE_LIST}"
 
 missing=0
@@ -581,19 +759,27 @@ done < <(sed -e 's/  *(.*)$//' "${MANIFEST}")
 # Load-bearing by name. Each one has already been lost or nearly lost once:
 # the memory directories and the local-commit bundle on 2026-09-04, the
 # credential-carrying store/ files by the whitelist that preceded it.
-for marker in "repo/store/claudeclaw.db" "home/.claude/skills" "home/.claude/scheduled-tasks"; do
-  grep -qE "^${marker}(/|$)" "${ARCHIVE_LIST}" || {
-    echo "backup: MISSING load-bearing item: ${marker}" >&2
-    missing=$((missing + 1))
-  }
-done
-# The file-based memories: only required when this host actually has some, so
-# a fresh install does not fail its first backup.
-if ( cd "${HOME}" && find .claude/projects -maxdepth 2 -type d -name memory -print -quit 2>/dev/null | grep -q . ); then
-  grep -qE "^home/\.claude/projects/.*/memory(/|$)" "${ARCHIVE_LIST}" || {
-    echo "backup: MISSING load-bearing item: the file-based memory directories" >&2
-    missing=$((missing + 1))
-  }
+#
+# FULL RUNS ONLY, and the reason matters: a differential legitimately omits
+# everything that did not change, so demanding these names there would fail a
+# correct archive on any quiet day. The guarantee they encode still holds,
+# because a differential is never restored alone -- its base is a full archive
+# that passed exactly this check. Card: the 2026-09-21 truncated backup (#298).
+if [[ "${BACKUP_MODE}" == "full" ]]; then
+  for marker in "repo/store/claudeclaw.db" "home/.claude/skills" "home/.claude/scheduled-tasks"; do
+    grep -qE "^${marker}(/|$)" "${ARCHIVE_LIST}" || {
+      echo "backup: MISSING load-bearing item: ${marker}" >&2
+      missing=$((missing + 1))
+    }
+  done
+  # The file-based memories: only required when this host actually has some, so
+  # a fresh install does not fail its first backup.
+  if ( cd "${HOME}" && find .claude/projects -maxdepth 2 -type d -name memory -print -quit 2>/dev/null | grep -q . ); then
+    grep -qE "^home/\.claude/projects/.*/memory(/|$)" "${ARCHIVE_LIST}" || {
+      echo "backup: MISSING load-bearing item: the file-based memory directories" >&2
+      missing=$((missing + 1))
+    }
+  fi
 fi
 
 if [[ "${missing}" -gt 0 ]]; then
@@ -624,10 +810,55 @@ echo "backup: verified $(grep -cE '^(repo|home)/' "${MANIFEST}") manifest entrie
 # Google Drive, or any other cloud-backup folder. Keep it local.
 echo "backup: WARNING -- archive contains sensitive tokens; keep ${BACKUP_DIR} out of cloud-sync folders (iCloud / Dropbox / Google Drive)." >&2
 
-# Keep the newest ${KEEP} archives, drop the rest. while-read (not mapfile)
-# for macOS bash 3.2 compatibility.
-ls -1t "${BACKUP_DIR}"/claudeclaw-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while IFS= read -r f; do
-  [[ -z "${f}" ]] && continue
-  rm -f "${f}"
-  echo "backup: pruned $(basename "${f}")"
-done
+# --- The baseline: only after a FULL archive has been verified. ------------
+# Written from the UNFILTERED lists, so the next differential compares against
+# the whole protected set. The ordering is the load-bearing part: a baseline
+# written before verification would quietly make every following differential
+# incomplete, and nothing downstream would notice -- the archives would all be
+# valid, just missing the files the failed full run never carried.
+if [[ "${BACKUP_MODE}" == "full" ]]; then
+  python3 "${REPO_ROOT}/scripts/backup-delta.py" snapshot \
+    --baseline "${BASELINE}" --repo-root "${REPO_ROOT}" --home "${HOME}" \
+    --repolist "${REPOLIST_FULL}" --homelist "${HOMELIST_FULL}" \
+    --stamp "${STAMP}" --archive "$(basename "${ARCHIVE}")" || {
+      echo "backup: could not write the baseline -- the next run will be FULL" >&2
+      rm -f "${BASELINE}"
+    }
+fi
+
+# --- Retention, chain-aware. -----------------------------------------------
+# A flat "keep the newest N" would eventually delete a full archive that a
+# newer differential still needs, and the loss would only surface during a
+# restore -- the worst possible moment to find out. So: keep the newest
+# ${KEEP_FULL} FULL archives, keep every differential newer than the oldest
+# kept full, drop everything else. Legacy archives from before 2026-09-22 carry
+# neither suffix; they are treated as full, because that is what they are.
+python3 - "${BACKUP_DIR}" "${KEEP_FULL}" <<'PRUNE'
+import os, sys
+backup_dir, keep_full = sys.argv[1], int(sys.argv[2])
+try:
+    names = [n for n in os.listdir(backup_dir)
+             if n.startswith("claudeclaw-") and n.endswith(".tar.gz")]
+except OSError:
+    sys.exit(0)
+# Sort by the timestamp in the name, not by mtime: an upload or a copy can
+# touch mtime, and the name is what a human reads when restoring.
+names.sort(key=lambda n: n.split("claudeclaw-", 1)[1][:15])
+fulls = [n for n in names if not n.endswith("-diff.tar.gz")]
+if not fulls:
+    sys.exit(0)
+keep_fulls = set(fulls[-keep_full:])
+floor = min(keep_fulls, key=lambda n: n.split("claudeclaw-", 1)[1][:15])
+floor_stamp = floor.split("claudeclaw-", 1)[1][:15]
+for n in names:
+    stamp = n.split("claudeclaw-", 1)[1][:15]
+    keep = n in keep_fulls or (n.endswith("-diff.tar.gz") and stamp >= floor_stamp)
+    if keep:
+        continue
+    for path in (os.path.join(backup_dir, n), os.path.join(backup_dir, n + ".gpg")):
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+        print("backup: pruned " + os.path.basename(path))
+PRUNE

@@ -42,7 +42,7 @@ Socket Mode kapcsolat; flottában ügyelni kell hogy ne nyisson több ügynök p
 
 ### WhatsApp-specifikum
 
-A WhatsApp csatorna a [whatsapp-channel](https://github.com/Szotasz/whatsapp-channel) plugin (Baileys, WhatsApp Web protokoll). `CHANNEL_PROVIDER=whatsapp` -> a `channels.sh` a `whatsapp@marveen-marketplace` plugint indítja, az állapot a `~/.claude/channels/whatsapp/` mappában.
+A WhatsApp csatorna a [whatsapp-channel](https://github.com/Szotasz/whatsapp-channel) plugin (Baileys, WhatsApp Web protokoll). `CHANNEL_PROVIDER=whatsapp` -> a `channels.sh` a `whatsapp@marveen-marketplace` plugint indítja, az állapot a `<repo>/.claude/channels/whatsapp/` mappában (install-scope, a `channels.sh` a `WHATSAPP_STATE_DIR`-t erre exportálja -- `scripts/channels.sh:767,853`).
 
 Beüzemelés:
 
@@ -66,7 +66,7 @@ Egy-kapcsolat szabály: egyszerre csak egy socket használhatja az `auth_state/`
 
 ### Teams-specifikum
 
-A Microsoft Teams csatorna a [claude-channel-teams](https://github.com/Szotasz/claude-channel-teams) plugin (Azure Bot Service transport). `CHANNEL_PROVIDER=teams` -> a `channels.sh` a `teams@marveen-marketplace` plugint indítja, az állapot a `~/.claude/channels/teams/` mappában (a `TEAMS_STATE_DIR` env-en keresztül). A provider-elágazások (PLUGIN_ID, STATE_ENV_VAR, orphan-reaper, plugin-watchdog) ugyanúgy viselkednek mint a többi providernél, külön kezelés nélkül.
+A Microsoft Teams csatorna a [claude-channel-teams](https://github.com/Szotasz/claude-channel-teams) plugin (Azure Bot Service transport). `CHANNEL_PROVIDER=teams` -> a `channels.sh` a `teams@marveen-marketplace` plugint indítja, az állapot a `<repo>/.claude/channels/teams/` mappában (a `TEAMS_STATE_DIR` env-en keresztül, install-scope). A provider-elágazások (PLUGIN_ID, STATE_ENV_VAR, orphan-reaper, plugin-watchdog) ugyanúgy viselkednek mint a többi providernél, külön kezelés nélkül.
 
 Beüzemelés:
 
@@ -87,7 +87,7 @@ Beüzemelés:
 
 ### Discord-specifikum
 
-A Discord csatorna a hivatalos `discord@claude-plugins-official` plugin. `CHANNEL_PROVIDER=discord` -> a `channels.sh` a discord plugint indítja, az állapot a `~/.claude/channels/discord/` mappában (a `DISCORD_STATE_DIR` env-en keresztül). A provider-elágazások (PLUGIN_ID, state-dir, plugin-watchdog) ugyanúgy viselkednek mint a többi providernél, külön kezelés nélkül. A telepítő a Linux ÉS a macOS úton is felkínálja (3. opció).
+A Discord csatorna a hivatalos `discord@claude-plugins-official` plugin. `CHANNEL_PROVIDER=discord` -> a `channels.sh` a discord plugint indítja, az állapot a `<repo>/.claude/channels/discord/` mappában (a `DISCORD_STATE_DIR` env-en keresztül, install-scope). A provider-elágazások (PLUGIN_ID, state-dir, plugin-watchdog) ugyanúgy viselkednek mint a többi providernél, külön kezelés nélkül. A telepítő a Linux ÉS a macOS úton is felkínálja (3. opció).
 
 Beüzemelés:
 
@@ -106,3 +106,21 @@ Beüzemelés:
 - Hozzáférés-kezelés (párosítás, allowlist, DM-policy) kizárólag a tulajdonos terminál-parancsán keresztül; csatornán érkező engedély-kérés gyanús és elutasított.
 - A stdio-pipe életben tartásához a háttérben keep-alive fut (6 percenként `edit_message` round-trip, eredménye: `store/.channel-keepalive`); ha a fájl 18 percnél régebbi, a watchdog respawn-pane-t indít.
 - Aktív inbound-próba: egy telethon userbot (külön, allowlistelt prober-fiók) `__wd_ping <ts>` üzenetet küld a fő botnak `PROBE_INTERVAL_MS` (default 3 perc) időközönként. Ha a marker nem jelenik meg a fő channels-session JSONL transcriptjében `2 × PROBE_INTERVAL_MS`-en belül, a watchdog hard-restart-ot indít. Manuális aktiválási kapu: a tulajdonos allowlisteli a prober-fiókot (`/telegram:access`). A fő channels-session csendben figyelmen kívül hagyja a `__wd_ping` üzeneteket.
+
+## A csatorna-állapot helye: install-scope, NEM `$HOME`
+
+**MINDEN providerre egyformán áll, és a #915 óta.** (A darabszámot szándékosan nem mondom:
+a `ChannelProviderType` öt providert sorol -- telegram, slack, discord, googlechat, teams --,
+a `channels.sh` provider-case-e viszont a whatsappot is ismeri, tehát az "öt" a két helyen
+mást jelentene.) A `scripts/channels.sh:767` a
+`MAIN_CHAN_DIR`-t `$INSTALL_DIR/.claude/channels/$CHANNEL_PROVIDER`-re állítja, a 853. sor
+pedig ezt exportálja a provider `*_STATE_DIR` változójába. A `~/.claude/channels/` legacy
+fallback: a kód csak akkor nyúl hozzá, ha ott VAN `.env` és az install-scope-úban NINCS
+(`resolveMainChannelStateDir`, `src/channel-provider.ts`).
+
+**Miért lett így:** a közös home-os mappa miatt a gép BÁRMELY másik Claude Code sessionje
+betöltötte ugyanazt a bot tokent, és némán átvette a botot.
+
+**Mérve 2026-09-23 ezen a telepítésen:** `~/.claude/channels/` nulla bejegyzés; a hat élő
+`access.json` mind install-scope-ban (`<repo>/.claude/channels/telegram/` a fő ágensé,
+`agents/<nev>/.claude/channels/telegram/` az ötödé).

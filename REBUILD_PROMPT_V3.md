@@ -1144,7 +1144,7 @@ Mindkettonel: `PATH` env kell (`/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:
 
 ### 12. Telegram plugin telepites
 - Kliend a felhasznalonak a telepites lepeseit
-- Ha volt bot token: Channels konfig beallitasa (`~/.claude/channels/telegram/.env` + `access.json`)
+- Ha volt bot token: Channels konfig beallitasa (`<repo>/.claude/channels/telegram/.env` + `access.json` -- install-scope a #915 ota, NEM `$HOME`)
 
 ---
 

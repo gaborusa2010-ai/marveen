@@ -44,7 +44,7 @@ import {
 } from './scheduled-tasks-io.js'
 import { listAgentNames, readFileOr, readAgentRemoteHost, agentDir } from './agent-config.js'
 import { resolveAgentConfigDirForRead } from './claude-plans.js'
-import { readTranscriptMtimeFromProjectDir } from './active-model.js'
+import { readTranscriptMtimeFromProjectDir, mainAgentConfigDirForRead } from './active-model.js'
 import { channelStateDir, getProvider, readChannelToken, type ChannelProviderType } from '../channel-provider.js'
 import {
   agentSessionName,
@@ -977,7 +977,9 @@ async function attemptFireTask(
       // re-fired. Measured 2026-09-04 on cortex-voip-insight: 2069 false-lost
       // re-injections in 24h from a */5 task (288 expected), a 7.5x
       // amplification running unnoticed since 2026-08-27.
-      configDir: agentName === MAIN_AGENT_ID ? undefined : (resolveAgentConfigDirForRead(agentName) ?? undefined),
+      configDir: agentName === MAIN_AGENT_ID
+        ? mainAgentConfigDirForRead(PROJECT_ROOT)
+        : (resolveAgentConfigDirForRead(agentName) ?? undefined),
       timeoutMs: resolveStuckTimeoutMs(task),
       runId: firedRunId,
     })

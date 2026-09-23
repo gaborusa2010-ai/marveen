@@ -426,14 +426,36 @@ export function ensureAgentHooks(
       } else {
         const tplEntries = handlers as HookEntry[]
         const existEntries = existingHooks[event] as HookEntry[]
-        // Collect all command strings already present in this event's hook groups.
+        // Collect what is already present, keyed by MATCHER **and** command.
+        //
+        // MATCHERKEY901 (Anorak, 2026-09-20). The key used to be the command
+        // string alone, per event. The template deliberately registers the SAME
+        // script under two different PreToolUse matchers -- `Bash` and
+        // `Write|Edit|MultiEdit|NotebookEdit` -- with byte-identical command
+        // strings, because the two tool families are two separate ways to reach
+        // the protected tree. With a command-only key, whichever variant landed
+        // first made the other look "already present" FOREVER, and the second
+        // matcher was never installed.
+        //
+        // Measured that day on all five sub-agents: `global-skill-write-gate.mjs`
+        // was registered on `Write|Edit|MultiEdit|NotebookEdit` and missing on
+        // `Bash`, so a shell command that reached the same tree was ungated.
+        //
+        // WHAT THIS DOES NOT EXPLAIN, said out loud: `bash-egress-gate.mjs` is
+        // also in the template on `Bash` and was also missing everywhere, and its
+        // command string is unique -- so this dedupe cannot be its cause. One bug
+        // is fixed here; the other is still open (card e2632440).
+        const key = (matcher: string | undefined, command: string) => `${matcher ?? ''}\u0000${command}`
         const existingCommands = new Set(
-          existEntries.flatMap((e) => (e.hooks ?? []).map((h) => h.command).filter(Boolean)),
+          existEntries.flatMap((e) =>
+            (e.hooks ?? []).map((h) => h.command).filter(Boolean).map((c) => key(e.matcher, c as string)),
+          ),
         )
         for (const tplEntry of tplEntries) {
           // Add hooks that are missing AND safe to register (registration guard).
           const newHooks = (tplEntry.hooks ?? []).filter(
-            (h) => h.command && !existingCommands.has(h.command) && !isUnsafeHookCommand(h.command)
+            (h) => h.command && !existingCommands.has(key(tplEntry.matcher, h.command))
+              && !isUnsafeHookCommand(h.command)
               && !hookScriptAlreadyEffectiveInOtherScope(settingsPath, event, h.command, scopes),
           )
           if (newHooks.length > 0) {
@@ -968,10 +990,50 @@ export function injectEgressGate(existing: Record<string, unknown>): void {
     hooks: [{ type: 'command', command, timeout: 10 }],
   }
   const prev = Array.isArray(hooks.PreToolUse) ? (hooks.PreToolUse as unknown[]) : []
-  hooks.PreToolUse = [
-    ...prev.filter((e) => !JSON.stringify(e).includes('egress-gate.mjs')),
-    entry,
-  ]
+  // SUBSTR994 (Roxy, 2026-09-21; the code below replaces a one-line filter that read
+  // `!JSON.stringify(e).includes('egress-gate.mjs')`).
+  //
+  // TWO defects, and both had to go:
+  //
+  // (1) SUBSTRING INSTEAD OF IDENTITY. `egress-gate.mjs` is a substring of
+  //     `bash-egress-gate.mjs`. So the filter meant to drop this gate's own stale
+  //     WebFetch entry also matched the template's `Bash` group -- a different gate,
+  //     with a different job.
+  // (2) ENTRY-LEVEL PRUNE INSTEAD OF HOOK-LEVEL. Because it filtered whole entries,
+  //     the Bash group's OTHER hook (`global-skill-write-gate.mjs`, the shared
+  //     skill-tree gate) was carried out with it. One name collision took a second,
+  //     unrelated protection off every agent.
+  //
+  // WHY IT ONLY BIT ON AGENT START: the dashboard boot calls ensureEgressGate, which
+  // returns early when the WebFetch command is already wired, so injectEgressGate never
+  // runs there. startAgentProcess -> writeAgentSettingsFromProfile calls it
+  // UNCONDITIONALLY on every spawn. Measured 2026-09-20/21: the boot wrote the Bash
+  // group into all five agents at 17:20, and each agent lost it again in the minute of
+  // its own next start (anorak 23:00, margo 03:00, forgacs 07:00, cody and roxy 08:00).
+  //
+  // The identity test is the PATH SEGMENT, not the suffix: a stale entry from another
+  // checkout still names `.../scripts/hooks/egress-gate.mjs`, so the basename is what
+  // identifies this gate across roots, and `bash-egress-gate.mjs` is a different file.
+  const ezAKapu = (e: unknown): boolean => {
+    const entryHooks = (e as { hooks?: Array<{ command?: string }> })?.hooks
+    if (!Array.isArray(entryHooks)) return false
+    return entryHooks.some((h) => hookCommandNames(h?.command).includes('egress-gate.mjs'))
+  }
+  const megtisztitva = prev.flatMap((e) => {
+    if (!ezAKapu(e)) return [e]
+    const entryHooks = (e as { hooks: Array<{ command?: string }> }).hooks
+    const marad = entryHooks.filter((h) => !hookCommandNames(h?.command).includes('egress-gate.mjs'))
+    // Only the offending hook goes; an entry that still carries others stays put.
+    return marad.length > 0 ? [{ ...(e as object), hooks: marad }] : []
+  })
+  hooks.PreToolUse = [...megtisztitva, entry]
+}
+
+/** Basenames of every script path mentioned in a hook command. Exact segments, so a
+ *  longer sibling (`bash-egress-gate.mjs`) never matches a shorter name. */
+export function hookCommandNames(command: string | undefined): string[] {
+  if (!command) return []
+  return (command.match(/[\w.\-/]+\.(?:mjs|js|py|sh)/g) ?? []).map((p) => p.split('/').pop() ?? '')
 }
 
 // Which Telegram tools carry copyable text out of the install. `reply` is the

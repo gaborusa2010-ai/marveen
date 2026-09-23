@@ -58,6 +58,12 @@ Spec
       # to the runner, not to whatever is left in front of the back. Give it
       # whenever you know it; without it the box stops
       # `drawer_box_rear_clearance` short of the back.
+      # runner_brand: WHOSE runner the deduction belongs to, e.g.
+      #   "Grass Dynapro" or "Blum TANDEM 563H". Free text, never checked and
+      #   never a gate -- it only rides along with the number, into the notes,
+      #   the part row and the cutlist JSON. Give it whenever you give
+      #   `inside_deduction`, because a bare figure reads the same as a guess
+      #   six months later and nobody knows whose leaflet to open.
   ],
   "drawer_front": "overlay",          # "overlay" or "inset"
   "doors": {"count": 2, "handle_board": 50, "gap": 3,
@@ -991,30 +997,49 @@ def build(spec):
         if runner == "under":
             # Size the INSIDE first, then derive the outside. See the note on
             # undermount_inside_deduction above.
-            # WHOSE number is 42? Blum TANDEM's. The workshop's runner is NOT
-            # TANDEM: the owner photographed the box on 2026-08-27 and it is a
-            # GRASS Dynapro (F130 107 853 201, VA NL650 70 3D, soft-close), see
-            # store/muhely/cutlist-benchmark/raw6/01-alulszerelt-sin-hiba.md.
-            # Grass works to a different deduction, and the figure is in the
-            # fitting leaflet in the box ("Korpusinnenmass minus X"), not measured
-            # yet. So the default is not merely a default here -- for THIS shop it
-            # is the wrong maker's number, and it sizes a drawer box that has to
-            # fit a real runner. Say so whenever the job leans on it; do not
-            # substitute a guess.
+            # WHOSE number is 42? Both makers', as it turns out. It is Blum
+            # TANDEM 563H's figure, and the workshop's runner is a GRASS Dynapro
+            # (F130 107 853 201, VA NL650 70 3D, soft-close; owner's photo of the
+            # box, 2026-08-27). Between 2026-08-27 and 2026-09-21 this comment
+            # said the Grass figure was "not measured yet" and told the caller to
+            # supply one by hand. THAT WAS STALE FROM 2026-09-04: the owner had
+            # already photographed the fitting leaflet itself, and it prints
+            #     LWS = (LWK - 42) +0 / -1.5
+            # store/muhely/lyford-b02-wardrobes/hardware/grass-dynapro-lws-formula.jpg
+            # It checks against his own handwritten list: the B02 drawer bay is
+            # 571, 571 - 42 = 529, and 529 is exactly the drawer back he cut.
+            # So the default is RIGHT for this shop. Two limits survive, and they
+            # are the reason the note below still fires: the Grass leaflet caps
+            # the DRAWER SIDE at max. 16 mm for this formula, and a figure with no
+            # maker beside it reads the same as a guess six months on.
             explicit = "inside_deduction" in dg
             ded = float(dg.get("inside_deduction", cfg["undermount_inside_deduction"]))
+            # WHOSE runner is this figure for? A deduction with no maker beside it
+            # is a number that LOOKS measured. Six months on, a bare 49 in a spec
+            # reads the same as a guess, and nobody can check it against a fitting
+            # leaflet without knowing whose leaflet to open. So the maker travels
+            # WITH the figure, into the notes, the part row and the cutlist JSON.
+            # Deliberately NOT a gate: it never blocks a run and it never fires a
+            # FIGYELEM on a number the owner chose himself. The existing check
+            # (muhely-alulszerelt-sin-gyarto.test.sh) already earns its keep by
+            # staying quiet on his own value, and a second alarm on the same line
+            # would spend that credit.
+            brand = str(dg.get("runner_brand", "")).strip()
+            src = brand if brand else "a gyarto nincs megnevezve, add meg: runner_brand"
             inside_w = opening_w - ded
             box_w = inside_w + 2 * t
             notes.append(f"Alulszerelt sin: a BELSO szelesseg a vezerelt meret. "
-                         f"{opening_w:.1f} nyilas minusz {ded:.0f} = {inside_w:.1f} belso, "
+                         f"{opening_w:.1f} nyilas minusz {ded:.0f} ({src}) = {inside_w:.1f} belso, "
                          f"{t:.0f} mm oldallal a doboz kulso merete {box_w:.1f}. "
                          f"Turés plusz 0 minusz 1,5: szukebb szabad, bovebb szorul.")
             if not explicit:
-                notes.append("FIGYELEM: az alapertelmezett 42 mm a BLUM TANDEM szama. "
-                             "A muhely sinje GRASS Dynapro (a gazda fotoja, 2026-08-27), "
-                             "es a Grass mas levonassal dolgozik. A pontos szam a doboz "
-                             "szerelesi utmutatojan all (Korpusinnenmass minusz X); amig "
-                             "az nincs meg, add meg kezzel az inside_deduction erteket.")
+                notes.append("FIGYELEM: az alapertelmezett 42 mm ket gyarto lapjan is "
+                             "ugyanez: BLUM TANDEM 563H es GRASS Dynapro. A muhely sinje "
+                             "a Grass, es a szerelesi lapja LWS = (LWK - 42) +0/-1,5-et ir "
+                             "(a gazda fotoja, 2026-09-04). Tehat a szam JO. Amit meg "
+                             "nezz meg: a Grass lapja max. 16 mm fiokoldalt enged ehhez a "
+                             "keplethez, es a runner_brand mezot toltsd ki, kulonben a szam "
+                             "gyarto nelkul all.")
             if abs(t - 19.0) < 0.6 and abs(ded - 42.0) < 0.1:
                 notes.append("FIGYELEM: 19 mm-es fiokoldalhoz a TANDEM 49 mm levonast ir, "
                              "nem 42-t. Allitsd at az inside_deduction erteket, vagy "
@@ -1035,7 +1060,12 @@ def build(spec):
             box_d = panel_depth - cfg["drawer_box_rear_clearance"]
         tag = f"fiok{gi}" if len(drawer_groups) > 1 else "fiok"
 
-        side_note = (f"{runner} sin, a belso szelesseg vezerelt"
+        # Read from the spec, not from `brand` above: that name only exists on the
+        # undermount branch, and a later edit that reorders these lines would turn
+        # a missing maker into a NameError on every side-runner job.
+        side_note = (f"{runner} sin, "
+                     f"{str(dg.get('runner_brand', '')).strip() or 'gyarto nincs megadva'}, "
+                     f"a belso szelesseg vezerelt"
                      if runner == "under" else
                      f"{runner} sin, oldalankent {side_clr} mm")
         parts_add(parts, f"{tag} oldal", box_d, box_h, 2 * n, grain="w", note=side_note)
@@ -1200,6 +1230,17 @@ def main(argv):
                       | ({"edging": p["edging"]} if "edging" in p else {})
                       | ({"note": p["note"]} if p.get("note") else {})
                       for p in r["parts"]],
+            # And the WHOLE-JOB notes travel for the same reason, one level up.
+            # The per-part comment above has said since day one that the JSON is
+            # what the next tool reads -- but the job-level notes were left out of
+            # that rule, and those carry the FIGYELEM lines: the undermount
+            # deduction being Blum's number, an assumed rake angle, an assumed
+            # hinge size. Measured 2026-09-18 on a real run: the warning printed
+            # on screen and the cutlist JSON held no trace of it, not the word,
+            # not the number, not the maker. A warning the screen shows and the
+            # handed-on file forgets is a warning for whoever ran the command,
+            # not for whoever cuts the sheet.
+            "notes": r["notes"],
         }
         with open(out, "w") as fh:
             json.dump(job, fh, indent=2, ensure_ascii=False)

@@ -10,6 +10,7 @@ import {
   INITIAL_GUARD_STATE,
   READY_TIMEOUT_MS,
   SATURATION_CONFIRM_SWEEPS,
+  MIDTURN_DEFER_REASON_PREFIX,
   STALE_REFRESH_REASON_PREFIX,
   type ContextGuardConfig,
   type GuardInputs,
@@ -728,5 +729,52 @@ describe('normalizeContextGuardConfig -- idle-flush fields', () => {
     expect(normalizeContextGuardConfig({ idleMinutes: 0 }).idleMinutes).toBe(20)
     expect(normalizeContextGuardConfig({ idleMinutes: -5 }).idleMinutes).toBe(20)
     expect(normalizeContextGuardConfig({ idleMinutes: 45 }).idleMinutes).toBe(45)
+  })
+})
+
+// 2026-09-23: the main agent sat 73 minutes above its hard threshold while one
+// turn ran, and spent 203.9M tokens over the line -- 39% of the 520M daily
+// fleet budget. The deferral was right (never cut a live turn); what was wrong
+// is that it is a `none` decision and `none` does not log, so the dashboard log
+// held zero context-guard lines for the whole window. Afterwards a 73-minute
+// deferral and a guard that never ran look identical.
+//
+// The runner logs a deferral by matching MIDTURN_DEFER_REASON_PREFIX, so every
+// deferral site must carry it. There are THREE, on two different phases, and a
+// site that loses the prefix goes silent again without failing anything else --
+// which is exactly how the blind spot survived the first time.
+describe('mid-turn deferral is observable', () => {
+  const awaitingHandoff: GuardState = {
+    ...INITIAL_GUARD_STATE,
+    phase: 'await-handoff',
+    handoffMtimeAtRequest: null,
+    deadlineMs: NOW + 60_000,
+  }
+
+  it('tags the idle-phase hard-tier deferral', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
+    expect(d.action).toBe('none')
+    expect(d.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)).toBe(true)
+  })
+
+  it('tags the await-handoff hard-tier deferral', () => {
+    const d = decideGuard(awaitingHandoff, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
+    expect(d.action).toBe('none')
+    expect(d.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)).toBe(true)
+  })
+
+  it('tags the handoff-timeout deferral', () => {
+    const past: GuardState = { ...awaitingHandoff, deadlineMs: NOW - 1 }
+    const d = decideGuard(past, inputs({ paneBusy: true, paneIdle: false }), CFG)
+    expect(d.action).toBe('none')
+    expect(d.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)).toBe(true)
+  })
+
+  // The prefix is an addition, not a replacement: the wording the older cases
+  // (and the daily-tier suite) assert on must survive it.
+  it('keeps the human-readable reason after the prefix', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
+    expect(d.reason).toContain('deferring restart')
+    expect(d.reason).toContain('mid-turn')
   })
 })
