@@ -33,8 +33,11 @@ curl -s -X POST http://localhost:3420/api/memories \
 # GET állt, holott egy emlék FELÜLÍRHATÓ -- és a közös dashboard-tokennel BÁRMELYIK ágens
 # BÁRMELYIK lapja. Ez nem rés (közös token, közös tároló), de aki nem tud róla, véletlenül
 # is megteheti.
-# DE EGY-EMLEK LEKERDEZES NINCS: `GET /api/memories/<id>` -> **404**. (Mérve 2026-09-18
-# 20:2x, ugyanúgy, ahogy a kanbannál a `GET /api/kanban/ID`.) Vagyis egy emléket MÓDOSÍTANI
+# DE EGY-EMLEK LEKERDEZES NINCS: `GET /api/memories/<id>` -> **404**, `Not found`, SIMA
+# SZOVEG (ujramerve 2026-09-24 11:3x). A kanbannal ugyanez a hianyzo vegpont MASKEPP
+# viselkedik -- ott `405` es ervenyes JSON --, tehat a ket eset NEM ugyanaz, barmit is
+# mondott itt korabban ez a sor. A kulonbseg gyakorlati: ezen a 404-en a `json.load`
+# HANGOSAN elszall, a kanban 405-en viszont lefut, es csupa `None` mezot ad. Vagyis egy emléket MÓDOSÍTANI
 # lehet id szerint, VISSZAOLVASNI nem -- a listát kérd le és szűrj rá. Ez azért csapda,
 # mert a PUT előtti "olvasd be, told hozzá, írd vissza" minta itt NEM megy: a teljes új
 # tartalmat kell megírnod, különben a `content` cseréje adatot veszít.
@@ -252,6 +255,15 @@ curl -s -X POST -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/I
   ülne: a komment nem nyilvántartás (nincs státusza, nem lezárható, egyetlen lekérdezés
   sem látja).
 - Egy-kártya lekérdezés (`GET /api/kanban/ID`) **nincs**. A teljes listát kérd le és szűrd.
+  **A státuszkód 405, nem 404** (mérve 2026-09-24 11:3x): `{"error":"Method GET not allowed
+  here. Allowed: PUT, DELETE.","hint":"The method is the problem, not the id in the path."}`
+  A különbség számít: a 404 azt sugallja, hogy rossz az ÚT vagy nincs ilyen kártya, a 405
+  kimondja, hogy az út jó és a MÓDSZER rossz. Aki 404-et vár, a saját id-jét kezdi keresni.
+  **ÉS A CSAPDA NEM A KÓD, HANEM A TÖRZS:** ez a hibaüzenet érvényes JSON, tehát egy
+  `json.load(...)` + `.get('title')` minta NEM száll el rajta, hanem minden mezőre `None`-t
+  ad. A kimenet így egy ÜRES KÁRTYÁNAK látszik, nem hibának. Ugyanaznap belefutottam:
+  `seq = None, title = None, status = None` jött vissza egy létező, `in_progress` kártyára.
+  Ezért a `-w '%{http_code}'` itt sem dísz.
 - **A `GET /api/kanban` SEMMILYEN query paramétert nem fogad.** Nem csak a szűrőket: mérve
   (2026-09-02) a `?limit=`, a `?status=` és egy kitalált `?foo=1` is egyformán `400`-at ad,
   a válaszban `known: []`. A szűrés a hívó dolga, Pythonban, a teljes listán.

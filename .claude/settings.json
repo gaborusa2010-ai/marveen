@@ -342,6 +342,15 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 /home/gabor/.claude/hooks/require-checked.py",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [
