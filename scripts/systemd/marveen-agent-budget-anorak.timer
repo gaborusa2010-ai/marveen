@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Anorak's token ceiling every 3 minutes
+Requires=marveen-agent-budget-anorak.service
+
+[Timer]
+OnBootSec=180
+OnUnitActiveSec=3min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

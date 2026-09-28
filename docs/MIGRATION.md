@@ -98,27 +98,35 @@ the Docker volumes (3) are **separate** and must be moved on their own.
    any absolute reference must be updated (see pitfalls).
 3. **Restore the tarballs**, preserving modes (the token files are `0600`).
 
-   **SINCE 2026-09-22 THIS IS TWO FILES, NOT ONE.** The nightly archive is
-   differential: `-full.tar.gz` is the weekly base, `-diff.tar.gz` holds
-   everything that changed since that base. Take the newest full and the newest
-   diff, and **extract the full FIRST** so the diff overwrites it. Archives
-   dated before 2026-09-22 carry no suffix and are complete on their own.
+   **SINCE 2026-09-26 THIS IS A CHAIN, NOT ONE FILE.** `-full.tar.gz` is the
+   weekly base; each `-diff.tar.gz` after it is INCREMENTAL: it holds only what
+   changed since the PREVIOUS archive (the owner's decision, Telegram msg 3533
+   and 4139). Take the newest full and EVERY `-diff` dated after it, and extract
+   them in date order, full first, so each one overwrites the one before.
+   (Between 2026-09-22 and 09-26 the diffs were differential and the newest one
+   alone sufficed; extracting all of them in order is correct for both.)
+   Archives dated before 2026-09-22 carry no suffix and are complete on their own.
 
    ```bash
    mkdir -p /tmp/restore
-   tar -xpzf claudeclaw-YYYYmmdd-HHMMSS-full.tar.gz -C /tmp/restore   # base, first
-   tar -xpzf claudeclaw-YYYYmmdd-HHMMSS-diff.tar.gz -C /tmp/restore   # newest diff, over it
-   # inspect /tmp/restore/MANIFEST.txt -- a diff's manifest names its base, then:
+   FULL=claudeclaw-YYYYmmdd-HHMMSS-full.tar.gz
+   tar -xpzf "$FULL" -C /tmp/restore                                  # base, first
+   # then every diff NEWER than that full, oldest first. An OLDER diff must be
+   # skipped: extracted after the full it would put back stale versions.
+   for f in $(ls claudeclaw-*-diff.tar.gz | sort); do
+     [[ "$f" > "$FULL" ]] && tar -xpzf "$f" -C /tmp/restore
+   done
+   # each MANIFEST.txt names its base and the links before it, then:
    rsync -a /tmp/restore/repo/  <repo>/         # repo group -> project root
    rsync -a /tmp/restore/home/  "$HOME/"        # home group -> $HOME
    ```
 
-   **Only those two.** Intermediate diffs are redundant: every diff is measured
-   against the full, not against the previous night, so the newest one already
-   contains what the earlier ones did. Nothing breaks if you extract them in
-   date order anyway.
+   **A missing link means an incomplete restore**, not a failed one: the files
+   that changed only on that night come back at their older version. The
+   backup forces a new FULL as soon as any link is missing locally
+   (`backup-delta.py due`), so the gap closes the next night.
 
-   **A differential restore brings back deleted files.** A diff records what
+   **An incremental restore brings back deleted files.** A diff records what
    changed and what was added, never what was removed, so a file deleted during
    the week reappears. That is the safe direction for a backup, but it is real:
    after a restore, the tree may be a superset of what the old machine had.

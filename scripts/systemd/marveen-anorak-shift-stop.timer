@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop Anorak at 06:30
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=false
+AccuracySec=60s
+
+[Install]
+WantedBy=timers.target

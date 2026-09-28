@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Anorak's 23:00 start at 23:05
+Requires=marveen-anorak-start-watch.service
+
+[Timer]
+OnCalendar=*-*-* 23:05:00
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

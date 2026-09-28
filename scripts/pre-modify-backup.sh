@@ -38,10 +38,60 @@ DEST="$BKDIR/${TS}-${LABEL}"
 mkdir -p "$DEST"
 
 # Consistent SQLite snapshot (NOT a raw cp -- the live dashboard may be mid-write).
+#
+# The tool is resolved, never assumed. The `sqlite3` CLI is NOT installed on this
+# install, and the first version of this block called it unconditionally: the
+# snapshot silently did not happen while the run printed "backup ok" and exited 0.
+# That is the same silent-success shape the checksum block below was written to
+# kill, left standing on the HEAVIER of the two events -- the database is the
+# whole reason this script exists, and losing it is not a lighter miss than
+# losing a checksum column. python3 carries the same sqlite3 library in-process
+# and its Connection.backup() is the same online-backup API as the CLI's
+# `.backup`, so the fallback is equivalent, not a downgrade.
+DB_SNAP_TOOL=""
+if command -v sqlite3 >/dev/null 2>&1; then
+  DB_SNAP_TOOL="sqlite3"
+elif python3 -c 'import sqlite3' >/dev/null 2>&1; then
+  DB_SNAP_TOOL="python3"
+fi
+
+DB_FAILED=0
+DB_PRESENT=0
 if [ -f "$STORE/claudeclaw.db" ]; then
-  sqlite3 "$STORE/claudeclaw.db" ".backup '$DEST/claudeclaw.db'" \
-    && echo "  db: consistent snapshot ok" \
-    || echo "  db: WARNING snapshot failed"
+  DB_PRESENT=1
+  case "$DB_SNAP_TOOL" in
+    sqlite3)
+      sqlite3 "$STORE/claudeclaw.db" ".backup '$DEST/claudeclaw.db'" >/dev/null 2>&1
+      ;;
+    python3)
+      SRC_DB="$STORE/claudeclaw.db" DST_DB="$DEST/claudeclaw.db" python3 - <<'PYSNAP' >/dev/null 2>&1
+import os, sqlite3, sys
+src, dst = os.environ["SRC_DB"], os.environ["DST_DB"]
+try:
+    s = sqlite3.connect("file:%s?mode=ro" % src, uri=True)
+    d = sqlite3.connect(dst)
+    with d:
+        s.backup(d)
+    d.close(); s.close()
+except Exception as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+PYSNAP
+      ;;
+  esac
+  # The claim is checked, not inferred from an exit code: a snapshot that left a
+  # zero-byte file behind is worse than none, because the file looks like a backup.
+  if [ -s "$DEST/claudeclaw.db" ]; then
+    echo "  db: consistent snapshot ok ($DB_SNAP_TOOL)"
+  else
+    rm -f "$DEST/claudeclaw.db"
+    DB_FAILED=1
+    if [ -z "$DB_SNAP_TOOL" ]; then
+      echo "  db: FAILED no sqlite snapshot tool found (neither the sqlite3 CLI nor python3 with the sqlite3 module)"
+    else
+      echo "  db: FAILED snapshot with '$DB_SNAP_TOOL' produced no file"
+    fi
+  fi
 fi
 
 # Small critical state git does not track. Explicit list -- store/ also holds
@@ -138,6 +188,18 @@ SIZE="$(du -sh "$DEST" 2>/dev/null | cut -f1)"
 # found" lines to stderr, then "backup ok" and exit 0. A scheduled caller reads
 # the exit code, not the stderr, so every round would have looked perfect while
 # the drift check quietly did not exist.
+#
+# THREE events now, and the database one is the heaviest: without it the snapshot
+# does not hold the state this script was written to protect, so it reports
+# FAILED and its own exit code. Reported together when both are true, because a
+# caller that only ever sees the first line would otherwise fix the lighter one.
+if [ "$DB_FAILED" = 1 ]; then
+  echo "backup FAILED: $DEST ($SIZE, retain newest $KEEP)"
+  echo "  the live store/claudeclaw.db was NOT snapshotted -- the other files were saved,"
+  echo "  but the database is the state git cannot restore. This snapshot is NOT a rollback point."
+  [ "$PERSONAL_NOSUM" -gt 0 ] && echo "  and $PERSONAL_NOSUM manifest path(s) carry NO checksum."
+  exit 4
+fi
 if [ "$PERSONAL_NOSUM" -gt 0 ]; then
   echo "backup INCOMPLETE: $DEST ($SIZE, retain newest $KEEP)"
   echo "  the snapshot IS written, but $PERSONAL_NOSUM manifest path(s) carry NO checksum:"

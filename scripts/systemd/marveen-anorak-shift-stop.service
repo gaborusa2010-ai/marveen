@@ -1,0 +1,7 @@
+[Unit]
+Description=Marveen: stop Anorak at the end of the night shift
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+ExecStart=/bin/bash /home/gabor/marveen/scripts/agent-night-shift.sh anorak stop

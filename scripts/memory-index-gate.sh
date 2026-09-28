@@ -60,7 +60,9 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SLUG="$(printf '%s' "$DIR" | tr '/.' '--')"
 # Az utvonal felulirhato, hogy a kapu MERHETO legyen elo index erintese nelkul
 # (a bizonyitas backup-pillanatkepeken fut, nem a mukodo lapon).
-IDX="${MEMORY_INDEX_PATH:-$DIR/.channels-config/projects/$SLUG/memory/MEMORY.md}"
+# A kozos index a ~/.claude alatt el; a .channels-config alatti mappa letezik, de URES
+# (merve 2026-09-27: 0 fajl kontra 261, Margo lelete).
+IDX="${MEMORY_INDEX_PATH:-$HOME/.claude/projects/$SLUG/memory/MEMORY.md}"
 STATE="${MEMORY_INDEX_STATE:-$DIR/store/memory-index-state.json}"
 # Ugyanugy felulirhato, mint az index utja: a fail-open ag CSAK igy merheto
 # (egy szandekosan elszallo ellenorzore mutatva).

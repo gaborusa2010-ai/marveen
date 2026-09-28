@@ -1,0 +1,21 @@
+[Unit]
+# Serves the work log PWA on a LOCAL port only. Nothing here exposes anything:
+# the bind is 127.0.0.1, and reachability from the owner's phone comes from
+# `tailscale serve`, which he authorises separately.
+#
+# Why a unit and not a background process: until 2026-09-02 the server ran inside
+# an agent's session, so it died with that session. Measured that day: the address
+# handed to the owner on 2026-08-31 (port 8742) no longer answered. A link is a
+# promise about tomorrow morning; a process tied to a session cannot keep it.
+Description=Marveen: work log PWA static server (localhost only)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gabor/marveen/agents/cody/projects/worklog-app
+ExecStart=/usr/bin/python3 -m http.server 8731 --bind 127.0.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

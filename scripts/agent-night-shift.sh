@@ -65,7 +65,29 @@ send_night_briefing() {
   BRIEF="$BASE/store/briefing-$AGENT.txt"
   [ -s "$BRIEF" ] || BRIEF="$BASE/store/night-briefing-$AGENT.txt"
   if [ -s "$BRIEF" ]; then
-    if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen "$AGENT" - < "$BRIEF" 2>&1)"; then
+    # CIMFUGGELEK901. The briefing is hand-written, so every card line in it is a
+    # paraphrase -- and a paraphrase loses part of the mandate. Measured on three
+    # consecutive nights of card #238 in the .sent- files: three different
+    # renderings, each dropping something different, one of them plain wrong
+    # ("EGYELORE felfuggesztve" for a card that is not suspended). A fixed-width
+    # truncation would have lost the SAME words every night and been fixable once;
+    # a nightly paraphrase is not, so the fix cannot be discipline.
+    #
+    # The helper appends the literal titles; it NEVER rewrites the prose, and it
+    # can NEVER stop a send. On any failure the ORIGINAL file goes out unchanged:
+    # a briefing that arrives slightly plainer beats one that does not arrive, and
+    # this path runs unattended at 23:00 and 06:00 with nobody awake to fix it.
+    local SEND="$BRIEF" AUG
+    AUG="$(mktemp)" || AUG=""
+    if [ -n "$AUG" ]; then
+      if python3 "$BASE/scripts/eligazitas-kartyacim-fuggelek.py" "$BRIEF" > "$AUG" 2>/dev/null \
+         && [ -s "$AUG" ]; then
+        SEND="$AUG"
+      else
+        echo "$(date '+%F %T') $AGENT cim-fuggelek kihagyva, az eligazitas valtozatlanul megy" >&2
+      fi
+    fi
+    if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen "$AGENT" - < "$SEND" 2>&1)"; then
       case "$OUT" in
         *"OK id="*)
           mv "$BRIEF" "$BRIEF.sent-$(date +%Y%m%d-%H%M%S)"
@@ -78,6 +100,8 @@ send_night_briefing() {
     else
       echo "$(date '+%F %T') $AGENT eligazitas kuldes HIBA, a fajl marad: $OUT" >&2
     fi
+    # Only the temp copy. $BRIEF is either retired above or deliberately kept.
+    [ -n "$AUG" ] && rm -f "$AUG"
   else
     # NIGHTBRIEF901-B (Forgacs, 2026-09-03, Marveen merese ugyanaznap este).
     # A blokk eddig csak a fajl LETEZESERE reagalt, tehat pontosan akkor

@@ -42,6 +42,30 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Overridable so a test can build a throwaway archive without touching the
 # real backup directory (and its retention sweep).
 BACKUP_DIR="${BACKUP_DIR:-${REPO_ROOT}/backups}"
+
+# ONE BACKUP AT A TIME. Nothing stopped two runs overlapping until 2026-09-23,
+# and that evening the image archive (which had the same gap) proved it: two
+# builds 17 minutes apart, both alive, 6.4 GB of disk for zero uploads. This
+# script is the more dangerous of the two to double-run, because both copies
+# WAL-checkpoint the same SQLite database and prune the same backups/ dir.
+#
+# THE LOCK HANGS OFF BACKUP_DIR, NOT THE REPO ROOT, and that is deliberate: a
+# test overrides BACKUP_DIR to build a throwaway archive, and it must get its
+# own lock rather than queue behind (or block) the real nightly run.
+#
+# Non-blocking, exit 0, and it says so: a second caller queuing up behind a
+# 3 GB build would just repeat it once the first finished, and reporting a
+# failure for "the work is already being done" trains everyone to ignore the
+# alarm. A silent skip would be worse still -- that is how a backup quietly
+# stops running.
+mkdir -p "${BACKUP_DIR}"
+BACKUP_LOCKFILE="${BACKUP_LOCK_FILE:-${BACKUP_DIR}/.backup.lock}"
+exec {BACKUP_LOCKFD}>"${BACKUP_LOCKFILE}"
+if ! flock -n "${BACKUP_LOCKFD}"; then
+  echo "mentes: MAR FUT egy masik mentes (${BACKUP_LOCKFILE}) -- kihagyom"
+  exit 0
+fi
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # --- FULL or DIFFERENTIAL? ------------------------------------------------
@@ -51,14 +75,19 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 # script actually takes: 5452 files / 3371.7 MB whole, 204 files / 225.7 MB
 # changed in 24 hours, 1023 files / 518.8 MB changed in 7 days.
 #
-# DIFFERENTIAL, not incremental: every nightly archive is compared against the
-# last FULL one, never against yesterday's. A restore is therefore always
-# exactly two files (newest full + newest differential) and no archive can be
-# broken by a bad one in between. The reasoning in full: scripts/backup-delta.py.
+# INCREMENTAL since 2026-09-26: every nightly archive is compared against the
+# state the PREVIOUS verified archive recorded, so a file goes up once, not
+# every night until the next full. From 09-22 to 09-26 it was differential
+# (against the weekly full) and grew 188 -> 351 -> 706 MB in three nights; the
+# owner confirmed the incremental form (Telegram msg 4139, "Csak a napi
+# valtozas (ahogy kertem)"). Restore = the newest full, then every incremental
+# after it, oldest first. The reasoning in full: scripts/backup-delta.py.
+# (The archive suffix stays "-diff" so the retention below and the Drive
+# pruner in scripts/muhely/drive_upload.py keep recognising the chain.)
 #
 # Forcing a full run: `BACKUP_MODE=full scripts/backup.sh` or `--full`.
 # Overridable for the same reason BACKUP_DIR is: a test must be able to
-# exercise the full/differential pair without touching the real baseline.
+# exercise the full/incremental pair without touching the real baseline.
 BASELINE="${BASELINE:-${REPO_ROOT}/store/backup-baseline.json}"
 FULL_EVERY_DAYS="${FULL_EVERY_DAYS:-7}"
 BACKUP_MODE="${BACKUP_MODE:-auto}"
@@ -80,8 +109,8 @@ fi
 echo "backup: mode=${BACKUP_MODE}  archive=$(basename "${ARCHIVE}")"
 
 # Retention is chain-aware now: a full archive may not be pruned while a
-# differential still depends on it, so a flat "keep the newest 14" would break
-# restores. KEEP_FULL full archives are kept, plus every differential newer
+# incremental still depends on it, so a flat "keep the newest 14" would break
+# restores. KEEP_FULL full archives are kept, plus every incremental newer
 # than the oldest kept full.
 KEEP_FULL="${KEEP_FULL:-2}"
 
@@ -103,15 +132,17 @@ MANIFEST="$(mktemp -t claudeclaw-manifest.XXXXXX)"
 STAGE="$(mktemp -d -t claudeclaw-stage.XXXXXX)"
 BUNDLE=""
 # Declared up front so every trap below can name them unconditionally: the
-# differential filter (further down) only fills them in when it runs.
+# incremental filter (further down) only fills them in when it runs.
 REPOLIST_FULL="${REPOLIST}"
 HOMELIST_FULL="${HOMELIST}"
 REPOLIST_DIFF=""
 HOMELIST_DIFF=""
+PENDING_STATE=""
 cleanup() {
   rm -f "${REPOLIST}" "${HOMELIST}" "${REPOLIST_FULL}" "${HOMELIST_FULL}" "${MANIFEST}" ${ARCHIVE_LIST:+"${ARCHIVE_LIST}"}
   [[ -n "${REPOLIST_DIFF}" ]] && rm -f "${REPOLIST_DIFF}"
   [[ -n "${HOMELIST_DIFF}" ]] && rm -f "${HOMELIST_DIFF}"
+  [[ -n "${PENDING_STATE}" ]] && rm -f "${PENDING_STATE}"
   [[ -n "${BUNDLE}" ]] && rm -f "${BUNDLE}"
   rm -rf "${STAGE}"
   return 0
@@ -513,6 +544,10 @@ done < <(find . -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort)
 # home/ group (relative to $HOME)
 add_if "${HOMELIST}" "${HOME}" .claude/skills
 add_if "${HOMELIST}" "${HOME}" .claude/scheduled-tasks
+# Retired one-shot tasks, moved out of scheduled-tasks/ once they fired (dir
+# appeared 2026-09-27). Small (~124K), and the only record of what each
+# one-shot promised and when; backup-coverage flagged it as fully uncovered.
+add_if "${HOMELIST}" "${HOME}" .claude/scheduled-tasks-archive
 # THE USER-LEVEL settings.json: this is where every PreToolUse / PostToolUse
 # hook in the fleet is wired up -- the egress gate, the shared-skill brake, the
 # write audit. Losing it does not lose a feature, it silently removes every
@@ -629,7 +664,7 @@ fi
 # scripts/backup-coverage.py answers "what does the backup set NOT cover?" from
 # store/.last-backup-manifest.txt. That question is about the whole protected
 # set, not about tonight's delta, so this copy is written from the UNFILTERED
-# lists -- before the differential filter runs below. Writing a differential's
+# lists -- before the incremental filter runs below. Writing an incremental's
 # short list here would make every unchanged file look uncovered.
 {
   echo "Marveen backup coverage ${STAMP} (mode=${BACKUP_MODE}; this list is the FULL protected set, not the archive contents)"
@@ -641,24 +676,27 @@ fi
 # the baseline snapshot after a successful FULL run must describe the whole set,
 # not whatever subset got archived.
 
-# --- Differential filter. --------------------------------------------------
-# Drops every file byte-identical (mtime + size) to the last FULL backup.
+# --- Incremental filter. --------------------------------------------------
+# Drops every file byte-identical (mtime + size) to the state the previous
+# verified archive recorded (full or incremental).
 # Directories in the lists are expanded to files first, because that is what
 # `cp -pR` would actually stage.
 if [[ "${BACKUP_MODE}" == "diff" ]]; then
   REPOLIST_DIFF="$(mktemp -t claudeclaw-repo-diff.XXXXXX)"
   HOMELIST_DIFF="$(mktemp -t claudeclaw-home-diff.XXXXXX)"
+  PENDING_STATE="$(mktemp -t claudeclaw-pending.XXXXXX)"
   if python3 "${REPO_ROOT}/scripts/backup-delta.py" filter \
        --baseline "${BASELINE}" --repo-root "${REPO_ROOT}" --home "${HOME}" \
        --repolist "${REPOLIST_FULL}" --homelist "${HOMELIST_FULL}" \
-       --out-repo "${REPOLIST_DIFF}" --out-home "${HOMELIST_DIFF}"; then
+       --out-repo "${REPOLIST_DIFF}" --out-home "${HOMELIST_DIFF}" \
+       --pending "${PENDING_STATE}"; then
     REPOLIST="${REPOLIST_DIFF}"
     HOMELIST="${HOMELIST_DIFF}"
   else
     # The filter refuses rather than guesses when the baseline is unusable.
     # Falling through to a full archive is the safe direction: a too-large
     # backup costs bandwidth, a too-small one costs data.
-    echo "backup: the differential filter failed -- falling back to a FULL archive" >&2
+    echo "backup: the incremental filter failed -- falling back to a FULL archive" >&2
     BACKUP_MODE=full
     ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}-full.tar.gz"
   fi
@@ -667,9 +705,10 @@ fi
 # --- Manifest (stored at the archive root for self-description). -----------
 {
   echo "Marveen backup ${STAMP}"
-  echo "mode: ${BACKUP_MODE}$( [[ "${BACKUP_MODE}" == "diff" ]] && echo "   base: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive"])' "${BASELINE}" 2>/dev/null || echo '?')" )"
+  echo "mode: ${BACKUP_MODE}$( [[ "${BACKUP_MODE}" == "diff" ]] && echo " (incremental)   base: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive"])' "${BASELINE}" 2>/dev/null || echo '?')" )"
   if [[ "${BACKUP_MODE}" == "diff" ]]; then
-    echo "RESTORE NEEDS TWO ARCHIVES: the base named above, extracted first, then this one over it."
+    echo "previous links: $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1])).get("chain") or []) or "(none)")' "${BASELINE}" 2>/dev/null || echo '?')"
+    echo "RESTORE NEEDS THE WHOLE CHAIN: the base named above first, then every link listed, oldest first, then this one last."
   fi
   echo "host: $(hostname 2>/dev/null || echo '?')   user: ${USER:-?}   home: ${HOME}"
   echo "repo root: ${REPO_ROOT}"
@@ -773,10 +812,10 @@ done < <(sed -e 's/  *(.*)$//' "${MANIFEST}")
 # the memory directories and the local-commit bundle on 2026-09-04, the
 # credential-carrying store/ files by the whitelist that preceded it.
 #
-# FULL RUNS ONLY, and the reason matters: a differential legitimately omits
+# FULL RUNS ONLY, and the reason matters: an incremental legitimately omits
 # everything that did not change, so demanding these names there would fail a
 # correct archive on any quiet day. The guarantee they encode still holds,
-# because a differential is never restored alone -- its base is a full archive
+# because an incremental is never restored alone -- its base is a full archive
 # that passed exactly this check. Card: the 2026-09-21 truncated backup (#298).
 if [[ "${BACKUP_MODE}" == "full" ]]; then
   for marker in "repo/store/claudeclaw.db" "home/.claude/skills" "home/.claude/scheduled-tasks"; do
@@ -824,9 +863,9 @@ echo "backup: verified $(grep -cE '^(repo|home)/' "${MANIFEST}") manifest entrie
 echo "backup: WARNING -- archive contains sensitive tokens; keep ${BACKUP_DIR} out of cloud-sync folders (iCloud / Dropbox / Google Drive)." >&2
 
 # --- The baseline: only after a FULL archive has been verified. ------------
-# Written from the UNFILTERED lists, so the next differential compares against
+# Written from the UNFILTERED lists, so the next incremental compares against
 # the whole protected set. The ordering is the load-bearing part: a baseline
-# written before verification would quietly make every following differential
+# written before verification would quietly make every following incremental
 # incomplete, and nothing downstream would notice -- the archives would all be
 # valid, just missing the files the failed full run never carried.
 if [[ "${BACKUP_MODE}" == "full" ]]; then
@@ -837,13 +876,22 @@ if [[ "${BACKUP_MODE}" == "full" ]]; then
       echo "backup: could not write the baseline -- the next run will be FULL" >&2
       rm -f "${BASELINE}"
     }
+else
+  # Incremental: the state the filter saw becomes the new baseline, again only
+  # after verification. If this fails the old state stays, and tomorrow's
+  # incremental simply carries tonight's changes a second time -- wasteful,
+  # never lossy.
+  python3 "${REPO_ROOT}/scripts/backup-delta.py" advance \
+    --baseline "${BASELINE}" --pending "${PENDING_STATE}" \
+    --archive "$(basename "${ARCHIVE}")" || \
+      echo "backup: could not advance the baseline -- tomorrow repeats tonight's changes" >&2
 fi
 
 # --- Retention, chain-aware. -----------------------------------------------
 # A flat "keep the newest N" would eventually delete a full archive that a
-# newer differential still needs, and the loss would only surface during a
+# newer incremental still needs, and the loss would only surface during a
 # restore -- the worst possible moment to find out. So: keep the newest
-# ${KEEP_FULL} FULL archives, keep every differential newer than the oldest
+# ${KEEP_FULL} FULL archives, keep every incremental newer than the oldest
 # kept full, drop everything else. Legacy archives from before 2026-09-22 carry
 # neither suffix; they are treated as full, because that is what they are.
 python3 - "${BACKUP_DIR}" "${KEEP_FULL}" <<'PRUNE'

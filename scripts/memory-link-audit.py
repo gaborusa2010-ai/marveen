@@ -47,8 +47,12 @@ import sys
 # yields a double dash, matching how the config tree names projects.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SLUG = _ROOT.replace("/", "-").replace(".", "-")
-DEFAULT_DIR = os.path.join(_ROOT, ".channels-config", "projects", _SLUG, "memory")
+# The shared fleet index lives under ~/.claude, not the main agent's own
+# .channels-config tree (that one exists but is empty: measured 2026-09-27,
+# 0 files vs 261). All five sub-agent config paths resolve to this directory.
+DEFAULT_DIR = os.path.join(os.path.expanduser("~/.claude"), "projects", _SLUG, "memory")
 SKILL_DIRS = [
+    os.path.join(_ROOT, ".claude", "skills"),
     os.path.expanduser("~/.claude/skills"),
     os.path.expanduser("~/.claude/scheduled-tasks"),
 ]
@@ -116,6 +120,11 @@ def load(memory_dir):
 
 def main():
     memory_dir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DIR
+    if not os.path.isdir(memory_dir) or not any(
+            f.endswith(".md") for f in os.listdir(memory_dir)):
+        # An empty report reads as "all clean"; refuse to print one.
+        print(f"HIBA: nincs memoria-fajl itt: {memory_dir}", file=sys.stderr)
+        sys.exit(2)
     stems, by_name, (sections, sections_prefixless), drift = load(memory_dir)
 
     skills = set()

@@ -187,12 +187,21 @@ def prune(folder_id, keep, token):
 
     # files is newest-first, so the first full archive in it is the newest one.
     # Archives from before the differential split carry no suffix and are full.
+    #
+    # The image archive has the same shape since 2026-09-26: a base
+    # `kepek-<stamp>.tar.gz` plus `kepek-kieg-<stamp>.tar.gz` supplements that
+    # only carry the pictures added after it (scripts/backup-images.sh).
     pinned = len(files)
     for i, f in enumerate(files):
-        if not f["name"].startswith("claudeclaw-"):
+        name = f["name"]
+        if name.startswith("claudeclaw-"):
+            is_base = "-diff.tar.gz" not in name
+        elif name.startswith("kepek-"):
+            is_base = not name.startswith("kepek-kieg-")
+        else:
             continue
-        if "-diff.tar.gz" not in f["name"]:
-            pinned = i + 1          # this full and everything newer than it
+        if is_base:
+            pinned = i + 1          # this base and everything newer than it
             break
 
     cut = max(keep, pinned)
@@ -208,12 +217,15 @@ def main():
     ap.add_argument("file")
     ap.add_argument("--folder", default="Marveen Backups")
     ap.add_argument("--keep", type=int, default=8)
+    # The 100 kB floor guards the nightly backup against an empty tarball. An
+    # image supplement of a few line drawings is legitimately smaller.
+    ap.add_argument("--min-bytes", type=int, default=100_000)
     a = ap.parse_args()
 
     if not os.path.exists(a.file):
         raise SystemExit(f"nincs ilyen fajl: {a.file}")
     size = os.path.getsize(a.file)
-    if size < 100_000:
+    if size < a.min_bytes:
         raise SystemExit(f"gyanusan kicsi fajl ({size} bajt), nem toltom fel")
 
     token = g.access_token()

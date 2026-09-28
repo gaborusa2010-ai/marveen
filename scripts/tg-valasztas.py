@@ -108,16 +108,17 @@ def main():
             os.remove(marker_path(me))
         except FileNotFoundError:
             pass
-        # Close the open question in the ledger, as the reply tool's PostToolUse
-        # hook would, so the Stop reply-guard does not block after a --valasz.
-        try:
-            import ledger_lib
-            ledger_lib.log_outbound(me, chat, text, mid)
-        except Exception as e:
-            print("ledger write failed:", e, file=sys.stderr)
     else:
         with open(marker_path(me), "w") as fh:
             json.dump({"message_id": mid, "ts": int(time.time())}, fh)
+    # Log the outbound in the ledger, as the reply tool's PostToolUse hook would,
+    # so the Stop reply-guard does not block after a --valasz OR after a button
+    # question sent as the answer to an inbound message.
+    try:
+        import ledger_lib
+        ledger_lib.log_outbound(me, chat, text, mid)
+    except Exception as e:
+        print("ledger write failed:", e, file=sys.stderr)
     print(mid)
 
 

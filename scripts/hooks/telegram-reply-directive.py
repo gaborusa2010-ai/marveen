@@ -17,6 +17,7 @@ import sys
 import os
 import json
 import re
+import time
 
 CHANNEL_RX = re.compile(
     r'<channel\s+source="plugin:telegram:telegram"([^>]*)>',
@@ -47,7 +48,35 @@ def main():
         f"tmux-ba. Ha csak nyugtázás kell (ok/köszi), akkor sem baj, de érdemi "
         f"választ MINDIG a reply toollal küldj.\n"
     )
+    _keyboard_notice(payload)
     sys.exit(0)
+
+
+MARKER_MAX_AGE = 7 * 86400
+
+
+def _keyboard_notice(payload):
+    """If this agent left a reply keyboard open (scripts/tg-valasztas.py wrote a
+    marker), the first answer must remove it, whether the owner tapped a button or
+    typed (owner, msg 3995 + 3999). The plugin's reply tool cannot remove a keyboard."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import ledger_lib
+        agent = ledger_lib.agent_id_from_payload(payload)
+        path = os.path.join(os.path.dirname(ledger_lib.db_path()), f".tg-gombsor-{agent}.json")
+        with open(path) as fh:
+            d = json.load(fh)
+        if time.time() - int(d.get("ts", 0)) > MARKER_MAX_AGE:
+            return
+        sys.stdout.write(
+            f"[GOMBSOR NYITVA] A {d.get('message_id')}-es kérdésed gombsora még kint van. "
+            f"Az ELSŐ válaszod erre az üzenetre -- akár koppintott, akár begépelte -- "
+            f"NE a reply toollal menjen, hanem így (ez tünteti el a gombokat): "
+            f"python3 /home/gabor/marveen/scripts/tg-valasztas.py --agent {agent} "
+            f"--valasz \"$(cat fajl)\"\n"
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
