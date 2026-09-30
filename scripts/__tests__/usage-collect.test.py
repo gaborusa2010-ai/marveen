@@ -371,6 +371,13 @@ class TestCollectClaudeCacheFallback(unittest.TestCase):
     estimate; a stale/absent cache, a 403, or no token must still fall
     back to the estimate."""
 
+    def setUp(self):
+        # The live store/.claude-rate-limits.json is fresh whenever the main
+        # agent is active; these cases are about the path WITHOUT it.
+        p = patch.object(uc, "STATUSLINE_RL_PATH", "/nonexistent/.claude-rate-limits.json")
+        p.start()
+        self.addCleanup(p.stop)
+
     def _write_latest(self, path, source, windows, generated_at):
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"generated_at": generated_at, "claude": {"source": source, "windows": windows}}, f)
@@ -1144,6 +1151,42 @@ class TestCodexSnapshotFreshness(unittest.TestCase):
         self.assertIn("snapshot:", out)
         self.assertNotIn("[STALE]", out)
         self.assertIn("h old", out)
+
+
+class TestCollectClaudeStatuslineFallback(unittest.TestCase):
+    """When the oauth/usage endpoint refuses (403 after the shared login lapsed),
+    a fresh status-line file supplies real percentages; a stale one does not."""
+
+    def _run(self, written_at, code=403):
+        with tempfile.TemporaryDirectory() as tmp:
+            sl_path = os.path.join(tmp, "rl.json")
+            with open(sl_path, "w", encoding="utf-8") as f:
+                json.dump({"written_at": written_at, "rate_limits": {
+                    "five_hour": {"used_percentage": 1, "resets_at": 1790632800},
+                    "seven_day": {"used_percentage": 62, "resets_at": 1790744400}}}, f)
+            http_err = urllib.error.HTTPError("url", code, "x", {}, None)
+            with patch.object(uc, "STATUSLINE_RL_PATH", sl_path), \
+                 patch.object(uc, "LATEST_PATH", os.path.join(tmp, "none.json")), \
+                 patch.object(uc, "_read_claude_token", return_value=("fake-token", "env_file")), \
+                 patch.object(uc, "_claude_cli_version", return_value="1.2.3"), \
+                 patch("urllib.request.urlopen", side_effect=http_err), \
+                 patch.object(uc, "_collect_claude_estimate", return_value={"seven_day_est_tokens": 1}) as mock_est:
+                return uc.collect_claude(), mock_est
+
+    def test_403_with_fresh_statusline_uses_it(self):
+        now = datetime.now(timezone.utc).timestamp()
+        result, mock_est = self._run(now - 120)
+        mock_est.assert_not_called()
+        self.assertEqual(result["source"], "statusline")
+        self.assertEqual(result["windows"]["seven_day"], {"used_percent": 62, "resets_at": 1790744400})
+        self.assertIn("403", result["auth_error"])
+        self.assertIn("statusline", uc.ALERTABLE_CLAUDE_SOURCES)
+
+    def test_403_with_stale_statusline_falls_back_to_estimate(self):
+        now = datetime.now(timezone.utc).timestamp()
+        result, mock_est = self._run(now - 3 * 3600)
+        mock_est.assert_called_once()
+        self.assertEqual(result["source"], "estimate")
 
 
 if __name__ == "__main__":

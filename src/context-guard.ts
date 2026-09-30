@@ -445,8 +445,9 @@ export const STALE_REFRESH_REASON_PREFIX = 'stale-handoff-refresh'
 export const DAILY_HANDOFF_REASON_PREFIX = 'daily-handoff'
 
 /**
- * Reason prefix for EVERY mid-turn deferral (hard tier, await-handoff hard
- * tier, handoff timeout). These are `none` decisions, and `none` does not log,
+ * Reason prefix for EVERY mid-turn deferral (await-handoff hard tier, handoff
+ * timeout; the idle-phase hard tier sends a handoff request instead since
+ * 2026-09-28). These are `none` decisions, and `none` does not log,
  * so the deferral was invisible: on 2026-09-23 the main agent sat 73 minutes
  * above its hard threshold while a single turn ran, spent 203.9M tokens over
  * the line (39% of the 520M daily fleet budget), and the dashboard log held
@@ -809,13 +810,20 @@ function decideWedgeTiers(
     // POSITIVELY busy pane is working, not wedged -- restarting it cuts
     // a live turn and destroys any queued/parked input with it (Szabi,
     // 2026-07-27: agents restarted mid-work, dispatched instructions
-    // lost). Defer while busy; the sweep re-decides every interval, and
-    // a turn that tips into saturation is caught by the saturation net,
-    // which deliberately ignores the busy signal.
+    // lost). So do not restart while busy -- but do not just wait either.
+    //
+    // A plain deferral here left the idle phase untouched, so NO handoff
+    // request ever went out: a session that jumped past actPct between two
+    // sweeps (measured: deferrals started at 108%, 108% and 133%) got no
+    // signal at all and kept growing for as long as it stayed busy -- 45
+    // minutes (108% -> 183%) on 2026-09-23 and 40 minutes (108% -> 218%) on
+    // 2026-09-24. Send the act-tier request instead. It does not cut the turn:
+    // like the daily tier, a busy agent reads it after its current turn, and
+    // await-handoff keeps the mid-turn deferral for the restart itself.
     if (inputs.paneBusy) {
-      return none(
-        `${MIDTURN_DEFER_REASON_PREFIX}: hard threshold (${Math.round(pct * 100)}%) but agent mid-turn -- deferring restart`,
-        cleared,
+      return handoffRequest(
+        nowMs, inputs, cfg,
+        `hard threshold (${Math.round(pct * 100)}% >= ${Math.round(cfg.hardPct * 100)}%) mid-turn -- requesting handoff, restart deferred until the turn ends`,
       )
     }
     return restartDecision(

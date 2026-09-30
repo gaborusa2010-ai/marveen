@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 
 // The subscription quota the whole fleet draws from, as the statusLine command
 // last saw it. scripts/statusline-ratelimit.sh writes the block to
@@ -94,4 +94,92 @@ export function readQuotaSnapshot(
     fiveHour,
     sevenDay,
   }
+}
+
+// The MONTHLY extra-usage spend. Unlike the two windows above it never reaches
+// the status line: only the oauth/usage endpoint reports it, and
+// scripts/usage-collect.py stores it as claude.windows.monthly_spend. That
+// endpoint needs an interactive-login token, so there can be long gaps with no
+// fresh reading (2026-09-28 onwards: 403 for the setup-token). The last reading
+// is still the best answer, as long as its date travels with it -- hence the
+// fallback to the history file and the measuredAt field.
+
+export interface MonthlySpend {
+  usedMinor: number | null
+  /** null: no cap set, so a percentage would mean nothing. */
+  limitMinor: number | null
+  currency: string | null
+  exponent: number
+  /** Only set when there is a cap. */
+  percent: number | null
+  enabled: boolean
+  limitReached: boolean
+  /** Unix seconds of the reading this came from. */
+  measuredAt: number
+  /** true when it came from usage-latest.json, false when from history. */
+  fromLatest: boolean
+}
+
+function parseMonthly(raw: unknown, measuredAt: number, fromLatest: boolean): MonthlySpend | null {
+  if (!raw || typeof raw !== 'object') return null
+  const m = raw as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const usedMinor = num(m.used_minor)
+  const limitMinor = num(m.limit_minor)
+  if (usedMinor === null && limitMinor === null) return null
+  const percent = limitMinor !== null && limitMinor > 0 && usedMinor !== null
+    ? (100 * usedMinor) / limitMinor
+    : null
+  return {
+    usedMinor,
+    limitMinor,
+    currency: typeof m.currency === 'string' ? m.currency : null,
+    exponent: num(m.exponent) ?? 2,
+    percent,
+    enabled: m.enabled === true,
+    limitReached: m.spend_limit_reached === true,
+    measuredAt,
+    fromLatest,
+  }
+}
+
+function snapshotEpoch(d: Record<string, unknown>): number {
+  const t = typeof d.generated_at === 'string' ? Date.parse(d.generated_at) : NaN
+  return Number.isFinite(t) ? Math.floor(t / 1000) : 0
+}
+
+function monthlyOf(d: unknown): unknown {
+  const c = (d as { claude?: { windows?: { monthly_spend?: unknown } } })?.claude
+  return c?.windows?.monthly_spend
+}
+
+/** Newest monthly spend reading, from usage-latest.json or else the history tail. Never throws. */
+export function readMonthlySpend(latestFile: string, historyFile: string): MonthlySpend | null {
+  try {
+    const d = JSON.parse(readFileSync(latestFile, 'utf-8'))
+    const m = parseMonthly(monthlyOf(d), snapshotEpoch(d), true)
+    if (m) return m
+  } catch { /* fall through to history */ }
+  let fd: number | null = null
+  try {
+    // The history grows by a line every 15 minutes; the tail is enough, and
+    // reading 1.3 MB on every overview load is not.
+    const size = statSync(historyFile).size
+    const len = Math.min(size, 2 * 1024 * 1024)
+    const buf = Buffer.alloc(len)
+    fd = openSync(historyFile, 'r')
+    readSync(fd, buf, 0, len, size - len)
+    const lines = buf.toString('utf-8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('monthly_spend')) continue
+      try {
+        const d = JSON.parse(lines[i])
+        const m = parseMonthly(monthlyOf(d), snapshotEpoch(d), false)
+        if (m) return m
+      } catch { /* a cut first line */ }
+    }
+  } catch { /* no history */ } finally {
+    if (fd !== null) closeSync(fd)
+  }
+  return null
 }

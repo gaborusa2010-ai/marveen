@@ -227,6 +227,16 @@ export function initDatabase(dbPathOverride?: string): void {
   } catch (err) {
     logger.warn({ err }, 'kanban_cards testing-status migration failed -- continuing')
   }
+  // Migration: planned start of the work (timeline view). Without it a bar ran
+  // from created_at, so a step planned for next week drew as if it had started
+  // the day it was filed, and "ahead / behind" could not be read off the chart
+  // (owner request, Telegram msg 4832, 2026-09-29). Added AFTER the testing
+  // migration above, which recreates the table from a fixed column list.
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN start_date INTEGER')
+  } catch {
+    // column already exists
+  }
   // Migration: add agent_id, category, auto_generated columns to memories
   try {
     db.exec("ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'marveen'")
@@ -2255,6 +2265,9 @@ export interface KanbanCard {
   project: string | null
   parent_id: string | null
   due_date: number | null
+  // Planned start of the work, unix seconds; NULL = not planned (the timeline
+  // then falls back to created_at).
+  start_date?: number | null
   sort_order: number
   created_at: number
   updated_at: number
@@ -2473,6 +2486,7 @@ export function createKanbanCard(card: {
   project?: string
   parent_id?: string
   due_date?: number
+  start_date?: number
 }): void {
   const now = Math.floor(Date.now() / 1000)
   const status = card.status ?? 'planned'
@@ -2482,12 +2496,12 @@ export function createKanbanCard(card: {
   const sortOrder = (maxRow?.m ?? -1) + 1
 
   db.prepare(
-    `INSERT INTO kanban_cards (id, title, description, status, assignee, priority, project, parent_id, due_date, sort_order, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO kanban_cards (id, title, description, status, assignee, priority, project, parent_id, due_date, start_date, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     card.id, card.title, card.description ?? null, status,
     card.assignee ?? null, card.priority ?? 'normal',
-    card.project ?? null, card.parent_id ?? null, normaliseDueDate(card.due_date), sortOrder, now, now
+    card.project ?? null, card.parent_id ?? null, normaliseDueDate(card.due_date), normaliseDueDate(card.start_date), sortOrder, now, now
   )
   // A card BORN in a status other than 'planned' gets its opening event row
   // here, because nothing else will ever write one for it: kanban_card_events
@@ -2519,7 +2533,7 @@ export function createKanbanCard(card: {
 // was writing one (e.g. `description_append`).
 export const KANBAN_WRITABLE_FIELDS = [
   'title', 'description', 'status', 'assignee', 'priority', 'project',
-  'parent_id', 'due_date', 'sort_order', 'archived_at',
+  'parent_id', 'due_date', 'start_date', 'sort_order', 'archived_at',
 ] as const
 
 export function updateKanbanCard(
@@ -2536,6 +2550,7 @@ export function updateKanbanCard(
   // signal the check below exists to protect.
   const incoming = { ...fields }
   if ('due_date' in incoming) incoming.due_date = normaliseDueDate(incoming.due_date)
+  if ('start_date' in incoming) incoming.start_date = normaliseDueDate(incoming.start_date)
   const f = { ...card, ...incoming, updated_at: now }
   // #1023: bump updated_at ONLY when a writable column actually changes. The
   // UPDATE below always matches the row, so a no-op PUT (an unknown field, or a
@@ -2546,9 +2561,9 @@ export function updateKanbanCard(
   const realChange = KANBAN_WRITABLE_FIELDS.some((k) => f[k] !== card[k])
   if (!realChange) return true
   const changed = db.prepare(
-    `UPDATE kanban_cards SET title=?, description=?, status=?, assignee=?, priority=?, project=?, parent_id=?, due_date=?, sort_order=?, updated_at=?, archived_at=?
+    `UPDATE kanban_cards SET title=?, description=?, status=?, assignee=?, priority=?, project=?, parent_id=?, due_date=?, start_date=?, sort_order=?, updated_at=?, archived_at=?
      WHERE id=?`
-  ).run(f.title, f.description, f.status, f.assignee, f.priority, f.project, f.parent_id, f.due_date, f.sort_order, f.updated_at, f.archived_at, id).changes > 0
+  ).run(f.title, f.description, f.status, f.assignee, f.priority, f.project, f.parent_id, f.due_date, f.start_date ?? null, f.sort_order, f.updated_at, f.archived_at, id).changes > 0
   if (changed) {
     touchAncestorChain(f.parent_id, now, id)
     // Re-parenting is activity on BOTH threads: the old one lost a card, the new one gained it.

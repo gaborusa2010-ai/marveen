@@ -65,6 +65,7 @@ CONFIG = {
     "claude_authoritative_cache_max_age_min": 90,  # reuse last authoritative Claude snapshot
                                                     # on a transient failure (429/5xx/timeout)
                                                     # if it's younger than this
+    "claude_statusline_max_age_min": 75,           # status-line rate-limit file older than this -> not used
     # Level alerts (weekly all-models, weekly Fable-only, monthly extra-usage
     # spend): ONE line per crossed level per window cycle, no refire. Built
     # 2026-09-16 after the weekly bar hit 100% and then the monthly spend cap
@@ -102,6 +103,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORE_DIR = os.path.join(REPO_ROOT, "store")
 HISTORY_PATH = os.path.join(STORE_DIR, "usage-history.jsonl")
 LATEST_PATH = os.path.join(STORE_DIR, "usage-latest.json")
+# Written by scripts/statusline-ratelimit.sh on every status-line render of a
+# session that has it configured (the main agent, .channels-config/settings.json).
+STATUSLINE_RL_PATH = os.path.join(STORE_DIR, ".claude-rate-limits.json")
+
+# Claude sources whose numbers are real percentages, so the pace model and the
+# level alerts may use them. The token-count estimate is never one of them.
+ALERTABLE_CLAUDE_SOURCES = ("authoritative", "authoritative_cached", "statusline")
 STATE_PATH = os.path.join(STORE_DIR, "usage-alert-state.json")
 ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
@@ -249,7 +257,7 @@ def _iter_pace_windows(snapshot):
     alerting on (authoritative / authoritative_cached for Claude,
     authoritative for Codex). Never yields from the token-count estimate."""
     claude = snapshot.get("claude") or {}
-    if claude.get("ok") and claude.get("source") in ("authoritative", "authoritative_cached"):
+    if claude.get("ok") and claude.get("source") in ALERTABLE_CLAUDE_SOURCES:
         for key, w in (claude.get("windows") or {}).items():
             scope_key = f"claude_{key}"
             length = _window_length_seconds(scope_key, w)
@@ -593,6 +601,42 @@ def _read_cached_claude_authoritative(max_age_minutes, now_utc=None):
     return windows, age_minutes
 
 
+def _read_statusline_rate_limits(max_age_minutes, now_utc=None):
+    """Return (windows_dict, age_minutes) from the file the status line writes,
+    or (None, None) if it is missing, unreadable or older than max_age_minutes.
+
+    WHY: the oauth/usage endpoint only accepts an interactive-login token. When
+    the shared ~/.claude login lapsed (2026-09-28 16:16, file emptied 17:17) the
+    endpoint answered 403 for the fleet's setup-token, and the pace model went
+    blind. Claude Code still hands every status-line render the same numbers
+    (rate_limits.five_hour / seven_day, used_percentage + epoch resets_at), for
+    the setup-token session too (measured 18:17: 62% weekly, reset 09-30 06:00,
+    identical to the last authoritative read). The file only refreshes while a
+    session is active, hence the age limit."""
+    if not os.path.exists(STATUSLINE_RL_PATH):
+        return None, None
+    try:
+        with open(STATUSLINE_RL_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        written_at = float(data["written_at"])
+        rl = data.get("rate_limits") or {}
+    except Exception:
+        return None, None
+    now_utc = now_utc or datetime.now(timezone.utc)
+    age_minutes = (now_utc.timestamp() - written_at) / 60.0
+    if age_minutes < 0 or age_minutes > max_age_minutes:
+        return None, None
+    windows = {}
+    for key in ("five_hour", "seven_day"):
+        w = rl.get(key)
+        if not isinstance(w, dict) or w.get("used_percentage") is None:
+            continue
+        windows[key] = {"used_percent": w.get("used_percentage"), "resets_at": w.get("resets_at")}
+    if not windows:
+        return None, None
+    return windows, age_minutes
+
+
 def _collect_claude_estimate():
     now = datetime.now(timezone.utc)
     five_h_cutoff = now - timedelta(hours=5)
@@ -673,6 +717,16 @@ def collect_claude():
             result["windows"] = cached_windows
             result["cache_age_minutes"] = round(age_minutes, 1)
             return result
+
+    # Any failure (403 from a lapsed login included): the status line carries
+    # the same percentages. The auth_error stays on the result so the summary
+    # still says the endpoint is down.
+    sl_windows, sl_age = _read_statusline_rate_limits(CONFIG["claude_statusline_max_age_min"])
+    if sl_windows is not None:
+        result["source"] = "statusline"
+        result["windows"] = sl_windows
+        result["statusline_age_minutes"] = round(sl_age, 1)
+        return result
 
     try:
         result.update(_collect_claude_estimate())
@@ -759,7 +813,11 @@ def render_summary(snapshot):
     lines.append(f"Claude (source: {claude.get('source')}):")
     if not claude.get("ok"):
         lines.append(f"  error: {claude.get('error')}")
-    elif claude.get("source") in ("authoritative", "authoritative_cached"):
+    elif claude.get("source") in ALERTABLE_CLAUDE_SOURCES:
+        if claude.get("source") == "statusline":
+            age = claude.get("statusline_age_minutes")
+            age_str = f"{age:.0f}" if isinstance(age, (int, float)) else "?"
+            lines.append(f"  (from the status line, {age_str} min ago -- live endpoint error: {claude.get('auth_error')})")
         if claude.get("source") == "authoritative_cached":
             age = claude.get("cache_age_minutes")
             age_str = f"{age:.0f}" if isinstance(age, (int, float)) else "?"
@@ -949,7 +1007,7 @@ def compute_level_alerts(snapshot, state, now_utc=None):
     now_utc = now_utc or datetime.now(timezone.utc)
     now_ts = now_utc.timestamp()
     claude = snapshot.get("claude") or {}
-    if not (claude.get("ok") and claude.get("source") in ("authoritative", "authoritative_cached")):
+    if not (claude.get("ok") and claude.get("source") in ALERTABLE_CLAUDE_SOURCES):
         return []
     levels = state.setdefault("levels", {})
     if not isinstance(levels, dict):

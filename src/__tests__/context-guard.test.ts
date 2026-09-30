@@ -202,11 +202,25 @@ describe('decideGuard: idle', () => {
     expect(d.nextState.deadlineMs).toBe(NOW + CFG.handoffTimeoutMinutes * 60_000)
   })
 
-  it('defers the idle-phase hard-tier restart while the agent is mid-turn', () => {
-    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
-    expect(d.action).toBe('none')
-    expect(d.reason).toContain('deferring')
-    expect(d.nextState.phase).toBe('idle')
+  // 2026-09-23 / 09-24: a session that jumped past actPct between sweeps was
+  // only ever deferred here, so no handoff request went out and it grew for
+  // 45 and 40 minutes (to 183% and 218%). Mid-turn at hardPct must still send
+  // the request -- it does not cut the turn -- and must NOT restart.
+  it('requests a handoff (not a restart) at hardPct while the agent is mid-turn', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false, handoffMtime: 123 }), CFG)
+    expect(d.action).toBe('request-handoff')
+    expect(d.reason).toContain('mid-turn')
+    expect(d.nextState.phase).toBe('await-handoff')
+    expect(d.nextState.handoffMtimeAtRequest).toBe(123)
+  })
+
+  it('after the mid-turn request, still waits for the turn to end before restarting', () => {
+    const req = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
+    const busy = decideGuard(req.nextState, inputs({ nowMs: NOW + 300_000, pct: 1.2, paneBusy: true, paneIdle: false }), CFG)
+    expect(busy.action).toBe('none')
+    expect(busy.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)).toBe(true)
+    const done = decideGuard(busy.nextState, inputs({ nowMs: NOW + 600_000, pct: 1.2, paneBusy: false, paneIdle: true }), CFG)
+    expect(done.action).toBe('restart')
   })
 
   it('skips straight to restart at hardPct', () => {
@@ -811,7 +825,8 @@ describe('normalizeContextGuardConfig -- idle-flush fields', () => {
 // deferral and a guard that never ran look identical.
 //
 // The runner logs a deferral by matching MIDTURN_DEFER_REASON_PREFIX, so every
-// deferral site must carry it. There are THREE, on two different phases, and a
+// deferral site must carry it. There are TWO, both in await-handoff (the idle-phase
+// hard tier now sends a handoff request instead of deferring), and a
 // site that loses the prefix goes silent again without failing anything else --
 // which is exactly how the blind spot survived the first time.
 describe('mid-turn deferral is observable', () => {
@@ -821,12 +836,6 @@ describe('mid-turn deferral is observable', () => {
     handoffMtimeAtRequest: null,
     deadlineMs: NOW + 60_000,
   }
-
-  it('tags the idle-phase hard-tier deferral', () => {
-    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
-    expect(d.action).toBe('none')
-    expect(d.reason.startsWith(MIDTURN_DEFER_REASON_PREFIX)).toBe(true)
-  })
 
   it('tags the await-handoff hard-tier deferral', () => {
     const d = decideGuard(awaitingHandoff, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
@@ -844,7 +853,7 @@ describe('mid-turn deferral is observable', () => {
   // The prefix is an addition, not a replacement: the wording the older cases
   // (and the daily-tier suite) assert on must survive it.
   it('keeps the human-readable reason after the prefix', () => {
-    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
+    const d = decideGuard(awaitingHandoff, inputs({ pct: 0.99, paneBusy: true, paneIdle: false }), CFG)
     expect(d.reason).toContain('deferring restart')
     expect(d.reason).toContain('mid-turn')
   })

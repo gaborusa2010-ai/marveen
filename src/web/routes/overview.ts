@@ -9,7 +9,7 @@ import {
 import { readAgentTeam } from '../agent-team.js'
 import { isAgentRunning } from '../agent-process.js'
 import { json, jsonMaybeGzip } from '../http-helpers.js'
-import { readQuotaSnapshot, DEFAULT_MAX_AGE_SEC } from '../quota.js'
+import { readQuotaSnapshot, readMonthlySpend, DEFAULT_MAX_AGE_SEC } from '../quota.js'
 import type { RouteContext } from './types.js'
 
 // Count "real" user turns (operator prompts, Telegram messages) in every
@@ -152,6 +152,10 @@ export async function tryHandleOverview(ctx: RouteContext): Promise<boolean> {
       Math.floor(Date.now() / 1000),
       maxAgeSec,
     )
+    const monthly = readMonthlySpend(
+      join(PROJECT_ROOT, 'store', 'usage-latest.json'),
+      join(PROJECT_ROOT, 'store', 'usage-history.jsonl'),
+    )
 
     jsonMaybeGzip(req, res, {
       agents: { total, running },
@@ -161,7 +165,7 @@ export async function tryHandleOverview(ctx: RouteContext): Promise<boolean> {
       skills: { count: skillCount, today: skillsToday },
       team: agentsForTeam,
       activity: activity.slice(0, 8),
-      quota,
+      quota: { ...quota, monthly },
     })
     return true
   }

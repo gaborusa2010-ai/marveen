@@ -52,7 +52,7 @@ if rl:
         "cwd": d.get("cwd"),
         "rate_limits": rl,
     }
-    tmp = out + ".tmp"
+    tmp = out + ".%d.tmp" % os.getpid()  # several sessions write the same file
     try:
         with open(tmp, "w") as f:
             json.dump(rec, f)

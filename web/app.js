@@ -790,6 +790,9 @@ let kanbanSearchQuery = ''
 // the default and the only one where drag & drop makes sense) | 'seq_asc' |
 // 'seq_desc'. Persisted like the groupBy choice.
 let kanbanSortBy = 'manual'
+// Every value the sort dropdown offers besides 'manual'. The created/updated
+// pair came from the owner (Telegram msg 4869: oldest / newest first).
+const KANBAN_SORTS = ['seq_asc', 'seq_desc', 'created_asc', 'created_desc', 'updated_desc']
 // Which swimlane keys (assignee name or priority value) are collapsed. Lives
 // for the page session only -- intentionally not persisted across reloads.
 const kanbanCollapsedLanes = new Set()
@@ -856,7 +859,7 @@ async function loadKanban() {
         if (Array.isArray(storedHiddenCols)) kanbanHiddenColumns = new Set(storedHiddenCols)
       } catch { /* ignore malformed storage */ }
       const storedSort = localStorage.getItem('marveen.kanbanSortBy')
-      if (storedSort === 'seq_asc' || storedSort === 'seq_desc') {
+      if (KANBAN_SORTS.includes(storedSort)) {
         kanbanSortBy = storedSort
         const sortSel = document.getElementById('kanbanSortBy')
         if (sortSel) sortSel.value = storedSort
@@ -897,6 +900,13 @@ document.getElementById('kanbanSortBy')?.addEventListener('change', (e) => {
 // hundred cards the whole render is a few milliseconds, so no debounce is
 // needed. Escape clears, because a search box you cannot empty in one key is
 // the reason filters get left on by accident.
+// The browser's password manager ignores autocomplete="off" and drops the saved
+// dashboard login name into the first text box on the page, which is this one.
+// It never fills a readonly field, so the box stays readonly until the user
+// reaches for it.
+for (const ev of ['pointerdown', 'focus']) {
+  document.getElementById('kanbanSearch')?.addEventListener(ev, (e) => e.target.removeAttribute('readonly'))
+}
 document.getElementById('kanbanSearch')?.addEventListener('input', (e) => {
   kanbanSearchQuery = e.target.value
   renderKanban()
@@ -1075,6 +1085,19 @@ function kanbanCardSorter() {
   if (kanbanSortBy === 'seq_desc') {
     return (a, b) => (b.seq ?? -Infinity) - (a.seq ?? -Infinity)
   }
+  // Timestamps: a missing one sorts last in both directions, same rule as seq.
+  // The seq breaks ties, so cards created in the same second keep a stable order.
+  const ts = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const byTime = (field, dir) => (a, b) => {
+    const x = ts(a[field]), y = ts(b[field])
+    if (x === null && y === null) return (a.seq ?? 0) - (b.seq ?? 0)
+    if (x === null) return 1
+    if (y === null) return -1
+    return dir * (x - y) || dir * ((a.seq ?? 0) - (b.seq ?? 0))
+  }
+  if (kanbanSortBy === 'created_asc') return byTime('created_at', 1)
+  if (kanbanSortBy === 'created_desc') return byTime('created_at', -1)
+  if (kanbanSortBy === 'updated_desc') return byTime('updated_at', -1)
   return (a, b) => a.sort_order - b.sort_order
 }
 
@@ -2221,6 +2244,7 @@ function openNewCardModal(status) {
   document.getElementById('cardPriority').value = 'normal'
   document.getElementById('cardProject').value = ''
   document.getElementById('cardDue').value = ''
+  document.getElementById('cardStart').value = ''
   document.getElementById('cardEditId').value = ''
   document.getElementById('cardEditStatus').value = status || 'planned'
   populateAssigneeSelect('cardAssignee')
@@ -2254,6 +2278,9 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     project: document.getElementById('cardProject').value.trim() || null,
     due_date: document.getElementById('cardDue').value
       ? Math.floor(new Date(document.getElementById('cardDue').value).getTime() / 1000)
+      : null,
+    start_date: document.getElementById('cardStart').value
+      ? Math.floor(new Date(document.getElementById('cardStart').value).getTime() / 1000)
       : null,
   }
 
@@ -2537,6 +2564,10 @@ async function showCardDetail(card) {
       <span class="meta-value">${card.project ? escapeHtml(card.project) : t('kanban.meta.none')}</span>
     </div>
     <div class="meta-item">
+      <span class="meta-label">${t('kanban.meta.start')}</span>
+      <span class="meta-value">${card.start_date ? new Date(card.start_date * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU') : t('kanban.meta.none')}</span>
+    </div>
+    <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.deadline')}</span>
       <span class="meta-value">${card.due_date ? new Date(card.due_date * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU') : t('kanban.meta.none')}</span>
     </div>
@@ -2749,6 +2780,9 @@ async function showCardDetail(card) {
     document.getElementById('cardProject').value = card.project || ''
     document.getElementById('cardDue').value = card.due_date
       ? new Date(card.due_date * 1000).toISOString().split('T')[0]
+      : ''
+    document.getElementById('cardStart').value = card.start_date
+      ? new Date(card.start_date * 1000).toISOString().split('T')[0]
       : ''
     document.getElementById('cardEditId').value = card.id
     document.getElementById('cardEditStatus').value = card.status
@@ -12451,6 +12485,62 @@ function quotaLevelClass(pct) {
   return ''
 }
 
+// Reset moment as a local clock time: "21:00" today, "holnap 06:00", or the
+// weekday for anything further out (the weekly window).
+function formatQuotaResetClock(epochSec, nowSec) {
+  const d = new Date(epochSec * 1000)
+  const now = new Date(nowSec * 1000)
+  const hm = d.toLocaleTimeString(currentLangTag(), { hour: '2-digit', minute: '2-digit' })
+  const dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000)
+  if (dayDiff === 0) return hm
+  if (dayDiff === 1) return t('overview.quota.tomorrow') + ' ' + hm
+  return d.toLocaleDateString(currentLangTag(), { weekday: 'long' }) + ' ' + hm
+}
+
+function currentLangTag() {
+  return window._lang === 'en' ? 'en-GB' : 'hu-HU'
+}
+
+function formatMinorMoney(minor, exponent, currency) {
+  if (typeof minor !== 'number') return '?'
+  const v = minor / Math.pow(10, exponent || 2)
+  try { return v.toLocaleString('en-GB', { style: 'currency', currency: currency || 'GBP' }) } catch { return v.toFixed(2) + ' ' + (currency || '') }
+}
+
+// The monthly extra-usage spend (owner's request, Telegram msg 4869). It only
+// comes from the oauth/usage endpoint, never from the status line, so it can
+// be days old: the reading's date is shown whenever it is not the latest run.
+// Without a cap there is no percentage to show, and inventing one (0%) would
+// read as "nothing spent".
+function renderQuotaMonthly(bars, m) {
+  const row = document.createElement('div')
+  row.className = 'quota-bar'
+  const label = `<div class="quota-bar-label">${escapeHtml(t('overview.quota.monthly'))}</div>`
+  if (!m) {
+    row.classList.add('muted')
+    row.innerHTML = `${label}<div class="quota-bar-track"></div><div class="quota-bar-value"><span class="quota-bar-reset">${escapeHtml(t('overview.quota.monthly_none'))}</span></div>`
+    bars.appendChild(row)
+    return
+  }
+  const old = !m.fromLatest
+  if (old) row.classList.add('muted')
+  const used = formatMinorMoney(m.usedMinor, m.exponent, m.currency)
+  let track = '<div class="quota-bar-track"></div>'
+  let value
+  if (typeof m.percent === 'number') {
+    const pct = Math.max(0, Math.min(100, Math.round(m.percent)))
+    track = `<div class="quota-bar-track"><div class="quota-bar-fill ${old ? '' : quotaLevelClass(pct)}" style="width:${pct}%"></div></div>`
+    value = `<strong class="quota-bar-pct">${pct}%</strong><span class="quota-bar-reset"> · ${escapeHtml(t('overview.quota.monthly_of', { used, limit: formatMinorMoney(m.limitMinor, m.exponent, m.currency) }))}</span>`
+  } else {
+    value = `<strong class="quota-bar-pct">${escapeHtml(used)}</strong><span class="quota-bar-reset"> · ${escapeHtml(t(m.enabled ? 'overview.quota.monthly_no_cap' : 'overview.quota.monthly_off'))}</span>`
+  }
+  if (old && m.measuredAt) {
+    value += `<span class="quota-bar-reset"> · ${escapeHtml(t('overview.quota.monthly_measured', { when: new Date(m.measuredAt * 1000).toLocaleString(currentLangTag(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }))}</span>`
+  }
+  row.innerHTML = label + track + `<div class="quota-bar-value">${value}</div>`
+  bars.appendChild(row)
+}
+
 // Render the subscription quota strip from /api/overview's `quota` block.
 //
 // The rule this follows: a quota reading is only worth showing while it is
@@ -12490,19 +12580,26 @@ function renderQuotaStrip(q) {
     const muted = stale || w.expired
     const row = document.createElement('div')
     row.className = 'quota-bar' + (muted ? ' muted' : '')
+    // The owner asked for the reset moment as a clock time, highlighted, not
+    // only as "in 3h" (Telegram msg 4869): a countdown has to be re-added in
+    // your head, a clock time does not.
     let tail = ''
     if (w.expired) {
-      tail = ' · ' + t('overview.quota.expired')
+      tail = ' · ' + escapeHtml(t('overview.quota.expired'))
     } else if (typeof w.resetsAt === 'number' && w.resetsAt > nowSec) {
-      tail = ' · ' + t('overview.quota.resets_in', { d: formatDurationShort(w.resetsAt - nowSec) })
+      tail = ' · ' + t('overview.quota.resets_at', {
+        at: `<strong class="quota-bar-reset-at">${escapeHtml(formatQuotaResetClock(w.resetsAt, nowSec))}</strong>`,
+        d: escapeHtml(formatDurationShort(w.resetsAt - nowSec)),
+      })
     }
     row.innerHTML = `
       <div class="quota-bar-label">${escapeHtml(t(labelKey))}</div>
       <div class="quota-bar-track"><div class="quota-bar-fill ${muted ? '' : quotaLevelClass(pct)}" style="width:${pct}%"></div></div>
-      <div class="quota-bar-value">${pct}%<span class="quota-bar-reset">${escapeHtml(tail)}</span></div>
+      <div class="quota-bar-value"><strong class="quota-bar-pct">${pct}%</strong><span class="quota-bar-reset">${tail}</span></div>
     `
     bars.appendChild(row)
   }
+  renderQuotaMonthly(bars, q.monthly)
 
   if (typeof q.ageSec === 'number') {
     age.textContent = t('overview.quota.measured', { age: formatRelative(Date.now() - q.ageSec * 1000) })
@@ -18070,7 +18167,7 @@ async function openResearchDoc(agent, name) {
 
     // Exclude cards whose entire bar lies outside the window
     cards = cards.filter(c => {
-      const barStart = c.created_at ? c.created_at * 1000 : rangeStart.getTime()
+      const barStart = c.start_date ? c.start_date * 1000 : c.created_at ? c.created_at * 1000 : rangeStart.getTime()
       const barEnd   = c.due_date * 1000
       return barEnd >= rangeStart && barStart <= rangeEnd
     })
@@ -18133,7 +18230,9 @@ async function openResearchDoc(agent, name) {
 
       // Card rows
       for (const card of projCards) {
-        const barStartMs = card.created_at ? card.created_at * 1000 : rangeStart.getTime()
+        // Planned start first (msg 4832): created_at is when the card was filed,
+        // not when the work is meant to begin.
+        const barStartMs = card.start_date ? card.start_date * 1000 : card.created_at ? card.created_at * 1000 : rangeStart.getTime()
         const barEndMs   = card.due_date * 1000
         const isOverdue  = card.status !== 'done' && barEndMs < nowMs
 

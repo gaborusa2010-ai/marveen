@@ -317,7 +317,7 @@
       <!-- Board-specific filter row (hidden when gantt active) -->
       <div id="kanbanBoardFilters" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <label for="kanbanSearch" style="font-size:13px;color:var(--muted);white-space:nowrap;" data-i18n="kanban.filter.search_label">Keresés:</label>
-        <input id="kanbanSearch" type="search" autocomplete="off" spellcheck="false"
+        <input id="kanbanSearch" type="search" name="kanban-q" autocomplete="off" spellcheck="false" readonly
                data-i18n-placeholder="kanban.filter.search_placeholder" placeholder="#295 vagy cím..."
                style="font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg);min-width:170px;">
         <span id="kanbanSearchHint" style="font-size:12px;color:var(--muted);white-space:nowrap;margin-right:8px;"></span>
@@ -336,6 +336,9 @@
           <option value="manual" data-i18n="kanban.filter.sort_manual">Kézi (húzható)</option>
           <option value="seq_asc" data-i18n="kanban.filter.sort_seq_asc">Szám szerint 1 &rarr; 9</option>
           <option value="seq_desc" data-i18n="kanban.filter.sort_seq_desc">Szám szerint 9 &rarr; 1</option>
+          <option value="created_asc" data-i18n="kanban.filter.sort_created_asc">Legrégebbi elöl</option>
+          <option value="created_desc" data-i18n="kanban.filter.sort_created_desc">Legújabb elöl</option>
+          <option value="updated_desc" data-i18n="kanban.filter.sort_updated_desc">Utoljára módosított elöl</option>
         </select>
         <span id="kanbanColumnChipsLabel" style="font-size:13px;color:var(--muted);white-space:nowrap;margin-left:8px;" data-i18n="kanban.filter.columns_label">Oszlopok:</span>
         <div id="kanbanColumnChips" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"></div>
@@ -2142,6 +2145,10 @@
           </div>
         </div>
         <div class="form-row">
+          <div class="form-group form-half">
+            <label for="cardStart" data-i18n="kanban.modal.start_label">Kezdés <span class="hint">(opcionális)</span></label>
+            <input type="date" id="cardStart">
+          </div>
           <div class="form-group form-half">
             <label for="cardDue" data-i18n="kanban.modal.due_label">Határidő <span class="hint">(opcionális)</span></label>
             <input type="date" id="cardDue">

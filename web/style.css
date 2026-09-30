@@ -593,7 +593,7 @@ main {
 .quota-bars { display: flex; flex-direction: column; gap: 6px; }
 .quota-bar {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
+  grid-template-columns: 56px minmax(60px, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -617,6 +617,10 @@ main {
 .quota-bar.muted .quota-bar-value { color: var(--text-muted); }
 .quota-bar-value { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
 .quota-bar-reset { color: var(--text-muted); }
+/* Owner's request (msg 4869): the percentage and the reset clock time stand out. */
+.quota-bar-pct { font-size: 14px; font-weight: 700; }
+.quota-bar-reset-at { color: var(--accent); font-weight: 700; }
+.quota-bar.muted .quota-bar-reset-at { color: var(--text-muted); }
 .quota-strip-note { margin-top: 8px; font-size: 11px; color: var(--text-muted); }
 .quota-strip-note.warn { color: var(--danger); }
 

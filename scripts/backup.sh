@@ -898,8 +898,15 @@ python3 - "${BACKUP_DIR}" "${KEEP_FULL}" <<'PRUNE'
 import os, sys
 backup_dir, keep_full = sys.argv[1], int(sys.argv[2])
 try:
-    names = [n for n in os.listdir(backup_dir)
-             if n.startswith("claudeclaw-") and n.endswith(".tar.gz")]
+    # An encrypted copy whose plain archive is already gone is still part of
+    # the chain by name. Until 2026-09-28 only *.tar.gz names were listed, so
+    # such an orphan .gpg never matched the prune and 15 of them (4.2 GB, 08-23
+    # to 09-08) sat here indefinitely. Strip the suffix so both halves are
+    # judged by the same timestamp rule.
+    names = sorted({(n[:-4] if n.endswith(".gpg") else n)
+                    for n in os.listdir(backup_dir)
+                    if n.startswith("claudeclaw-")
+                    and (n.endswith(".tar.gz") or n.endswith(".tar.gz.gpg"))})
 except OSError:
     sys.exit(0)
 # Sort by the timestamp in the name, not by mtime: an upload or a copy can

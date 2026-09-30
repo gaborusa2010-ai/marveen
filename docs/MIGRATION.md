@@ -227,6 +227,7 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 
 - [ ] Dashboard reachable at `http://localhost:3420` (and via Tailscale if used).
 - [ ] `sqlite3 store/claudeclaw.db 'PRAGMA integrity_check;'` → `ok`.
+  Without the sqlite3 CLI: `python3 -c "import sqlite3;print(sqlite3.connect('file:store/claudeclaw.db?mode=ro',uri=True).execute('PRAGMA integrity_check').fetchone()[0])"` → `ok`.
 - [ ] Kanban, memory, schedules visible in the dashboard (DB restored).
 - [ ] Settings overrides restored: `cat store/config-overrides.json` (if the file was present on the old machine).
 - [ ] Skills present: `ls ~/.claude/skills` matches the old count.
