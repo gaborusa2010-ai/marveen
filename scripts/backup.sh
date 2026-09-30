@@ -129,7 +129,16 @@ fi
 REPOLIST="$(mktemp -t claudeclaw-repo.XXXXXX)"
 HOMELIST="$(mktemp -t claudeclaw-home.XXXXXX)"
 MANIFEST="$(mktemp -t claudeclaw-manifest.XXXXXX)"
-STAGE="$(mktemp -d -t claudeclaw-stage.XXXXXX)"
+# The staging tree lives next to the archives, NOT in $TMPDIR. macOS runs
+# com.apple.bsd.dirhelper daily at 03:35 (StartCalendarInterval) with
+# CLEAN_FILES_OLDER_THAN_DAYS=3: it deletes $TMPDIR files whose atime is older
+# than three days. `cp -p` below preserves the SOURCE atime, so every file that
+# is rarely read (an agent's CLAUDE.md, a channel .env, the dashboard token, a
+# small side database) arrives in the stage already "three days old" and can be
+# swept between the copy and the tar. The archive is still written, the
+# verification below then reports the holes, and the nightly job fails.
+# BACKUP_DIR is not a sweep target, and the EXIT trap still removes the stage.
+STAGE="$(mktemp -d "${BACKUP_DIR}/.stage.XXXXXX")"
 BUNDLE=""
 # Declared up front so every trap below can name them unconditionally: the
 # incremental filter (further down) only fills them in when it runs.
@@ -174,9 +183,12 @@ add_if() {
 #   backups                   -- store/backups holds OTHER machines' tarballs (two 2026-07-13
 #     hermes dumps, 701 MB): a backup inside the backup, and not this host's state
 #   darwin-relay              -- relay.log (87 MB): a log, not state; nothing restores from it
+#   scheduled-runs            -- SCHEDPROMPTREF917 fire-time snapshots, ~100 files/day,
+#     7-day retention on disk already (scheduled-run-snapshot.ts); regenerated on every
+#     large-task fire, so a restore losing yesterday's costs nothing
 #   (measured 2026-09-16: these two were 788 MB of a 948 MB archive; excluding them
 #    leaves ~150 MB. STORE_SKIP does not delete anything -- the files stay on disk.)
-STORE_SKIP=" whisper health cowork venv-garmin venv-pdf dhl-chrome-profile fedex-labels fedex-vam archery-basis backups darwin-relay "
+STORE_SKIP=" whisper health cowork venv-garmin venv-pdf dhl-chrome-profile fedex-labels fedex-vam archery-basis backups darwin-relay scheduled-runs "
 if [[ -d store ]]; then
   while IFS= read -r _entry; do
     _name="$(basename "${_entry}")"
@@ -743,6 +755,7 @@ cp "${MANIFEST}" "${STAGE}/MANIFEST.txt"
 # Read it with scripts/backup-coverage.py.
 # (Written ABOVE, from the unfiltered lists -- see the coverage-manifest block.)
 
+STAGE_FAILS=0
 stage_group() {  # stage_group <listfile> <base> <group>
   local list="$1" base="$2" group="$3" rel parent
   [[ -s "${list}" ]] || return 0
@@ -750,7 +763,17 @@ stage_group() {  # stage_group <listfile> <base> <group>
     [[ -z "${rel}" ]] && continue
     parent="$(dirname "${rel}")"
     mkdir -p "${STAGE}/${group}/${parent}"
-    cp -pR "${base}/${rel}" "${STAGE}/${group}/${parent}/"
+    # BACKUPALERT925: one unreadable file (e.g. a root-owned 0600 leftover) used
+    # to abort the whole run under `set -e`, so no archive was written at all.
+    # Skip it loudly instead; the manifest still names it, so the verification
+    # below reports it as MISSING and the run fails with exit 6 and an alert.
+    if ! cp -pR "${base}/${rel}" "${STAGE}/${group}/${parent}/"; then
+      # A directory entry can be PARTIALLY copied (one unreadable file inside):
+      # the manifest names the directory, which did get in, so verification
+      # alone would pass. Count every staging failure and fail the run on it.
+      STAGE_FAILS=$((STAGE_FAILS + 1))
+      echo "backup: WARN could not fully stage ${group}/${rel} -- the run will fail (exit 6)" >&2
+    fi
   done < "${list}"
 }
 
@@ -834,6 +857,11 @@ if [[ "${BACKUP_MODE}" == "full" ]]; then
   fi
 fi
 
+if [[ "${STAGE_FAILS}" -gt 0 ]]; then
+  echo "backup: FAILED staging -- ${STAGE_FAILS} entr(y/ies) could not be copied completely (see WARN lines above)." >&2
+  missing=$((missing + STAGE_FAILS))
+fi
+
 if [[ "${missing}" -gt 0 ]]; then
   echo "backup: FAILED verification -- ${missing} item(s) named in the manifest are not in ${ARCHIVE}." >&2
   echo "backup: the archive is kept for inspection, but do NOT treat it as a good copy." >&2
@@ -844,14 +872,16 @@ if [[ "${missing}" -gt 0 ]]; then
   # the next turn. Best-effort: a messaging problem must not change the exit
   # code or mask the real failure.
   if [[ -x "${REPO_ROOT}/scripts/agent-msg.sh" ]]; then
-    # The recipient is the main agent as .env names it. "halpali" was the
-    # pre-rename id: measured 2026-09-10, zero rows to it in agent_messages, so
-    # every failure notice this block ever sent was dropped on the floor.
-    main_agent="$(sed -n 's/^MAIN_AGENT_ID=//p' "${REPO_ROOT}/.env" 2>/dev/null | head -1 | tr -d '"')"
-    main_agent="${main_agent:-marveen}"
-    bash "${REPO_ROOT}/scripts/agent-msg.sh" "${main_agent}" "${main_agent}" \
+    # BACKUPALERT925: the recipient used to be a literal agent name from the
+    # author's machine, so on any other fleet the alert went nowhere and the
+    # swallowed error hid that too. Address this install's main agent.
+    # LOCAL: "halpali" was this install's pre-rename id -- measured 2026-09-10,
+    # zero rows to it in agent_messages, so every failure notice this block had
+    # sent until then was dropped on the floor. MAIN_AGENT_ID is resolved from
+    # .env above (the launchd block), with the same "marveen" default.
+    bash "${REPO_ROOT}/scripts/agent-msg.sh" "${MAIN_AGENT_ID}" "${MAIN_AGENT_ID}" \
       "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} tetel hianyzik az archivumbol (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1 || echo "backup: WARN could not queue the failure alert for ${MAIN_AGENT_ID}" >&2
   fi
   exit 6
 fi

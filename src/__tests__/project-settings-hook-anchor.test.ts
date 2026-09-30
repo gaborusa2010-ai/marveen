@@ -27,15 +27,24 @@ const hooks: Hooks = settings.hooks ?? {}
 // The full expected registration: event -> script basenames (order-free).
 // A change here is a REVIEWED decision about what runs in the main session,
 // never a side effect.
+//
+// Both channel providers' progress hooks are listed unconditionally. That is
+// deliberate: each one is provider-scoped internally and no-ops on the other
+// provider's turns, so the cost of the idle set is a process spawn. Only the
+// watchdog DAEMON -- which polls on a timer whether or not a turn is in
+// flight -- is gated to the active CHANNEL_PROVIDER, by the two
+// install-*-progress-hook.sh scripts.
 const EXPECTED: Record<string, string[]> = {
   UserPromptSubmit: [
     'ledger-capture.py', 'inbox-drain.py', 'telegram-reply-directive.py',
-    'provenance-gate.py', 'staleness-guard.py', 'channel-inbox-drain.py',
-    'voice-reply-directive.py', 'telegram_progress.py', 'claude-usage.py',
+    'provenance-gate.py', 'staleness-guard.py', 'memory-lookup-nudge.py', 'channel-inbox-drain.py',
+    'voice-reply-directive.py', 'telegram_progress.py', 'slack_progress.py',
+    'marveen-commands.py',
   ],
   PostToolUse: [
     'ledger-outbound.py', 'tool-log-capture.py',
-    'telegram_progress_reply_clear.py', 'skill-usage-capture.py',
+    'telegram_progress_reply_clear.py', 'slack_progress_reply_clear.py',
+    'skill-usage-capture.py',
     // Local addition on this install: global-skill-write-audit.mjs is the
     // AFTER-the-fact, effect-based check on the shared skill tree (it diffs the
     // protected tree against a snapshot on every tool call). It cannot prevent a
@@ -64,8 +73,11 @@ const EXPECTED: Record<string, string[]> = {
   // sit here too is upstream's own since v1.39.0 (TOOLLOGVAKSIKER921, above) --
   // the auto-merge left both copies, which is a silent duplicate key in JS and
   // an error only typecheck catches.
-  Stop: ['telegram-reply-guard.py', 'telegram_progress_clear.py', 'ledger-midturn-capture.py'],
-  SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py'],
+  Stop: [
+    'marveen-commands.py', 'telegram-reply-guard.py', 'telegram_progress_clear.py', 'slack_progress_clear.py',
+    'ledger-midturn-capture.py',
+  ],
+  SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py', 'marveen-commands.py'],
   SessionEnd: ['clear-capture.py'],
 }
 

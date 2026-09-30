@@ -9,7 +9,7 @@ import {
 import { readAgentTeam } from '../agent-team.js'
 import { isAgentRunning } from '../agent-process.js'
 import { json, jsonMaybeGzip } from '../http-helpers.js'
-import { readQuotaSnapshot, readMonthlySpend, DEFAULT_MAX_AGE_SEC } from '../quota.js'
+import { readQuotaSnapshot, readMonthlySpend, DEFAULT_MAX_AGE_SEC, readFableSnapshot, DEFAULT_FABLE_MAX_AGE_SEC } from '../quota.js'
 import type { RouteContext } from './types.js'
 
 // Count "real" user turns (operator prompts, Telegram messages) in every
@@ -156,6 +156,14 @@ export async function tryHandleOverview(ctx: RouteContext): Promise<boolean> {
       join(PROJECT_ROOT, 'store', 'usage-latest.json'),
       join(PROJECT_ROOT, 'store', 'usage-history.jsonl'),
     )
+    // Separate source (scripts/usage-collect.py), separate freshness rule --
+    // see src/web/quota.ts for why this isn't folded into readQuotaSnapshot.
+    const fableMaxAgeSec = Number(process.env.QUOTA_FABLE_MAX_AGE_SEC) || DEFAULT_FABLE_MAX_AGE_SEC
+    const quotaFable = readFableSnapshot(
+      join(PROJECT_ROOT, 'store', 'usage-latest.json'),
+      Math.floor(Date.now() / 1000),
+      fableMaxAgeSec,
+    )
 
     jsonMaybeGzip(req, res, {
       agents: { total, running },
@@ -166,6 +174,7 @@ export async function tryHandleOverview(ctx: RouteContext): Promise<boolean> {
       team: agentsForTeam,
       activity: activity.slice(0, 8),
       quota: { ...quota, monthly },
+      quotaFable,
     })
     return true
   }
