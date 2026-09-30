@@ -134,6 +134,8 @@ const CHECKOUT_ONLY: Record<string, string> = {
     'conversation-continuity ledger, local (MIDTURN901): it backfills mid-turn inbound rows into the conversation_log the main-only ledger trio writes, so it has the same scope as ledger-capture/outbound/replay above -- seeded alone it would write into a ledger no seeded agent has',
   'telegram-reply-guard.py':
     'the Stop-hook half of the Telegram reply enforcement (#856) decides from ledger_lib.open_question_with_age, i.e. the conversation_log the main-only ledger trio writes; seeded alone it would read an empty ledger and allow every stop, a silent no-op -- seeding it means seeding the ledger trio with it, a separate design decision',
+  'require-checked.py':
+    'local Stop gate that blocks a turn whose final text has no "Checked:" block; installed with the owner\'s approval (Telegram msg 2369, 2026-09-10) for the MAIN agent only -- its docstring says "EGYELORE CSAK A Fo-AGENSNEL" -- and the project CLAUDE.md states that for sub-agents the Checked block is their own discipline, not a gate. Seeding it would block every sub-agent turn on a rule the owner scoped to one agent',
 }
 
 // The direction that was blind: a hook the checkout's own settings wire, which

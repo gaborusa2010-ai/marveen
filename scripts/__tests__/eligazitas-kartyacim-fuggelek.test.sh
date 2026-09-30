@@ -24,12 +24,23 @@ has()  { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3')" ;; esac; }
 hasnt(){ case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-HELPER="$REPO/scripts/eligazitas-kartyacim-fuggelek.py"
 TMP="$(mktemp -d)"
 PORT=""
 API_PID=""
 cleanup() { [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
+
+# The helper reads its bearer token from <its own repo>/store/.dashboard-token.
+# Running it from $REPO made the suite depend on the live store: on a checkout
+# without that file (a fresh clone, a worktree) every lookup failed-open and 7
+# cases went red for a reason unrelated to the helper; on the live install it
+# sent the REAL dashboard token to the stub. So the helper runs as a byte copy
+# from a throwaway tree that carries a fixture token.
+HROOT="$TMP/helper-root"
+mkdir -p "$HROOT/scripts" "$HROOT/store"
+cp "$REPO/scripts/eligazitas-kartyacim-fuggelek.py" "$HROOT/scripts/"
+printf 'fixture-token\n' > "$HROOT/store/.dashboard-token"
+HELPER="$HROOT/scripts/eligazitas-kartyacim-fuggelek.py"
 
 echo "eligazitas cim-fuggelek (CIMFUGGELEK901)"
 echo "========================================"
@@ -49,6 +60,10 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/api/kanban":
             self.send_response(404); self.end_headers(); return
+        # Only the fixture token opens the board, so a green run also proves the
+        # helper authenticated with the token of the tree it runs from.
+        if self.headers.get("Authorization") != "Bearer fixture-token":
+            self.send_response(401); self.end_headers(); return
         b = json.dumps({"cards": CARDS}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -59,12 +74,11 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PYEOF
 python3 "$TMP/api.py" "$PORT" & API_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  curl -s -o /dev/null "http://127.0.0.1:$PORT/api/kanban" && break
+  curl -s -o /dev/null -H "Authorization: Bearer fixture-token" "http://127.0.0.1:$PORT/api/kanban" && break
   python3 -c 'import time; time.sleep(0.2)'
 done
 export DASHBOARD_API="http://127.0.0.1:$PORT"
-# The helper reads the token from the repo's own store, which exists on this host.
-if curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/kanban" | grep -q 200; then
+if curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer fixture-token" "http://127.0.0.1:$PORT/api/kanban" | grep -q 200; then
   ok "the stub board answers (otherwise nothing below proves anything)"
 else
   no "the stub board answers (otherwise nothing below proves anything)"
@@ -147,7 +161,7 @@ MEOF
 chmod +x "$CASE/scripts/agent-msg.sh"
 cp "$HELPER" "$CASE/scripts/"
 printf 'Eligazitas.\n  #238 Hangok gyujtese, EGYELORE CSAK ANGOL.\n' > "$CASE/store/night-briefing-anorak.txt"
-cp "$REPO/store/.dashboard-token" "$CASE/store/" 2>/dev/null
+printf 'fixture-token\n' > "$CASE/store/.dashboard-token"
 
 . "$CASE/scripts/agent-night-shift.sh"
 LOG="$(send_night_briefing "$CASE" anorak 2>&1)"

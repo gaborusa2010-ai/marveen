@@ -21,6 +21,16 @@ fails=0
 TMP="$(mktemp -d -t agentmsg-notify.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Fixture token: the helper refuses to run without a readable token file, and its default
+# (<repo>/store/.dashboard-token) does not exist on a fresh clone or a worktree -- there
+# every case died on "no token file" and the negative control passed VACUOUSLY (no payload
+# at all also has no notify:false). Exported, so the mutant copy below, whose own <repo>
+# is $TMP/.., reads the same fixture instead of a path that is never there.
+printf 'fixture-token\n' > "$TMP/token"
+export MARVEEN_TOKEN_FILE="$TMP/token"
+export MARVEEN_HOMOGLYPH_BIN="$BASE/scripts/lib/homoglyph.py"
+unset MARVEEN_API_BASE MARVEEN_WEB_PORT
+
 # --- the stub curl: log the payloads, fake a 200 + id for the POST, 200 for the PUT ---
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/curl" <<'STUB'
@@ -65,7 +75,13 @@ if ! grep -q '"notify": False' "$MUT"; then
   : > "$TMP/log.txt"
   CURL_LOG="$TMP/log.txt" PATH="$TMP/bin:$PATH" \
     bash "$MUT" --close 1234 --result 'kesz, reszletek: msg {id}' marveen roxy "proba" >/dev/null 2>&1
-  if grep -q '"notify": *false' "$TMP/log.txt"; then
+  if ! grep -q '"status"' "$TMP/log.txt"; then
+    # No close payload at all is not a red control, it is no control: an absent
+    # payload has no notify:false either. The mutant must have REACHED the close.
+    echo "FAIL a negativ kontroll URES -- a mutans el sem jutott a lezarasig"
+    sed 's/^/       /' "$TMP/log.txt"
+    fails=$((fails+1))
+  elif grep -q '"notify": *false' "$TMP/log.txt"; then
     echo "FAIL a negativ kontroll ATMENT -- a teszt nem tud nemet mondani"
     fails=$((fails+1))
   else

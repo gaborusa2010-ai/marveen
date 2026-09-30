@@ -82,6 +82,14 @@ raise SystemExit(1 if m._derived_rule_note({"started_at": 1789106400, "stopped_a
 PY
 
 # 5. ZERO NOISE ON THE REAL LEDGER: it must not fire on any closed job today.
+#    This case is about the owner's DATA, not the code, so it runs only where that
+#    data is: on a tree without store/muhely-jobs.json (a fresh clone, a worktree)
+#    it used to die with a FileNotFoundError traceback. There it is a stated SKIP,
+#    never a silent pass -- cases 1-4 above carry the code contract everywhere.
+if [ ! -f store/muhely-jobs.json ]; then
+  printf '  SKIP az elo naplo (store/muhely-jobs.json) ezen a fan nincs, az 5. eset nem futott\n'
+  exit $fail
+fi
 python3 - <<'PY'
 import json, importlib.util
 spec = importlib.util.spec_from_file_location('jobs', 'scripts/muhely/jobs.py')

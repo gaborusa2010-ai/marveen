@@ -27,7 +27,10 @@ no() { echo "  FAIL $1"; fail=1; }
 SANDBOX="$TMP/repo"
 mkdir -p "$SANDBOX/scripts/muhely" "$SANDBOX/store"
 cp scripts/muhely/*.py "$SANDBOX/scripts/muhely/"
-cp store/muhely-business.json "$SANDBOX/store/" 2>/dev/null || true
+# Fixture business file, never the live one: a tree without store/ (a fresh clone,
+# a worktree) had no file to copy, `|| true` hid that, and every invoice case then
+# failed on "HIANYZO KOTELEZO MEZO" -- a red that said nothing about the guard.
+cp scripts/__tests__/fixtures/muhely-business.json "$SANDBOX/store/" || exit 1
 
 # A COUNTER AND A REGISTER OF OUR OWN, never the live ones: this test spends
 # invoice numbers, and spending a real one is not undoable.

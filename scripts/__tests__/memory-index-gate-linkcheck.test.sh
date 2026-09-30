@@ -33,8 +33,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 [ -f "$GATE" ]  || { echo "FAIL: gate not found at $GATE"; exit 1; }
 [ -f "$CHECK" ] || { echo "FAIL: link checker not found at $CHECK"; exit 1; }
-command -v jq      >/dev/null 2>&1 || { echo "FAIL: jq is required"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 is required"; exit 1; }
+# JSON is read with python3, not jq: jq is not installed on every host (the
+# owner's own box has none), and the gate itself reads without it (MEMIDXJQ924).
+# shellcheck source=lib/json-read.sh
+. "$INSTALL_DIR/scripts/__tests__/lib/json-read.sh"
 
 MEM="$TMP/memory"; mkdir -p "$MEM"
 IDX="$MEM/MEMORY.md"
@@ -44,7 +47,6 @@ run_gate() {
   MEMORY_INDEX_PATH="$IDX" MEMORY_INDEX_STATE="$1" MEMORY_LINKCHECK_BIN="$CHECK" \
     bash "$GATE" 2>/dev/null
 }
-jqv() { jq -r "$2" "$1" 2>/dev/null; }
 # Fresh index body shared by the cases that must stay clean.
 clean_index() {
   {
@@ -214,7 +216,7 @@ OUT="$(MEMORY_INDEX_PATH="$IDX" MEMORY_INDEX_STATE="$S" MEMORY_LINKCHECK_BIN="$B
 if [ -z "$OUT" ]; then pass "a failing checker wakes the gate"; else fail "a failing checker wakes the gate" "$OUT"; fi
 LS="$(jqv "$S" .link_scan)"
 if [ -n "$LS" ] && [ "$LS" != ok ] && [ "$LS" != null ]; then pass "the state carries the reason: $LS"; else fail "the state carries the reason" "$(cat "$S")"; fi
-if jq -e . "$S" >/dev/null 2>&1; then pass "and the state is still valid JSON"; else fail "the state is valid JSON" "$(cat "$S")"; fi
+if json_valid "$S"; then pass "and the state is still valid JSON"; else fail "the state is valid JSON" "$(cat "$S")"; fi
 echo ""
 
 echo "(h) A checker that is not there at all is the same class"
@@ -252,7 +254,9 @@ echo "(j) The state file stays machine-readable with the new fields"
 for f in a b b2 b3 c d e f i2; do
   S="$TMP/$f.json"
   [ -f "$S" ] || continue
-  if jq -e 'has("link_scan") and (.missing_links == null or (.missing_links|type) == "number")' "$S" >/dev/null 2>&1; then
+  # jq semantics kept: link_scan must be present; missing_links may be absent
+  # or null (jq's `.missing_links == null`), otherwise it must be a number.
+  if json_eval "$S" '"link_scan" in d and (d.get("missing_links") is None or is_num(d["missing_links"]))'; then
     pass "$f.json: link_scan present, missing_links typed"
   else
     fail "$f.json: link_scan present and typed" "$(cat "$S")"

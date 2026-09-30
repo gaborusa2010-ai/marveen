@@ -73,9 +73,16 @@ const EXPECTED: Record<string, string[]> = {
   // sit here too is upstream's own since v1.39.0 (TOOLLOGVAKSIKER921, above) --
   // the auto-merge left both copies, which is a silent duplicate key in JS and
   // an error only typecheck catches.
+  //
+  // Local addition on this install (owner's approval, Telegram msg 2369,
+  // 2026-09-10; moved into this file 2026-09-26): require-checked.py blocks a
+  // turn whose final text carries no "Checked:" block. It used to be
+  // registered by an absolute path into ~/.claude/hooks, which the portability
+  // test below rightly refused; the script now lives in scripts/hooks like
+  // every other registered hook.
   Stop: [
     'marveen-commands.py', 'telegram-reply-guard.py', 'telegram_progress_clear.py', 'slack_progress_clear.py',
-    'ledger-midturn-capture.py',
+    'ledger-midturn-capture.py', 'require-checked.py',
   ],
   SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py', 'marveen-commands.py'],
   SessionEnd: ['clear-capture.py'],

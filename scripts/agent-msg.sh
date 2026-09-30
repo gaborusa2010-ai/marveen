@@ -243,7 +243,7 @@ t = t.replace("{{id}}", SENT)          # az emlitest kivonjuk a csere alol
 t = t.replace("{id}", os.environ["ID"])  # a pointer megkapja a MERT szamot
 t = t.replace(SENT, "{id}")            # az emlites literalisan ter vissza
 print(json.dumps({"status": "done", "result": t, "notify": False}))')"
-      CR="$(curl -s -X PUT "http://localhost:${PORT}/api/messages/${CLOSE}" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "$CB" -w $'\n%{http_code}' 2>/dev/null || true)"
+      CR="$(curl -s -X PUT "${URL}/${CLOSE}" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "$CB" -w $'\n%{http_code}' 2>/dev/null || true)"
       CCODE="$(printf '%s' "$CR" | tail -n1)"
       if [ "$CCODE" = "200" ]; then echo "CLOSED $CLOSE"; else echo "FAIL close=$CLOSE http=${CCODE:-?}"; exit 1; fi
     fi

@@ -14,9 +14,24 @@
 # The two outcomes stay distinguishable because we assert the MESSAGE, not just the exit code.
 set -uo pipefail
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-S="$BASE/scripts/agent-msg.sh"
 DEAD_PORT=1          # nothing listens here, and binding it would need root
 fails=0
+
+# HERMETIC TREE. The helper resolves its token file AND its failure log from its own
+# location (<repo>/store/), so running the real path had two side effects: on a checkout
+# without store/.dashboard-token (a fresh clone, a worktree) every past-guard case died on
+# "no token file" before reaching the send, and on the live install each run appended three
+# FAIL lines to the REAL store/agent-msg-failures.log. So the suite runs a byte copy of the
+# helper from a throwaway tree with a fixture token; the log lands there and is discarded.
+TMP="$(mktemp -d -t agentmsg-guard.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/scripts" "$TMP/store"
+cp "$BASE/scripts/agent-msg.sh" "$TMP/scripts/agent-msg.sh"
+printf 'fixture-token\n' > "$TMP/store/.dashboard-token"
+export MARVEEN_TOKEN_FILE="$TMP/store/.dashboard-token"
+export MARVEEN_HOMOGLYPH_BIN="$BASE/scripts/lib/homoglyph.py"
+unset MARVEEN_API_BASE   # the dead port below must be the address actually used
+S="$TMP/scripts/agent-msg.sh"
 
 # expect_guard: the guard must refuse, exit 2, and SAY why. No send may happen.
 expect_guard() {

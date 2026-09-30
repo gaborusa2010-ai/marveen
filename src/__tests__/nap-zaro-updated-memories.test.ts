@@ -68,10 +68,12 @@ describe('nap-zaro SKILL.md step-2: uj + frissitett emlekek (NAPZAROFRISS918)', 
         res.end('{}')
       }
     })
-    // the shipped script connects to "localhost", which this environment resolves to
-    // ::1 first (IPv6) -- bind there explicitly instead of 127.0.0.1, or the python
-    // process tries the wrong address family first.
-    await new Promise<void>((resolve) => server.listen(0, '::1', resolve))
+    // the shipped script connects to "localhost", and hosts disagree on what that is:
+    // some resolve it to ::1 first, others (measured 2026-09-30 on a WSL install whose
+    // /etc/hosts maps localhost to 127.0.0.1 only) never offer ::1 at all. Binding
+    // '::1' failed the second kind with ECONNREFUSED, binding 127.0.0.1 the first.
+    // '::' is dual-stack on Linux (ipv6Only defaults to false), so it answers both.
+    await new Promise<void>((resolve) => server.listen(0, '::', resolve))
     port = (server.address() as { port: number }).port
   })
 

@@ -21,13 +21,20 @@ fail=0
 ok() { printf '  ok   %s\n' "$1"; }
 no() { printf '  FAIL %s\n' "$1"; fail=1; }
 
-LIVE_JOBS=$(md5sum store/muhely-jobs.json | cut -d' ' -f1)
-LIVE_CNT=$(md5sum store/muhely-counters.json | cut -d' ' -f1)
+# Fingerprint of a live file, or ABSENT. On a tree with no store/ (a fresh clone, a
+# worktree) "untouched" means "still not there": the sandbox must not have created
+# it. A bare md5sum of a missing file printed an error and an empty string, and two
+# empty strings compared equal -- a pass that measured nothing.
+fp() { if [ -e "$1" ]; then md5sum "$1" | cut -d' ' -f1; else echo ABSENT; fi; }
+LIVE_JOBS=$(fp store/muhely-jobs.json)
+LIVE_CNT=$(fp store/muhely-counters.json)
 
 S="$TMP/repo"
 mkdir -p "$S/scripts/muhely" "$S/store"
 cp scripts/muhely/*.py "$S/scripts/muhely/"
-cp store/muhely-business.json "$S/store/"
+# Fixture business file, never the live one (the live copy made the suite fail on
+# any tree without store/, and put real details into throwaway PDFs).
+cp scripts/__tests__/fixtures/muhely-business.json "$S/store/" || exit 1
 # Never the live counter: this test spends invoice numbers.
 python3 - "$S/store" <<'PY'
 import json, sys
@@ -137,9 +144,9 @@ OUT6=$( cd "$S" && python3 scripts/muhely/jobs.py szamlazva 5100 5 2>&1 ); RC6=$
 [ $RC6 -ne 0 ] && ok "es nem nulla exittel" || no "sikert jelentett"
 
 echo "== 7. az ELES fajlok erintetlenek"
-[ "$LIVE_JOBS" = "$(md5sum store/muhely-jobs.json | cut -d' ' -f1)" ] \
+[ "$LIVE_JOBS" = "$(fp store/muhely-jobs.json)" ] \
   && ok "muhely-jobs.json valtozatlan" || no "AZ ELES MUNKANAPLO VALTOZOTT"
-[ "$LIVE_CNT" = "$(md5sum store/muhely-counters.json | cut -d' ' -f1)" ] \
+[ "$LIVE_CNT" = "$(fp store/muhely-counters.json)" ] \
   && ok "muhely-counters.json valtozatlan" || no "AZ ELES SZAMLALO VALTOZOTT"
 
 [ $fail -eq 0 ] && echo "  MIND RENDBEN" || echo "  VOLT HIBA"

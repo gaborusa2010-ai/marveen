@@ -34,8 +34,13 @@ function makeCtx(path: string, searchParams: Record<string, string> = {}) {
 
   let responseBody = ''
   let status = 200
+  // The memories route labels every answer with X-Memory-Search via
+  // res.setHeader (search AND listing branches); a mock without it threw a
+  // TypeError inside the handler, which read as a rejected filter.
+  const headers: Record<string, string> = {}
   const res = {
     writeHead: vi.fn((code: number) => { status = code }),
+    setHeader: vi.fn((name: string, value: unknown) => { headers[name.toLowerCase()] = String(value) }),
     end: (body?: string) => { responseBody = body || '' },
   }
 
@@ -43,6 +48,7 @@ function makeCtx(path: string, searchParams: Record<string, string> = {}) {
     ctx: { req: {} as any, res: res as any, path, method: 'GET', url } as RouteContext,
     getBody: () => (responseBody ? JSON.parse(responseBody) : null),
     getStatus: () => status,
+    getHeader: (name: string) => headers[name.toLowerCase()],
   }
 }
 
@@ -93,9 +99,11 @@ describe('unknown query param guard', () => {
       { q: 'alpha', mode: 'fts', limit: '10' },
     ]
     for (const params of legit) {
-      const { ctx, getStatus } = makeCtx('/api/memories', params)
+      const { ctx, getStatus, getHeader } = makeCtx('/api/memories', params)
       expect(await tryHandleMemories(ctx)).toBe(true)
       expect({ params, status: getStatus() }).toEqual({ params, status: 200 })
+      // An accepted filter still gets its answer labelled (search or listing).
+      expect(getHeader('X-Memory-Search'), JSON.stringify(params)).toBeTruthy()
     }
   })
 

@@ -385,7 +385,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 /home/gabor/.claude/hooks/require-checked.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/require-checked.py\"",
             "timeout": 10
           }
         ]

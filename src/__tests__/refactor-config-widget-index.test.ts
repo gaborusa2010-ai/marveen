@@ -128,9 +128,29 @@ describe('orphaned i18n keys removed from lang files', () => {
     'activity.no_output',
     'activity.session_stopped',
     'autonomy.btn.refresh',
-    'autonomy.level.1',
+    // 'autonomy.level.1' USED to be listed here, and was wrong to be: the
+    // Settings > Autonomy legend renders t('autonomy.level.1') next to .2 and .3
+    // (web/app.js, added by #627 the same day #629 declared the key dead). With
+    // the key removed the legend printed the raw key string for level 1. A key
+    // with a live t() call is not orphaned; the guard below keeps this list
+    // honest from now on.
     'updates.page_subtitle',
   ]
+
+  it('no key on the dead list is still referenced from web/app.js', () => {
+    const js = readFileSync(join(REPO_ROOT, 'web', 'app.js'), 'utf8')
+    const used = DEAD_KEYS.filter(k => js.includes(`'${k}'`) || js.includes(`"${k}"`) || js.includes(`\`${k}\``))
+    expect(used, `listed as dead but still used in app.js: ${used.join(', ')}`).toHaveLength(0)
+  })
+
+  it('the autonomy legend keys it renders exist in both lang files', () => {
+    for (const lang of ['en', 'hu']) {
+      const content = readFileSync(join(REPO_ROOT, 'web', 'lang', `${lang}.js`), 'utf8')
+      for (const k of ['autonomy.level.1', 'autonomy.level.2', 'autonomy.level.3']) {
+        expect(content.includes(`'${k}'`), `${k} missing from ${lang}.js`).toBe(true)
+      }
+    }
+  })
 
   for (const lang of ['en', 'hu']) {
     it(`${lang}.js does not contain any orphaned key`, () => {

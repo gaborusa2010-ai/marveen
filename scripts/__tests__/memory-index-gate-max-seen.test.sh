@@ -34,7 +34,12 @@ if [ ! -f "$GATE" ]; then
   echo "FAIL: gate not found at $GATE"
   exit 1
 fi
-command -v jq >/dev/null 2>&1 || { echo "FAIL: jq is required by the gate and by this suite"; exit 1; }
+# python3, not jq: jq is not installed on every host (the owner's own box has
+# none), and the gate itself reads its state without it (MEMIDXJQ924). Before
+# this the suite exited "jq is required" on such a host and measured nothing.
+command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 is required by the gate and by this suite"; exit 1; }
+# shellcheck source=lib/json-read.sh
+. "$INSTALL_DIR/scripts/__tests__/lib/json-read.sh"
 
 NOW="$(date +%s)"
 IDX="$TMP/MEMORY.md"
@@ -59,8 +64,7 @@ IDXSIZE="$(wc -c < "$IDX" | tr -d ' ')"
 run_gate() {
   MEMORY_INDEX_PATH="$IDX" MEMORY_INDEX_STATE="$1" bash "$GATE" 2>/dev/null
 }
-# $1 = state file, $2 = jq path
-jqv() { jq -r "$2" "$1" 2>/dev/null; }
+# jqv FILE PATH (lib/json-read.sh) reads like `jq -r PATH FILE`.
 
 echo "memory-index-gate running-maximum tests"
 echo "======================================="
@@ -178,10 +182,8 @@ echo "(h) The state file stays machine-readable"
 for f in a b c d e f g; do
   S="$TMP/$f.json"
   [ -f "$S" ] || continue
-  if ! jq -e . "$S" >/dev/null 2>&1; then fail "$f.json is valid JSON" "$(cat "$S")"; continue; fi
-  if jq -e '(has("max_seen_at") and has("since"))
-            and (.max_seen_at == null or (.max_seen_at|type) == "number")
-            and (.since       == null or (.since      |type) == "number")' "$S" >/dev/null 2>&1; then
+  if ! json_valid "$S"; then fail "$f.json is valid JSON" "$(cat "$S")"; continue; fi
+  if json_fields_num_or_null "$S" max_seen_at since; then
     pass "$f.json: both fields present and typed (number or null)"
   else
     fail "$f.json: both fields present and typed" "$(cat "$S")"

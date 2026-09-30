@@ -1,0 +1,20 @@
+{
+  "_doc": "TEST FIXTURE for the muhely suites. Fake identity, never a real business: the suites used to copy the live store/muhely-business.json, which made them fail on any tree without it and put the owner's real details into throwaway PDFs. The non-identity fields mirror the live file's shape (invoice_prefix empty, day_rate 200, cis_rate 20, not VAT registered).",
+  "trading_name": "Fixture Joinery",
+  "legal_name": "Test Fixture Sole Trader",
+  "address": ["1 Fixture Street", "Testville", "TE1 1ST"],
+  "email": "fixture@example.invalid",
+  "phone": "",
+  "utr": "",
+  "ni_number": "",
+  "vat_number": "",
+  "vat_rate": 20.0,
+  "cis_rate": 20,
+  "day_rate": 200.0,
+  "bank": {"account_name": "Test Fixture", "sort_code": "00-00-00", "account_number": "00000000"},
+  "payment_terms_days": 14,
+  "quote_valid_days": 30,
+  "footer": "",
+  "quote_prefix": "Q",
+  "invoice_prefix": ""
+}
