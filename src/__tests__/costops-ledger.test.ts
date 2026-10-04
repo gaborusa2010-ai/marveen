@@ -99,6 +99,25 @@ describe('costops ledger + summary', () => {
     expect(sources.n).toBe(2)
   })
 
+  it('#425: a fixed cost removed from the config leaves this month and its source goes inactive; past months stay', () => {
+    const db = getDb()
+    const JUNE = Math.floor(Date.UTC(2026, 5, 15, 12, 0, 0) / 1000)
+    syncFixedCostsToLedger(db, cfg(), JUNE)
+    syncFixedCostsToLedger(db, cfg(), NOW)
+    const onlyClaude = cfg({ fixed_costs: [cfg().fixed_costs[0]] })
+    syncFixedCostsToLedger(db, onlyClaude, NOW)
+    const july = db.prepare("SELECT source_id FROM cost_line_items WHERE dedup_key LIKE 'fixed|%|2026-07' ORDER BY source_id").all() as Array<{ source_id: string }>
+    expect(july.map((r) => r.source_id)).toEqual(['anthropic-max'])
+    const june = db.prepare("SELECT COUNT(*) AS n FROM cost_line_items WHERE dedup_key LIKE 'fixed|%|2026-06'").get() as { n: number }
+    expect(june.n).toBe(2)
+    const openai = db.prepare("SELECT active FROM cost_sources WHERE id='openai'").get() as { active: number }
+    expect(openai.active).toBe(0)
+    expect(getCostSummary(db, cfg(), NOW).all_sources.map((s) => s.source_id)).toEqual(['anthropic-max'])
+    // re-adding it reactivates the source
+    syncFixedCostsToLedger(db, cfg(), NOW)
+    expect((db.prepare("SELECT active FROM cost_sources WHERE id='openai'").get() as { active: number }).active).toBe(1)
+  })
+
   it('reflects updated config amounts on re-sync (upsert, not insert)', () => {
     const db = getDb()
     syncFixedCostsToLedger(db, cfg(), NOW)

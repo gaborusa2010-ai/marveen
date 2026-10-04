@@ -101,7 +101,36 @@ export function syncFixedCostsToLedger(
       service_name=excluded.service_name, currency=excluded.currency,
       confidence=excluded.confidence, data_freshness=excluded.data_freshness
   `)
+  // A fixed cost removed from the config must leave THIS month's ledger too
+  // (#425, c19c1b09): the upserts alone kept the removed row visible on the
+  // Costs page after a restart. Past months stay -- they were real spend. A
+  // source left with no line item in this window is marked inactive, so it
+  // also drops out of the full source list; one that still carries other
+  // (non-fixed) items this month keeps its active flag.
+  const staleLines = db.prepare(`
+    DELETE FROM cost_line_items
+    WHERE dedup_key LIKE 'fixed|%|' || @key
+      AND source_id NOT IN (SELECT value FROM json_each(@ids))
+  `)
+  const deactivateOrphans = db.prepare(`
+    UPDATE cost_sources SET active = 0, updated_at = @now
+    WHERE active = 1
+      AND id NOT IN (SELECT value FROM json_each(@ids))
+      AND id IN (SELECT value FROM json_each(@removed))
+      AND NOT EXISTS (
+        SELECT 1 FROM cost_line_items li
+        WHERE li.source_id = cost_sources.id AND li.charge_period_start = @start
+      )
+  `)
   const tx = db.transaction((entries: CostOpsConfig['fixed_costs']) => {
+    const ids = JSON.stringify(entries.map((e) => e.source_id))
+    const removed = db.prepare(`
+      SELECT DISTINCT source_id FROM cost_line_items
+      WHERE dedup_key LIKE 'fixed|%|' || @key
+        AND source_id NOT IN (SELECT value FROM json_each(@ids))
+    `).all({ key: win.key, ids }) as Array<{ source_id: string }>
+    staleLines.run({ key: win.key, ids })
+    deactivateOrphans.run({ now, ids, removed: JSON.stringify(removed.map((r) => r.source_id)), start: win.start })
     let count = 0
     for (const e of entries) {
       upsertSource.run({

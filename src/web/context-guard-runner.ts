@@ -56,6 +56,15 @@ import {
 
 const INITIAL_DELAY_MS = 270_000
 const INTERVAL_MS = 300_000
+// #416 (8a285b66): a 5-minute sweep let 21 of 39 restarts (Cody, 09-28..10-01)
+// overshoot the 97% hard tier (median ~210-219k on a 200k window): a busy
+// agent grows >20k between two sweeps. Agents the last measurement put at or
+// above HOT_PCT are re-checked every HOT_INTERVAL_MS in between; the rest keep
+// the 5-minute cadence, so the extra transcript reads stay limited to the few
+// sessions that are close to a decision.
+const HOT_INTERVAL_MS = 60_000
+const HOT_PCT = 0.8
+const lastMeasuredPct = new Map<string, number>()
 
 // How long the dispatch gate honours one sweep's "this banner is not
 // credible" verdict. Expressed in SWEEPS, not minutes, so it cannot silently
@@ -304,6 +313,7 @@ export function measurePct(name: string, cfgLimit: number | null): number | null
 }
 
 async function performRestart(name: string): Promise<void> {
+  lastMeasuredPct.delete(name)
   if (name === MAIN_AGENT_ID) {
     // Platform-correct main-session restart. This was a hardcoded
     // `/bin/launchctl kickstart`, which exists only on macOS: on Linux every
@@ -403,6 +413,8 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   const measuredPct = running && needPct && (cfg.enabled || needCredibilityProbe)
     ? measurePct(name, cfg.limitTokens)
     : null
+  if (measuredPct !== null) lastMeasuredPct.set(name, measuredPct)
+  else if (!running) lastMeasuredPct.delete(name)
   const paneSaturatedTrusted = saturationBannerCredible(paneSaturatedRaw, bannerIsHardError, measuredPct)
   if (paneSaturatedRaw && !paneSaturatedTrusted) {
     noteSaturationBannerUntrusted(session, nowMs + SATURATION_OVERRIDE_TTL_MS)
@@ -806,6 +818,24 @@ export function startContextGuardRunner(): NodeJS.Timeout {
       tickRunning = false
     }
   }
+  // The hot tick shares the re-entrancy flag with the full sweep, so the two
+  // never run checkAgent concurrently. A restart resets the agent's reading:
+  // the fresh session's next measurement decides whether it is hot again.
+  async function hotSweep() {
+    if (tickRunning) return
+    const hot = [...lastMeasuredPct].filter(([, pct]) => pct >= HOT_PCT).map(([name]) => name)
+    if (hot.length === 0) return
+    tickRunning = true
+    try {
+      const now = Date.now()
+      for (const name of hot) {
+        try { await checkAgent(name, now) } catch (err) { logger.debug({ err, agent: name }, 'context-guard: hot check error') }
+      }
+    } finally {
+      tickRunning = false
+    }
+  }
   setTimeout(sweep, INITIAL_DELAY_MS)
+  setInterval(hotSweep, HOT_INTERVAL_MS)
   return setInterval(sweep, INTERVAL_MS)
 }

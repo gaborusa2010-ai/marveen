@@ -1475,19 +1475,24 @@ function renderKanban() {
     if (parent.status === card.status) embeddedSubtaskIds.add(card.id)
   }
 
-  const grouped = { planned: [], in_progress: [], waiting: [], testing: [], done: [] }
+  const grouped = { standing: [], planned: [], in_progress: [], waiting: [], testing: [], done: [] }
   for (const card of kanbanCards) {
     if (embeddedSubtaskIds.has(card.id)) continue
     if (!visibleCardIds.has(card.id)) continue
+    if (kanbanIsStanding(card)) { grouped.standing.push(card); continue }
     if (grouped[card.status]) grouped[card.status].push(card)
   }
 
   // Update counts (embedded subtasks don't count as separate cards)
+  document.getElementById('countStanding').textContent = grouped.standing.length
   document.getElementById('countPlanned').textContent = grouped.planned.length
   document.getElementById('countInProgress').textContent = grouped.in_progress.length
   document.getElementById('countTesting').textContent = grouped.testing.length
   document.getElementById('countWaiting').textContent = grouped.waiting.length
   document.getElementById('countDone').textContent = grouped.done.length
+
+  renderKanbanOngoing(grouped.standing)
+  delete grouped.standing
 
   const flatBoard = document.getElementById('kanbanBoard')
   const swimlaneBoard = document.getElementById('kanbanSwimlaneBoard')
@@ -1536,6 +1541,39 @@ function renderKanban() {
     flatBoard.hidden = true
     swimlaneBoard.hidden = false
     renderSwimlaneBoard(grouped, embeddedSubtaskIds)
+  }
+}
+
+// Ongoing tasks (owner, Telegram msg 5611 and 5617, 2026-10-03): open cards
+// carrying the "Folyamatos" label are pulled out of their status column, where
+// "in progress" read as if they were about to finish. A full column took too
+// much room for three cards, and "Álló" read as "stalled", so they now sit in a
+// slim strip of their own above the board. The card keeps its real status;
+// nothing is ever posted with a virtual status.
+const KANBAN_STANDING_LABEL = 'Folyamatos'
+function kanbanIsStanding(card) {
+  return card.status !== 'done' && (card.labels || []).some((l) => l && l.name === KANBAN_STANDING_LABEL)
+}
+
+function renderKanbanOngoing(cards) {
+  const strip = document.getElementById('kanbanOngoing')
+  const body = document.getElementById('kanbanOngoingBody')
+  if (!strip || !body) return
+  document.getElementById('countStanding').textContent = cards.length
+  strip.hidden = cards.length === 0
+  body.innerHTML = ''
+  for (const card of cards.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0))) {
+    const chip = document.createElement('button')
+    chip.type = 'button'
+    chip.className = 'kanban-ongoing-chip'
+    const seq = document.createElement('span')
+    seq.className = 'kanban-ongoing-seq'
+    seq.textContent = card.seq ? '#' + card.seq : ''
+    chip.appendChild(seq)
+    chip.appendChild(document.createTextNode(' ' + (card.title || '')))
+    chip.title = card.title || ''
+    chip.addEventListener('click', () => showCardDetail(card))
+    body.appendChild(chip)
   }
 }
 
@@ -1731,6 +1769,7 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
 
 // Map column status keys to their count-span IDs
 const WIP_COUNT_IDS = {
+  standing: 'countStanding',
   planned: 'countPlanned',
   in_progress: 'countInProgress',
   testing: 'countTesting',
@@ -1982,6 +2021,8 @@ function kanbanMoveActor() { return window._marveen?.ownerName || undefined }
 // column-body created dynamically in renderSwimlaneBoard (those elements
 // don't exist yet when this module first runs).
 function wireKanbanColumnDnD(col) {
+  // The standing column is virtual (see KANBAN_STANDING_LABEL): no drop target.
+  if (col.dataset.status === 'standing') return
   col.addEventListener('dragover', (e) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
@@ -2168,7 +2209,7 @@ async function kanbanTouchEnd(e) {
     // Dropped on the status bar: no position information, so append.
     newStatus = chip.dataset.status
     sortOrder = document.querySelectorAll(`.kanban-col-body[data-status="${newStatus}"] .kanban-card`).length
-  } else if (col) {
+  } else if (col && col.dataset.status !== 'standing') {
     newStatus = col.dataset.status
     const after = getDragAfterElement(col, p.clientY)
     const others = [...col.querySelectorAll('.kanban-card:not(.dragging)')]
@@ -18820,7 +18861,8 @@ async function openResearchDoc(agent, name) {
     const todayPct = Math.max(0, Math.min(100, (nowMs - rangeStart) / totalMs * 100))
 
     // Filter: cards that have a due_date
-    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date)
+    // Standing tasks have no end, so they never go on the timeline (owner, msg 5611).
+    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date && !kanbanIsStanding(c))
 
     if (ganttOverdueOnly) {
       // Keep cards that are overdue OR due within 7 days

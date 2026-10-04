@@ -4117,9 +4117,15 @@ export function countConsecutiveSkips(name: string, agent: string, window = 400)
   const reasons = new Set<string>()
   let lastFiredTs: number | null = null
   for (const r of rows) {
-    // 'skipped-precheck' is the same event with a stall-detector-friendly
-    // label (see recordSkip); it must keep counting towards starvation.
-    if (r.status === 'skipped' || r.status === 'skipped-precheck') {
+    // 'skipped-precheck' is TRANSPARENT (#423, f3c1c7dd): the preCheck ran
+    // and measured nothing to do, which is a healthy quiet round, not a task
+    // that cannot get a turn. Counting it paged a false "starving" alert at
+    // the 40th quiet round of kvota-szam-frissites, whose preCheck skips on
+    // purpose while its state file is fresh. Not a reset either: busy/quota
+    // skips on both sides of it still add up, and the last real fire stays
+    // the reference for the silence bar.
+    if (r.status === 'skipped-precheck') continue
+    if (r.status === 'skipped') {
       skips++
       if (r.reason) reasons.add(r.reason)
       continue

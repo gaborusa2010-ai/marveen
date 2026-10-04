@@ -758,6 +758,45 @@ main {
  * a narrow window fewer per row -- but never squeezed below a width where the
  * card titles stop being readable. (min-width:0 on the column keeps a long
  * unbroken title from inflating its track past that minimum.) */
+/* Ongoing tasks strip (owner, msg 5617): one slim row above the board. */
+.kanban-ongoing[hidden] { display: none; }
+.kanban-ongoing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+  border-left: 3px solid #64748b;
+}
+.kanban-ongoing-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.kanban-ongoing-body { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.kanban-ongoing-chip {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border, transparent);
+  border-radius: 14px;
+  padding: 3px 10px;
+  cursor: pointer;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kanban-ongoing-chip:hover { border-color: #64748b; }
+.kanban-ongoing-seq { color: var(--text-muted); font-weight: 600; }
+
 .kanban-board {
   --kanban-col-min: 280px;
   display: grid;

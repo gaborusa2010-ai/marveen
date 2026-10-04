@@ -191,6 +191,7 @@ window._i18n.hu = {
   'overview.card.agent_messages': 'mai üzenetek',
 
   // --- Kanban ---
+  'kanban.ongoing.title':        'Folyamatos feladatok',
   'kanban.col.planned':          'Tervezett',
   'kanban.col.in_progress':      'Folyamatban',
   'kanban.col.testing':          'Tesztelés',

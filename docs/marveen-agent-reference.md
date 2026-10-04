@@ -254,6 +254,10 @@ curl -s -X POST -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/I
   csinálni -- és ez a helyes alak, ha egy ügy egy MÁSIK ágens kártyájának a kommentjében
   ülne: a komment nem nyilvántartás (nincs státusza, nem lezárható, egyetlen lekérdezés
   sem látja).
+- **A `GET /api/kanban` az ARCHIVÁLT kártyákat nem adja vissza, státusztól függetlenül.**
+  Ha egy kártya hiányzik belőle, az nem azt jelenti, hogy nincs: nézd a
+  `GET /api/kanban/archived`-et (mérve 2026-10-03: a #95 és a #179 csak ott volt, mindkettő
+  `archived_at` 2026-09-30 18:04, a `move` és a `comments` ennek ellenére 200-at adott rájuk).
 - Egy-kártya lekérdezés (`GET /api/kanban/ID`) **nincs**. A teljes listát kérd le és szűrd.
   **A státuszkód 405, nem 404** (mérve 2026-09-24 11:3x): `{"error":"Method GET not allowed
   here. Allowed: PUT, DELETE.","hint":"The method is the problem, not the id in the path."}`

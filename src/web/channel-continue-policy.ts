@@ -46,6 +46,12 @@ export interface ContinueDecisionInput {
   useMcpJsonForChannel: boolean
   /** Measured installed Claude Code version, null when unmeasured. */
   installedCli: string | null
+  /** Context fill of the newest prior transcript (0..1), null when unmeasured
+   *  or the agent has no enabled context-guard. */
+  priorContextPct?: number | null
+  /** The guard's handoff threshold (actPct) for this agent, null when the
+   *  guard is not enabled for it. */
+  guardActPct?: number | null
 }
 
 export interface ContinueDecision { useContinue: boolean; reason: string }
@@ -54,6 +60,15 @@ export interface ContinueDecision { useContinue: boolean; reason: string }
 export function decideContinueFlag(i: ContinueDecisionInput): ContinueDecision {
   if (!i.hasPriorSession) return { useContinue: false, reason: 'no prior session to continue' }
   if (i.fresh) return { useContinue: false, reason: 'fresh launch requested' }
+  // #416 (8a285b66): `--continue` resumes the NEWEST transcript. When the guard
+  // fresh-restarted an agent and the fresh session died before writing a turn
+  // (2026-09-30 18:41: Margo restarted at 297k, fleet stop 7 s later), the
+  // newest transcript is still the abandoned heavy one, and the next launch
+  // resumed it (to 329k). A session already past the handoff threshold is one
+  // the guard would hand off on its next sweep anyway, so do not resume it.
+  if (i.priorContextPct != null && i.guardActPct != null && i.priorContextPct >= i.guardActPct) {
+    return { useContinue: false, reason: `prior session at ${Math.round(i.priorContextPct * 100)}% context, at/above the guard handoff threshold ${Math.round(i.guardActPct * 100)}% -- resuming it would re-adopt a session the guard abandons` }
+  }
   if (!i.hasChannel) return { useContinue: true, reason: 'channel-less agent keeps its context' }
   if (i.isMainAgent) return { useContinue: false, reason: 'main agent lifecycle is service-managed; not in scope' }
   if (i.provider !== 'telegram') return { useContinue: false, reason: `provider '${i.provider}' not measured; only telegram was (CONTRESUME922)` }

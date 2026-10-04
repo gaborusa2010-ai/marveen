@@ -57,6 +57,21 @@ from datetime import datetime, timedelta
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORE = os.path.join(REPO, "store")
 STATE = os.path.join(STORE, "agent-budget-guard.json")
+# #417 (626f3223): a same-day exemption. A restart after a stop USED to be
+# re-stopped on the next tick (fresh transcript activity re-arms the guard),
+# while the stop message promised "restart it on the dashboard". The only
+# ways a restart can hold are a higher cap or this file: {"agent": "YYYY-MM-DD"}
+# -> on that local day the guard does not stop the agent (it still logs).
+OVERRIDE = os.path.join(STORE, "agent-budget-override.json")
+
+
+def override_today(agent):
+    try:
+        with open(OVERRIDE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get(agent) == datetime.now().strftime("%Y-%m-%d")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
@@ -399,6 +414,11 @@ def main(argv=None):
     if total < trigger:
         return 0
 
+    if override_today(a.agent):
+        print(f"# {a.agent}: kuszob folott ({total}), de mara felmentve ({OVERRIDE}), nem allitom le",
+              file=sys.stderr)
+        return 0
+
     st = load()
     ent = st.get(a.agent) or {}
     # Already stopped for this run? Only re-arm once the agent has written
@@ -417,7 +437,8 @@ def main(argv=None):
            f"Leallitasi kuszob: {sz_trigger}, a plafon {sz_cap}.\n"
            f"Idopont: {when}.\n\n"
            "Ez a sajat merese, nem a teljes fiokod. "
-           "Ujrainditani a dashboardon lehet.")
+           "Ha ma megis futnia kell, szolj Marveennek: mara feloldja. "
+           "Egy sima ujrainditas NEM eleg, azt a kovetkezo ellenorzes perceken belul ujra leallitja.")
     if not ok:
         msg = (f"{a.agent} elerte a leallitasi kuszobot, de A LEALLITAS NEM SIKERULT.\n\n"
                f"{sz_total} token {ablak}, a kuszob {sz_trigger}, a plafon {sz_cap}.\n"

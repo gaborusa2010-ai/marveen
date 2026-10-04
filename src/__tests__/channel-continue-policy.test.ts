@@ -19,6 +19,17 @@ const measured: ContinueDecisionInput = {
 }
 
 describe('decideContinueFlag', () => {
+  it('#416: a prior session at/above the guard handoff threshold is not resumed (channel or not)', () => {
+    // 2026-09-30: Margo fresh-restarted at 297k, fleet stop 7 s later, the
+    // next launch resumed the abandoned 297k transcript and ran to 329k.
+    expect(decideContinueFlag({ ...measured, priorContextPct: 1.485, guardActPct: 0.9 })).toMatchObject({ useContinue: false, reason: expect.stringContaining('handoff threshold') })
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.9, guardActPct: 0.9 }).useContinue).toBe(false)
+    expect(decideContinueFlag({ ...measured, hasChannel: false, priorContextPct: 1.1, guardActPct: 0.9 }).useContinue).toBe(false)
+    // below the threshold, or unmeasured / guard off: unchanged
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.6, guardActPct: 0.9 }).useContinue).toBe(true)
+    expect(decideContinueFlag({ ...measured, priorContextPct: null, guardActPct: 0.9 }).useContinue).toBe(true)
+    expect(decideContinueFlag({ ...measured, priorContextPct: 1.2, guardActPct: null }).useContinue).toBe(true)
+  })
   it('the measured shape resumes: telegram + fleet token + no launch-secret + CLI >= floor', () => {
     expect(decideContinueFlag(measured).useContinue).toBe(true)
     expect(decideContinueFlag({ ...measured, installedCli: '2.1.300' }).useContinue).toBe(true)

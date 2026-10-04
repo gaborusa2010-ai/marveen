@@ -93,6 +93,29 @@ setup; : > "$TMP/base/store/night-briefing-anorak.txt"
 MSG_RESULT=ok run > "$TMP/out"
 has "URES briefing-fajl is jelzest valt ki" "eligazitas-hiany jelezve"
 
+# NIGHTALREADY179 (kartya 26a1eba2): ha az inditas "already running"-ot kapott,
+# a hianyzo fajl NEM esemeny -- 2026-09-06 23:00-kor pont ez adott hamis riasztast.
+setup; : > "$TMP/msg-called"; rm -f "$TMP/msg-called"
+send_night_briefing "$TMP/base" anorak already > "$TMP/out" 2>&1
+has "mar futo agensnel nem riaszt, kimondja miert" "mar futott az inditas elott"
+grep -q "eligazitas-hiany jelezve" "$TMP/out" && no "mar futo agensnel NEM szabad jelezni" || ok "mar futo agensnel nincs jelzes"
+
+# ...de egy LETEZO eligazitas a mar futo agensnek is kimegy.
+setup; printf 'szoveg\n' > "$TMP/base/store/night-briefing-anorak.txt"
+MSG_RESULT=ok send_night_briefing "$TMP/base" anorak already > "$TMP/out" 2>&1
+has "mar futo agensnek a letezo eligazitas kimegy" "eligazitas kikuldve"
+
+# A mai .sent- masolat: az eligazitas ma mar kiment, tehat nem "senki nem irta meg".
+setup; : > "$TMP/base/store/night-briefing-anorak.txt.sent-$(date +%Y%m%d)-212715"
+MSG_RESULT=ok run > "$TMP/out"
+has "mai .sent- masolatnal nem riaszt" "mai eligazitas mar kiment"
+grep -q "eligazitas-hiany jelezve" "$TMP/out" && no "mai .sent- mellett NEM szabad jelezni" || ok "mai .sent- mellett nincs jelzes"
+
+# A TEGNAPI .sent- nem ment fel: az a mai eligazitas hianya.
+setup; : > "$TMP/base/store/night-briefing-anorak.txt.sent-19990101-230000"
+MSG_RESULT=ok run > "$TMP/out"
+has "regi .sent- mellett tovabbra is jelez" "eligazitas-hiany jelezve"
+
 echo "==============================================================="
 echo "Results: $PASS/$((PASS+FAIL)) passed"
 [ "$FAIL" -gt 0 ] && exit 1

@@ -191,6 +191,7 @@ window._i18n.en = {
   'overview.card.agent_messages': 'messages today',
 
   // --- Kanban ---
+  'kanban.ongoing.title':        'Ongoing tasks',
   'kanban.col.planned':          'Planned',
   'kanban.col.in_progress':      'In Progress',
   'kanban.col.testing':          'Testing',

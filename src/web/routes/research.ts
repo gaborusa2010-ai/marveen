@@ -74,6 +74,45 @@ function realResearchRoot(agent: string): string | null {
   }
 }
 
+// The fleet never wrote to research/: the agents file their reports under
+// reports/ (Prospero under riportok/), so the page stayed empty while Anorak
+// alone had 52 reports (owner asked why, Telegram msg 5627, 2026-10-03). Those
+// folders are listed too, each under its own name as a leading path segment
+// ("reports/2026-10-01-foo.md"); research/ keeps its unprefixed names.
+const REPORT_DIRS = ['reports', 'riportok']
+
+interface DocRoot { prefix: string; realRoot: string }
+
+function docRoots(agent: string): DocRoot[] {
+  const roots: DocRoot[] = []
+  const research = realResearchRoot(agent)
+  if (research) roots.push({ prefix: '', realRoot: research })
+  for (const dir of REPORT_DIRS) {
+    try {
+      roots.push({ prefix: dir, realRoot: realpathSync(join(agentConfigRoot(agent), dir)) })
+    } catch {
+      /* folder absent: nothing to list */
+    }
+  }
+  return roots
+}
+
+// Which root a listed name lives in, and its path inside that root.
+function locateDoc(agent: string, name: string): { realRoot: string; rel: string } | null {
+  const roots = docRoots(agent)
+  const slash = name.indexOf('/')
+  if (slash > 0) {
+    const head = name.slice(0, slash)
+    const hit = roots.find(r => r.prefix === head)
+    if (hit) {
+      const rel = name.slice(slash + 1)
+      if (resolveInside(hit.realRoot, join(hit.realRoot, rel))) return { realRoot: hit.realRoot, rel }
+    }
+  }
+  const research = roots.find(r => r.prefix === '')
+  return research ? { realRoot: research.realRoot, rel: name } : null
+}
+
 function walk(realRoot: string, rel: string, depth: number, out: string[]): void {
   if (depth > MAX_SEGMENTS) return
   let entries: import('node:fs').Dirent[]
@@ -104,15 +143,19 @@ export async function tryHandleResearch(ctx: RouteContext): Promise<boolean> {
   if (path === '/api/research' && method === 'GET') {
     const agents = [MAIN_AGENT_ID, ...listAgentNames()]
     const result = agents.map(agent => {
-      const realRoot = realResearchRoot(agent)
-      const names: string[] = []
-      if (realRoot) walk(realRoot, '', 1, names)
-      const docs = names
-        .map(name => {
+      const found: { name: string; file: string }[] = []
+      for (const { prefix, realRoot } of docRoots(agent)) {
+        const names: string[] = []
+        // A prefixed root spends one segment on its own name, so it starts one
+        // level deeper and a listed name never exceeds MAX_SEGMENTS.
+        walk(realRoot, '', prefix ? 2 : 1, names)
+        for (const n of names) found.push({ name: prefix ? `${prefix}/${n}` : n, file: join(realRoot, n) })
+      }
+      const docs = found
+        .map(({ name, file }) => {
           let title = name
           let ms = 0
           try {
-            const file = join(realRoot!, name)
             title = titleOf(readFileSync(file, 'utf-8'), name)
             ms = statSync(file).mtimeMs
           } catch {
@@ -151,8 +194,8 @@ export async function tryHandleResearch(ctx: RouteContext): Promise<boolean> {
       json(res, { error: 'Unknown agent' }, 404)
       return true
     }
-    const realRoot = realResearchRoot(agent)
-    const file = realRoot ? resolveInside(realRoot, join(realRoot, name)) : null
+    const loc = locateDoc(agent, name)
+    const file = loc ? resolveInside(loc.realRoot, join(loc.realRoot, loc.rel)) : null
     // Containment failure is reported as 404, not 403: whether the escaping
     // target exists is not something this endpoint should confirm.
     let isFile = false

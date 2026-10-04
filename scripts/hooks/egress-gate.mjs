@@ -50,6 +50,7 @@ import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { prefixAllows } from './lib/url-prefix.mjs'
+import { sessionAgentName } from './lib/agent-id.mjs'
 
 // Derive repo root from this script's location (scripts/hooks/egress-gate.mjs).
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -431,13 +432,13 @@ export function payloadKeySignature(payload) {
 // out loud when it skips SELFTEST_ lines rather than silently reporting less.
 const SELFTEST = process.env.EGRESS_GATE_SELFTEST === '1'
 
-function logLine(kind, url, detail, keys = '', agentType = '') {
+function logLine(kind, url, detail, keys = '', agentType = '', agent = '') {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
     const ts = new Date().toISOString()
     if (SELFTEST) kind = `SELFTEST_${kind}`
     const keyPart = keys ? ` payload_keys="${keys}"` : ''
-    const agentPart = agentType ? ` agent_type="${agentType}"` : ''
+    const agentPart = (agent ? ` agent="${agent}"` : '') + (agentType ? ` agent_type="${agentType}"` : '')
     appendFileSync(EGRESS_BLOCK_LOG, `${ts} ${kind} url="${url}" ${detail}${agentPart}${keyPart}\n`, 'utf-8')
   } catch {
     // Never let log failure cascade into blocking the agent process itself.
@@ -486,17 +487,18 @@ if (isInvokedDirectly()) {
   }
   const url = String(payload?.tool_input?.url ?? '')
   const agentType = String(payload?.agent_type ?? '')
+  const agent = sessionAgentName(payload, REPO_ROOT)
   const runtimeList = loadRuntimeAllowlist()
   const decision = egressDecision(payload?.tool_name, payload?.tool_input, runtimeList, agentType)
   if (decision.blocked) {
-    logLine('BLOCKED', url, 'reason="not on egress allowlist"', payloadKeySignature(payload), agentType)
+    logLine('BLOCKED', url, 'reason="not on egress allowlist"', payloadKeySignature(payload), agentType, agent)
     deny(BLOCK_MESSAGE)
   }
   // Audited, not silent: the quarantine tier is the one grant a main agent
   // cannot obtain, so every use of it leaves a line next to the denials. The
   // other tiers are the ordinary allowlist and stay quiet.
   if (decision.tier === 'quarantine') {
-    logLine('ALLOWED_QUARANTINE', url, 'reason="quarantine-reader tier"', '', agentType)
+    logLine('ALLOWED_QUARANTINE', url, 'reason="quarantine-reader tier"', '', agentType, agent)
   }
   allow()
 }

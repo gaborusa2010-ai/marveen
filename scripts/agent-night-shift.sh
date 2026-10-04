@@ -40,7 +40,8 @@ BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # executed directly (the BASH_SOURCE guard at the bottom). A sourced copy
 # defines the function and does nothing else -- no API call, no token read.
 send_night_briefing() {
-  local BASE="$1" AGENT="$2"
+  # $3 = "already" when the start call answered "Agent is already running".
+  local BASE="$1" AGENT="$2" ALREADY="${3:-}"
   local BRIEF OUT
   # NIGHTBRIEF901: a start with no handover is exactly what the
   # agens-inditas-atadas skill warns about -- "az inditas maga egy API-hivas; a
@@ -102,6 +103,19 @@ send_night_briefing() {
     fi
     # Only the temp copy. $BRIEF is either retired above or deliberately kept.
     [ -n "$AUG" ] && rm -f "$AUG"
+  elif [ "$ALREADY" = "already" ]; then
+    # NIGHTALREADY179 (card 26a1eba2). Measured 2026-09-06 23:00: the start call
+    # answered "Agent is already running", the script LOGGED that, and five
+    # seconds later still alarmed "ures prompton indul" -- the two steps ran
+    # independently, so the knowledge from the start branch never reached here.
+    # An agent that was started earlier (by hand, or by its own restart) is not
+    # sitting on an empty prompt: it is mid-run, and whoever started it had the
+    # chance to brief it. A missing file here is not an event, so no message.
+    echo "$(date '+%F %T') $AGENT mar futott az inditas elott, nincs uj eligazitas-fajl -- nem riasztok"
+  elif ls "$BRIEF.sent-$(date +%Y%m%d)"-* >/dev/null 2>&1; then
+    # Same card, point (2): today's briefing already went out and was retired
+    # (e.g. at a manual start at 21:27), so "nobody wrote it" is false.
+    echo "$(date '+%F %T') $AGENT mai eligazitas mar kiment ($(ls -1 "$BRIEF.sent-$(date +%Y%m%d)"-* | tail -n1 | xargs -n1 basename)) -- nem riasztok"
   else
     # NIGHTBRIEF901-B (Forgacs, 2026-09-03, Marveen merese ugyanaznap este).
     # A blokk eddig csak a fajl LETEZESERE reagalt, tehat pontosan akkor
@@ -149,11 +163,13 @@ main() {
   CODE="$(printf '%s' "$RESP" | tail -n1)"
   BODY="$(printf '%s' "$RESP" | sed '$d')"
 
+  ALREADY=""
   case "$CODE" in
     200|201) echo "$(date '+%F %T') $AGENT $ACTION ok" ;;
     400)
       # "Agent is not running" / "already running": the wanted state already holds.
       echo "$(date '+%F %T') $AGENT $ACTION: mar ebben az allapotban ($BODY)"
+      case "$BODY" in *"already running"*) ALREADY=already ;; esac
       ;;
     *)
       echo "$(date '+%F %T') $AGENT $ACTION HIBA http=$CODE $BODY" >&2
@@ -190,7 +206,7 @@ main() {
       exit 1
     fi
 
-    send_night_briefing "$BASE" "$AGENT"
+    send_night_briefing "$BASE" "$AGENT" "$ALREADY"
   fi
 }
 

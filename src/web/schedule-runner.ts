@@ -1677,8 +1677,8 @@ export function isStarvationAlertPoint(skips: number, threshold = STARVE_SKIPS):
 function recordSkip(taskName: string, agentName: string, reason: string, status = 'skipped'): void {
   // `status` is an upstream-facing distinction (a stall detector reads task_runs
   // and must tell a healthy precheck-quiet round from a busy/quota skip); our own
-  // `reason` column stays the finer-grained record. countConsecutiveSkips counts
-  // both spellings, so the starvation watch is unaffected.
+  // `reason` column stays the finer-grained record. countConsecutiveSkips skips
+  // over 'skipped-precheck' rows (#423): a quiet preCheck is not starvation.
   appendTaskRun(taskName, agentName, status, reason)
   try {
     const { skips, lastFiredTs, reasons } = countConsecutiveSkips(taskName, agentName)

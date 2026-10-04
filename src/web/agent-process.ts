@@ -2398,13 +2398,32 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // --continue as before.
     const usesLaunchSecret = providerEnv !== '' || apiKeyEnv !== ''
     const installedCli = hasChannel ? (await measureClaudeCliVersion()).version : null
+    // #416: measure the prior session's fill only when it could matter (a
+    // resume is on the table and the guard is enabled for this agent). Dynamic
+    // import: context-guard-runner imports this module, a static import back
+    // would be a cycle.
+    let priorContextPct: number | null = null
+    let guardActPct: number | null = null
+    if (hasPriorSession && !opts.fresh) {
+      try {
+        const { readContextGuardConfig } = await import('./context-guard-store.js')
+        const guardCfg = readContextGuardConfig(name)
+        if (guardCfg.enabled) {
+          const { measurePct } = await import('./context-guard-runner.js')
+          guardActPct = guardCfg.actPct
+          priorContextPct = measurePct(name, guardCfg.limitTokens)
+        }
+      } catch (err) {
+        logger.warn({ name, err }, 'prior-session context probe failed; resume decision falls back to the other conditions')
+      }
+    }
     const continueDecision = decideContinueFlag({
       hasPriorSession, fresh: !!opts.fresh, hasChannel, isMainAgent: name === MAIN_AGENT_ID,
       provider: agentProvider, usesLaunchSecret, fleetTokenLaunch: oauthTokenEnv !== '',
-      useMcpJsonForChannel, installedCli,
+      useMcpJsonForChannel, installedCli, priorContextPct, guardActPct,
     })
-    if (hasChannel && hasPriorSession && !opts.fresh) {
-      logger.info({ name, useContinue: continueDecision.useContinue, reason: continueDecision.reason, installedCli }, 'channel agent resume decision')
+    if ((hasChannel || priorContextPct !== null) && hasPriorSession && !opts.fresh) {
+      logger.info({ name, priorContextPct, guardActPct, useContinue: continueDecision.useContinue, reason: continueDecision.reason, installedCli }, 'channel agent resume decision')
     }
     const continueFlag = continueDecision.useContinue ? '--continue ' : ''
     const stateEnvVar = agentProvider === 'slack' ? 'SLACK_STATE_DIR' : agentProvider === 'discord' ? 'DISCORD_STATE_DIR' : agentProvider === 'googlechat' ? 'GOOGLECHAT_STATE_DIR' : agentProvider === 'teams' ? 'TEAMS_STATE_DIR' : 'TELEGRAM_STATE_DIR'

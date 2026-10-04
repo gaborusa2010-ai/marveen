@@ -724,7 +724,13 @@ def main():
         dm = DIRECTIVE_HEADER_RX.match(prompt)
         if dm:
             msg_id, body = dm.group(1), dm.group(2)
-            cwd = payload.get("cwd") or os.getcwd()
+            # #424 (494ae005): the payload cwd FOLLOWS a Bash `cd` -- after
+            # `cd agents/roxy` a real main-agent directive was flagged forged
+            # ("this session is roxy", measured 2026-10-01 19:11). The session's
+            # identity is where it was STARTED: CLAUDE_PROJECT_DIR, which the
+            # harness sets for hooks and which a `cd` does not move. The
+            # payload cwd stays the fallback for a harness that omits it.
+            cwd = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
             labels = matched_actions(prompt, compile_patterns(rules))
             verdict, reason, age, trailer = verify_directive_row(msg_id, body, derive_agent_id(cwd))
             # The age rides in the label column ("age=12s") so the bound can be

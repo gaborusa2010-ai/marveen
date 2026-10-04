@@ -54,6 +54,7 @@ import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments,
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
+import { sessionAgentName } from './lib/agent-id.mjs'
 export { tokenize } from './lib/shell-command.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -403,7 +404,7 @@ if (isInvokedDirectly()) {
     // A blocked URL can carry a key in its query string; the log is read
     // casually, so it goes through the same redaction as the skill gate.
     const urlPart = decision.url ? ` url="${redactSecrets(decision.url)}"` : ''
-    logLine('BLOCKED_BASH', `reason="${decision.tier}"${urlPart}`)
+    logLine('BLOCKED_BASH', `reason="${decision.tier}"${urlPart} agent="${sessionAgentName(payload, REPO_ROOT)}"`)
     deny(BLOCK_MESSAGE)
   }
   allow()

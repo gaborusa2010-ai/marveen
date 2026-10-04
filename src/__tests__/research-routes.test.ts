@@ -79,6 +79,25 @@ describe('research routes', () => {
     expect(main?.docs.map((d: any) => d.name)).toContain('zz-test-main-research.md')
   })
 
+  it('lists and serves reports/ and riportok/ under their folder name', async () => {
+    const sub = agentDir(SUB_AGENT_ID)
+    mkdirSync(join(sub, 'reports', 'nightly'), { recursive: true })
+    writeFileSync(join(sub, 'reports', 'nightly', 'beta.md'), '# Beta Report\n')
+    mkdirSync(join(sub, 'riportok'), { recursive: true })
+    writeFileSync(join(sub, 'riportok', 'gamma.md'), '# Gamma\n')
+    const { ctx, out } = fakeCtx('/api/research')
+    await tryHandleResearch(ctx)
+    const names = out.body.find((a: any) => a.agent === SUB_AGENT_ID)?.docs.map((d: any) => d.name)
+    expect(names).toEqual(expect.arrayContaining(['alpha.md', 'reports/nightly/beta.md', 'riportok/gamma.md']))
+    const one = fakeCtx(`/api/research/${SUB_AGENT_ID}/${encodeURIComponent('reports/nightly/beta.md')}`)
+    await tryHandleResearch(one.ctx)
+    expect(one.out.status).toBe(200)
+    expect(one.out.body.title).toBe('Beta Report')
+    const esc = fakeCtx(`/api/research/${SUB_AGENT_ID}/${encodeURIComponent('reports/../../x.md')}`)
+    await tryHandleResearch(esc.ctx)
+    expect(esc.out.status).toBe(400)
+  })
+
   it('serves a single doc with content', async () => {
     const { ctx, out } = fakeCtx(`/api/research/${SUB_AGENT_ID}/alpha.md`)
     expect(await tryHandleResearch(ctx)).toBe(true)
