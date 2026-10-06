@@ -34,12 +34,15 @@ describe('PUT /api/memories/:id refuses clearly instead of throwing', () => {
   it('answers 400, not 500, and names what is wrong', () => {
     const upTo = PUT.slice(0, call)
     expect(upTo).toContain('400')
-    expect(upTo).toContain('content is required')
+    // v1.41.0 merge: upstream's explicit-content check ("Content is required")
+    // runs above the backfill and replaced the local PUT500901 wording.
+    expect(upTo.toLowerCase()).toContain('content is required')
   })
 
   it('an omitted content is a partial update, backfilled from the row', () => {
     const upTo = PUT.slice(0, call)
     expect(upTo).toContain('effectiveContent === undefined')
-    expect(upTo).toContain('SELECT content FROM memories WHERE id = ?')
+    // The backfill now reads the pre-image the version snapshot already loaded.
+    expect(upTo).toContain('effectiveContent = before.content')
   })
 })

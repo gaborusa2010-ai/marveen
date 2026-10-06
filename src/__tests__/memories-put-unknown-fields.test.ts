@@ -77,7 +77,7 @@ describe('the real callers still go through', () => {
   it('dashboard edit modal: content, tier, agent_id, keywords', async () => {
     const r = await send(id, JSON.stringify({ content: 'edited in the UI', tier: 'hot', agent_id: 'agent-a', keywords: 'ui-kw' }))
     expect(r.status).toBe(200)
-    expect(r.body).toEqual({ ok: true })
+    expect(r.body).toMatchObject({ ok: true })
     expect(row(id)).toMatchObject({ content: 'edited in the UI', category: 'hot', keywords: 'ui-kw' })
   })
 

@@ -383,6 +383,9 @@ export const INSTALL_ANCHORED_SUFFIXES = [
   '/scripts/skill-index.sh',
   '/scripts/recipient-ledger.mjs',
   '/scripts/skill-lint.mjs',
+  // The read-only sqlite recipe in CLAUDE.md.template opens this file by its
+  // absolute install path, so a host move has to re-anchor it like the token.
+  '/store/claudeclaw.db',
 ] as const
 // An absolute path prefix: starts with a `/` that is not the tail of something
 // else (`~/x`, `{{X}}/x`, `a/x` are not absolute roots -- the lookbehind keeps
