@@ -285,7 +285,12 @@ def stop_agent(agent):
     return False
 
 
-def notify(text):
+def notify(text, to_owner=False):
+    # Routine budget notices no longer reach Telegram (owner, msg 5764,
+    # 2026-10-04). Only an explicit to_owner=True goes out: a FAILED stop, and
+    # fleet-window-watch.py's release notice, which the owner chose (msg 3774).
+    if not to_owner:
+        return log_only(text)
     try:
         env = open(TG_ENV, encoding="utf-8", errors="replace").read()
     except OSError as e:
@@ -307,6 +312,29 @@ def notify(text):
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         print(f"HIBA: az ertesites nem ment ki: {e}", file=sys.stderr)
         return False
+
+
+NOTICE_LOG = os.path.join(REPO, "store", "budget-notices.log")
+
+
+def log_only(text):
+    """Record a routine budget notice WITHOUT sending it to Telegram.
+
+    The owner, Telegram msg 5764, 2026-10-04: "Ezeket az uzeneteket vedd mar
+    ki, nem akarom latni oket" (in reply to a routine stop notice). The stop
+    and warn notices now land here and in the journal; a FAILED stop still goes
+    out through notify(to_owner=True), because that one needs a hand on the
+    dashboard.
+    Returns True so callers record the notice as delivered and do not retry.
+    """
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"# notice (nem ment Telegramra): {text}", file=sys.stderr)
+    try:
+        with open(NOTICE_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{stamp}] {text}\n\n")
+    except OSError as e:
+        print(f"HIBA: a notice-naplo nem irhato ({e})", file=sys.stderr)
+    return True
 
 
 def main(argv=None):
@@ -443,7 +471,7 @@ def main(argv=None):
         msg = (f"{a.agent} elerte a leallitasi kuszobot, de A LEALLITAS NEM SIKERULT.\n\n"
                f"{sz_total} token {ablak}, a kuszob {sz_trigger}, a plafon {sz_cap}.\n"
                "Kezzel kell leallitani a dashboardon.")
-    sent = notify(msg)
+    sent = notify(msg, to_owner=not ok)
 
     # Record ONLY when the stop actually worked: an uncommitted failure must be
     # retried on the next tick, not buried under a "handled" flag.

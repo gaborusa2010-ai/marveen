@@ -136,6 +136,8 @@ const CHECKOUT_ONLY: Record<string, string> = {
     'the Stop-hook half of the Telegram reply enforcement (#856) decides from ledger_lib.open_question_with_age, i.e. the conversation_log the main-only ledger trio writes; seeded alone it would read an empty ledger and allow every stop, a silent no-op -- seeding it means seeding the ledger trio with it, a separate design decision',
   'require-checked.py':
     'local Stop gate that blocks a turn whose final text has no "Checked:" block; installed with the owner\'s approval (Telegram msg 2369, 2026-09-10) for the MAIN agent only -- its docstring says "EGYELORE CSAK A Fo-AGENSNEL" -- and the project CLAUDE.md states that for sub-agents the Checked block is their own discipline, not a gate. Seeding it would block every sub-agent turn on a rule the owner scoped to one agent',
+  'check-before-send.py':
+    'the PreToolUse half of the same main-agent Checked rule (owner, Telegram msg 5850, 2026-10-04): its docstring scopes it to "the main agent\'s Telegram replies", and it gates the reply on a Checked block that require-checked.py, itself CHECKOUT_ONLY above, enforces only for the main agent. Seeding it would block every sub-agent\'s Telegram reply on a rule the owner scoped to one agent',
 }
 
 // The direction that was blind: a hook the checkout's own settings wire, which

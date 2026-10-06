@@ -88,7 +88,7 @@ def main():
 
         print("5. warn-only: NEM allit le, de KULD")
         kuldve, leallitva = [], []
-        mod.notify = lambda m: (kuldve.append(m), True)[1]
+        mod.notify = lambda m, to_owner=False: (kuldve.append(m), True)[1]
         mod.stop_agent = lambda a: (leallitva.append(a), True)[1]
         mod.load = lambda: {}
         mod.save = lambda d: None

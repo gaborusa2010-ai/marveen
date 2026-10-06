@@ -497,30 +497,36 @@ describe('detectPaneState', () => {
     expect(detectPaneState(IDLE_BACKGROUND_ONE_SHELL_HIDDEN)).toBe('idle')
   })
 
-  it('does NOT classify a truncated "· N shell" prefix as idle', () => {
-    // Defense in depth: the shells-variant requires either the
-    // "· N shells · ctrl+t" marker or the "· N shells · ↓ to manage"
-    // marker, not just the bare "· N shell(s)" prefix. Two reasons we
-    // pin this down with an explicit negative test:
-    //   1. A malformed or partially rendered footer (terminal
-    //      corruption, mid-render frame) must classify as 'unknown'
-    //      so we do not deliver a prompt into a pane that is not
-    //      really ready.
-    //   2. The "bypass permissions on · 1 shell" substring could
-    //      appear in scrollback as quoted log output or an echoed
-    //      message, and the regex must not be tricked into treating
-    //      that as a live footer.
-    // The fixture is deliberately minimal: no other idle markers
-    // (no "(shift+tab to cycle)", no "? for shortcuts") so the
-    // assertion isolates the truncated-shells path specifically.
-    const truncated = [
-      '',
-      SEP,
-      '❯ ',
-      SEP,
-      '  ⏵⏵ bypass permissions on · 1 shell',
+  it('detects idle when the LIVE footer is the bare "· N shell" form (card 28650706)', () => {
+    // Measured 2026-09-30 on a live fleet pane: an idle session with one
+    // background shell rendered the footer with NO tail after the count. It read
+    // 'unknown' and the router held a message 10+ minutes. The bare form is
+    // accepted only as the last non-empty line (the live footer position).
+    const bare = (footer: string) => ['', SEP, '❯ ', SEP, footer].join('\n')
+    expect(detectPaneState(bare('  ⏵⏵ bypass permissions on · 1 shell'))).toBe('idle')
+    expect(detectPaneState(bare('  ⏵⏵ bypass permissions on · 3 shells'))).toBe('idle')
+    expect(detectPaneState(bare('  ⏵⏵ accept edits on · 1 shell'))).toBe('idle')
+    // Blank tail below the footer (short content in a tall pane).
+    expect(detectPaneState(bare('  ⏵⏵ bypass permissions on · 1 shell') + '\n\n\n')).toBe('idle')
+    expect(detectPermissionMode(bare('  ⏵⏵ bypass permissions on · 1 shell'))).toBe('bypass permissions')
+  })
+
+  it('does NOT classify the bare "· N shell" form as idle anywhere but the live footer', () => {
+    // The anti-scrollback defence the required tail was built for still holds:
+    // the bare form quoted above the box, embedded in a longer line, missing its
+    // glyph, or with a busy footer below it stays non-idle.
+    const quotedAbove = [
+      '  ⏵⏵ bypass permissions on · 1 shell', '', SEP, '❯ ', SEP, '  some other footer',
     ].join('\n')
-    expect(detectPaneState(truncated)).toBe('unknown')
+    expect(detectPaneState(quotedAbove)).toBe('unknown')
+    const embedded = ['', SEP, '❯ ', SEP, 'log: ⏵⏵ bypass permissions on · 1 shell'].join('\n')
+    expect(detectPaneState(embedded)).toBe('unknown')
+    const noGlyph = ['', SEP, '❯ ', SEP, 'bypass permissions on · 1 shell'].join('\n')
+    expect(detectPaneState(noGlyph)).toBe('unknown')
+    const trailingText = ['', SEP, '❯ ', SEP, '  ⏵⏵ bypass permissions on · 1 shell and more'].join('\n')
+    expect(detectPaneState(trailingText)).toBe('unknown')
+    const busy = ['', SEP, '❯ ', SEP, '  ⏵⏵ bypass permissions on · 1 shell · esc to interrupt'].join('\n')
+    expect(detectPaneState(busy)).toBe('busy')
   })
 
   it('detects busy when "esc to interrupt" footer marker is present', () => {

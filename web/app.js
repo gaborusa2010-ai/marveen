@@ -865,16 +865,18 @@ async function loadKanban() {
         if (sortSel) sortSel.value = storedSort
       }
     }
-    const [cardsRes, assigneesRes, projectsRes, labelsRes] = await Promise.all([
+    const [cardsRes, assigneesRes, projectsRes, labelsRes, staleRes] = await Promise.all([
       fetch('/api/kanban'),
       fetch('/api/kanban/assignees'),
       fetch('/api/kanban-projects'),
       fetch('/api/kanban/labels'),
+      fetch('/api/kanban/stale?days=14'),
     ])
     kanbanCards = await cardsRes.json()
     kanbanAssignees = await assigneesRes.json()
     kanbanProjects = await projectsRes.json()
     kanbanAllLabels = await labelsRes.json()
+    if (staleRes.ok) kanbanStaleCards = (await staleRes.json()).cards || []
     populateProjectFilter()
     populateProjectSuggestions()
     setupAssigneeFilter()
@@ -1206,13 +1208,68 @@ function renderKanbanSearchHint() {
 //
 // Order: priority first (urgent > high > normal > low), then card number, so
 // the oldest card wins inside a priority. Done cards never appear.
+//
+// Two ways onto the strip (owner, Telegram msg 5948, 2026-10-05): his own cards,
+// and any agent's card carrying the "Rád vár" label -- the agent keeps the work,
+// he owes it a decision. Before this, 3 cards were assigned to him and 12 open
+// cards carried the label, so the strip showed a quarter of the real queue.
+// A card that is both appears once (one filter pass over kanbanCards).
+//
+// The label is matched by name, not by id, so a re-created label (new id,
+// same name) still counts. Accents and case are folded because the label
+// editor accepts free text. fleet.py kanban-rad-var uses the same name.
+const KANBAN_OWNER_QUEUE_LABEL = 'Rád vár'
+
+function kanbanNormalizeLabelName(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+}
+
+function kanbanIsOnOwnerStrip(card, owner) {
+  if (card.status === 'done') return false
+  if (String(card.assignee || '').trim().toLowerCase() === owner.toLowerCase()) return true
+  const want = kanbanNormalizeLabelName(KANBAN_OWNER_QUEUE_LABEL)
+  return (card.labels || []).some((l) => kanbanNormalizeLabelName(l && l.name) === want)
+}
+
+function kanbanWaitReason(card) {
+  if (card && ['owner', 'external', 'card', 'date'].includes(card.wait_kind)) {
+    const until = Number.isInteger(card.wait_until) ? card.wait_until : null
+    return {
+      kind: card.wait_kind,
+      note: card.wait_note || null,
+      until,
+      expired: card.wait_kind === 'date' && until != null && until < Date.now() / 1000,
+      source: 'explicit',
+    }
+  }
+  const want = kanbanNormalizeLabelName(KANBAN_OWNER_QUEUE_LABEL)
+  if ((card?.labels || []).some((l) => kanbanNormalizeLabelName(l && l.name) === want)) {
+    return { kind: 'owner', source: 'label' }
+  }
+  const open = (card?.blockers || []).filter((blocker) => blocker.status !== 'done')
+  if (open.length) return { kind: 'card', source: 'blockers' }
+  return null
+}
+
+function kanbanWaitReasonText(card, reason = kanbanWaitReason(card)) {
+  if (!reason) return t('kanban.wait.missing')
+  if (reason.kind === 'owner') return t('kanban.wait.owner')
+  if (reason.kind === 'external') return reason.note || t('kanban.wait.external')
+  if (reason.kind === 'date') {
+    const date = reason.until ? new Date(reason.until * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU', { month: 'short', day: 'numeric' }) : t('kanban.wait.date')
+    return reason.expired ? `${date} · ${t('kanban.wait.expired')}` : date
+  }
+  const open = (card.blockers || []).filter((blocker) => blocker.status !== 'done')
+  return open.length ? open.map((blocker) => `#${blocker.seq ?? blocker.id}`).join(', ') : t('kanban.wait.card')
+}
+
 function renderKanbanOwnerStrip() {
   const el = document.getElementById('kanbanOwnerStrip')
   if (!el) return
   const owner = ownerAssigneeName()
   if (!owner) { el.hidden = true; return }
   const mine = kanbanCards
-    .filter((c) => c.status !== 'done' && String(c.assignee || '').trim().toLowerCase() === owner.toLowerCase())
+    .filter((c) => kanbanIsOnOwnerStrip(c, owner))
     .sort((a, b) => {
       const pa = KANBAN_PRIORITY_ORDER.indexOf(a.priority || 'normal')
       const pb = KANBAN_PRIORITY_ORDER.indexOf(b.priority || 'normal')
@@ -1271,11 +1328,114 @@ function renderKanbanOwnerStrip() {
     title.className = 'title'
     title.textContent = card.title
     chip.append(dot, seq, title)
+    // A labelled card stays with its agent; the chip says whose it is, so he
+    // knows who is waiting on the answer. His own cards carry no marker.
+    const raw = String(card.assignee || '').trim()
+    if (raw && raw.toLowerCase() !== owner.toLowerCase()) {
+      const m = kanbanAssignees.find((a) => a.name.toLowerCase() === raw.toLowerCase())
+      const name = m ? (m.displayName || m.name) : raw
+      const who = document.createElement('span')
+      who.className = 'who'
+      const av = document.createElement('span')
+      av.className = 'kanban-team-avatar kanban-owner-strip-who-avatar ' + (m ? m.type : 'unknown')
+      av.textContent = (name[0] || '?').toUpperCase()
+      if (m) kanbanDecorateAvatar(av, m.name)
+      const nm = document.createElement('span')
+      nm.className = 'who-name'
+      nm.textContent = name
+      who.append(av, nm)
+      chip.appendChild(who)
+      chip.title = card.title + ' (' + name + ')'
+    }
     chip.addEventListener('click', () => showCardDetail(card))
     items.appendChild(chip)
   }
   el.appendChild(items)
 }
+
+// --- kanban stale review ---
+let kanbanStaleCards = []
+let kanbanStaleDeepLinkHandled = false
+let kanbanStaleOverlay = null
+
+function kanbanStaleRowHtml(card) {
+  const assignee = String(card.assignee || '').trim() || t('kanban.stale.unassigned')
+  const status = t('kanban.status.' + card.status)
+  return `<div class="kanban-stale-row" data-card-id="${escapeHtml(card.id)}">` +
+    `<div class="kanban-stale-card"><span class="seq">#${escapeHtml(card.seq ?? '?')}</span>` +
+    `<strong>${escapeHtml(card.title)}</strong></div>` +
+    `<div class="kanban-stale-meta">${escapeHtml(assignee)} · ${escapeHtml(status)} · ${escapeHtml(t('kanban.stale.idle', { n: card.idle_days }))}</div>` +
+    `<div class="kanban-stale-actions">` +
+    `<button type="button" class="btn-secondary" data-decision="keep">${escapeHtml(t('kanban.stale.keep'))}</button>` +
+    `<button type="button" class="btn-secondary" data-decision="idea">${escapeHtml(t('kanban.stale.idea'))}</button>` +
+    `<button type="button" class="btn-danger" data-decision="close">${escapeHtml(t('kanban.stale.close'))}</button>` +
+    `</div></div>`
+}
+
+function renderKanbanStaleModal() {
+  if (!kanbanStaleOverlay) return
+  const list = kanbanStaleOverlay.querySelector('.kanban-stale-list')
+  list.innerHTML = kanbanStaleCards.length
+    ? kanbanStaleCards.map(kanbanStaleRowHtml).join('')
+    : `<p class="naplo-empty">${escapeHtml(t('kanban.stale.empty'))}</p>`
+  list.querySelectorAll('[data-decision]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = button.closest('.kanban-stale-row')
+      const id = row.dataset.cardId
+      row.querySelectorAll('button').forEach((item) => { item.disabled = true })
+      try {
+        const response = await fetch(`/api/kanban/${encodeURIComponent(id)}/stale-decision`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: button.dataset.decision, actor: kanbanMoveActor() }),
+        })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.error || response.statusText)
+        kanbanStaleCards = kanbanStaleCards.filter((card) => card.id !== id)
+        showToast(t('kanban.stale.saved'))
+        renderKanbanStaleModal()
+        await loadKanban()
+      } catch (err) {
+        showToast(t('kanban.stale.error', { msg: err.message || String(err) }))
+        row.querySelectorAll('button').forEach((item) => { item.disabled = false })
+      }
+    })
+  })
+}
+
+function openKanbanStaleReview() {
+  if (!kanbanStaleOverlay) {
+    kanbanStaleOverlay = document.createElement('div')
+    kanbanStaleOverlay.className = 'modal-overlay'
+    kanbanStaleOverlay.innerHTML = `<div class="modal modal-wide kanban-stale-modal"><div class="modal-header"><h2>${escapeHtml(t('kanban.stale.title'))}</h2><button type="button" class="modal-close" aria-label="${escapeHtml(t('common.close'))}">×</button></div><div class="modal-body kanban-stale-list"></div></div>`
+    document.body.appendChild(kanbanStaleOverlay)
+    kanbanStaleOverlay.querySelector('.modal-close').addEventListener('click', () => closeModal(kanbanStaleOverlay))
+    attachOverlayCloseGuard(kanbanStaleOverlay)
+  }
+  renderKanbanStaleModal()
+  openModal(kanbanStaleOverlay)
+}
+
+function renderKanbanStaleChip() {
+  let chip = document.getElementById('kanbanStaleReviewChip')
+  const strip = document.getElementById('kanbanOwnerStrip')
+  if (!chip) {
+    chip = document.createElement('button')
+    chip.id = 'kanbanStaleReviewChip'
+    chip.className = 'kanban-stale-chip'
+    chip.addEventListener('click', openKanbanStaleReview)
+    strip?.insertAdjacentElement('afterend', chip)
+  }
+  chip.hidden = kanbanStaleCards.length === 0
+  chip.textContent = t('kanban.stale.chip', { n: kanbanStaleCards.length })
+  if (!kanbanStaleDeepLinkHandled && new URLSearchParams(location.search).get('review') === 'stale') {
+    kanbanStaleDeepLinkHandled = true
+    const url = new URL(location.href)
+    url.searchParams.delete('review')
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+    openKanbanStaleReview()
+  }
+}
+// --- end kanban stale review ---
 
 // === Team view: one row per person, not one column per status ===
 //
@@ -1451,6 +1611,7 @@ function renderKanban() {
   renderKanbanQuickFilters()
   renderKanbanSearchHint()
   renderKanbanOwnerStrip()
+  renderKanbanStaleChip()
   renderKanbanTeamView()
 
   // Determine which top-level cards are visible under current filters.
@@ -1666,6 +1827,10 @@ function kanbanDecorateAvatar(spanEl, key) {
 // omits done cards, so if one of his is closed and still on the board, the lane
 // reappears carrying exactly what the strip does not show. Nothing can fall
 // between the two.
+//
+// The "Rád vár" label does NOT hide a card here, on purpose (owner, msg 5948):
+// a labelled agent card shows in the strip AND in its agent's lane, because the
+// lane is where that agent's whole queue is read. Only HIS cards live in one place.
 function kanbanHideFromLanes(card) {
   if (card.status === 'done') return false
   const owner = ownerAssigneeName()
@@ -1905,6 +2070,10 @@ function createCardEl(card, embeddedChildren = []) {
   const blockedHtml = openBlockers.length > 0
     ? `<span class="kanban-card-blocked" title="${escapeHtml(t('kanban.blocker.card_tooltip', { n: openBlockers.length }))}">${t('kanban.blocker.card_badge')}${openBlockers.length > 1 ? ' ' + openBlockers.length : ''}</span>`
     : ''
+  const waitReason = card.status === 'waiting' ? kanbanWaitReason(card) : null
+  const waitHtml = card.status === 'waiting' && waitReason?.source !== 'blockers'
+    ? `<span class="kanban-card-wait ${waitReason ? `kind-${waitReason.kind}` : 'missing'} ${waitReason?.expired ? 'expired' : ''}"${waitReason?.note && waitReason.kind !== 'external' ? ` title="${escapeHtml(waitReason.note)}"` : ''}>${escapeHtml(kanbanWaitReasonText(card, waitReason))}</span>`
+    : ''
 
   // Card aging: left stripe + top-right badge based on hours since last update.
   // Skipped for done cards. Config thresholds and colours come from window._marveen.kanbanAging.
@@ -1955,7 +2124,7 @@ function createCardEl(card, embeddedChildren = []) {
   el.innerHTML = `
     ${projectHtml}
     <div class="kanban-card-title">${seqHtml}${escapeHtml(card.title)}</div>
-    <div class="kanban-card-footer">${assigneeHtml}${dueHtml}${blockedHtml}</div>
+    <div class="kanban-card-footer">${assigneeHtml}${dueHtml}${waitHtml}${blockedHtml}</div>
     ${labelsHtml}
     <div class="kanban-card-actions">
       <button class="card-breakdown-btn" title="${t('kanban.btn.breakdown')}" aria-label="${t('kanban.btn.breakdown')}">⚡</button>
@@ -2055,17 +2224,93 @@ function wireKanbanColumnDnD(col) {
     let sortOrder = idx
 
     try {
-      await fetch(`/api/kanban/${encodeURIComponent(cardId)}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, sort_order: sortOrder, actor: kanbanMoveActor() }),
-      })
+      const card = kanbanCards.find((candidate) => candidate.id === cardId)
+      if (!card || !(await kanbanMoveRequest(card, newStatus, sortOrder))) return
       loadKanban()
     } catch {
       showToast(t('kanban.toast.move_error'))
     }
   })
 }
+function kanbanAskWaitReason(card) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay active kanban-wait-modal-overlay'
+    overlay.innerHTML = `
+      <div class="modal kanban-wait-modal" role="dialog" aria-modal="true" aria-labelledby="kanbanWaitTitle">
+        <div class="modal-header"><h3 id="kanbanWaitTitle">${t('kanban.wait.question')}</h3></div>
+        <div class="modal-body">
+          <div class="kanban-wait-kinds">
+            ${['owner', 'external', 'card', 'date'].map((kind, i) => `<label><input type="radio" name="wait-kind" value="${kind}" ${i === 0 ? 'checked' : ''}> ${t(`kanban.wait.${kind}`)}</label>`).join('')}
+          </div>
+          <label class="kanban-wait-field wait-external">${t('kanban.wait.who')}<input type="text" maxlength="200"></label>
+          <label class="kanban-wait-field wait-card">${t('kanban.wait.which_card')}<input type="text" autocomplete="off"><small></small></label>
+          <label class="kanban-wait-field wait-date">${t('kanban.wait.until')}<input type="date"></label>
+          <label class="kanban-wait-field wait-note">${t('kanban.wait.note')}<input type="text" maxlength="200"></label>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary wait-cancel">${t('common.cancel')}</button><button type="button" class="btn btn-primary wait-ok">${t('common.ok')}</button></div>
+      </div>`
+    document.body.appendChild(overlay)
+    const ok = overlay.querySelector('.wait-ok')
+    const externalInput = overlay.querySelector('.wait-external input')
+    const cardInput = overlay.querySelector('.wait-card input')
+    const cardHint = overlay.querySelector('.wait-card small')
+    const dateInput = overlay.querySelector('.wait-date input')
+    const noteInput = overlay.querySelector('.wait-note input')
+    let matchedCard = null
+    const selectedKind = () => overlay.querySelector('input[name="wait-kind"]:checked').value
+    const resolveCard = () => {
+      const raw = cardInput.value.trim().replace(/^#/, '')
+      matchedCard = kanbanCards.find((candidate) => candidate.id !== card.id && (String(candidate.seq) === raw || candidate.id === raw)) || null
+      cardHint.textContent = matchedCard ? `${matchedCard.seq != null ? `#${matchedCard.seq} ` : ''}${matchedCard.title}` : (raw ? t('kanban.wait.card_not_found') : '')
+    }
+    const update = () => {
+      const kind = selectedKind()
+      overlay.querySelector('.wait-external').hidden = kind !== 'external'
+      overlay.querySelector('.wait-card').hidden = kind !== 'card'
+      overlay.querySelector('.wait-date').hidden = kind !== 'date'
+      overlay.querySelector('.wait-note').hidden = kind === 'external'
+      if (kind === 'card') resolveCard()
+      ok.disabled = (kind === 'external' && !externalInput.value.trim()) || (kind === 'card' && !matchedCard) || (kind === 'date' && !dateInput.value)
+    }
+    const finish = (value) => { document.removeEventListener('keydown', keydown); overlay.remove(); resolve(value) }
+    const keydown = (event) => { if (event.key === 'Escape') finish(null) }
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) finish(null) })
+    overlay.querySelector('.wait-cancel').addEventListener('click', () => finish(null))
+    overlay.querySelectorAll('input').forEach((input) => input.addEventListener('input', update))
+    overlay.querySelectorAll('input[name="wait-kind"]').forEach((input) => input.addEventListener('change', update))
+    ok.addEventListener('click', () => {
+      const kind = selectedKind()
+      const wait = { kind }
+      if (kind === 'external') wait.note = externalInput.value.trim()
+      else if (noteInput.value.trim()) wait.note = noteInput.value.trim()
+      if (kind === 'card') wait.blockerId = matchedCard.id
+      if (kind === 'date') {
+        const until = new Date(`${dateInput.value}T23:59:59`)
+        wait.until = Math.floor(until.getTime() / 1000)
+      }
+      finish(wait)
+    })
+    document.addEventListener('keydown', keydown)
+    update()
+  })
+}
+
+async function kanbanMoveRequest(card, status, sortOrder) {
+  let wait
+  if (status === 'waiting' && card.status !== 'waiting') {
+    wait = await kanbanAskWaitReason(card)
+    if (!wait) { loadKanban(); return false }
+  }
+  const body = { status, sort_order: sortOrder, actor: kanbanMoveActor() }
+  if (wait) body.wait = wait
+  const response = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/move`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error('move failed')
+  return true
+}
+
 columns.forEach(wireKanbanColumnDnD)
 
 // === Touch drag & drop (mobile) ===
@@ -2221,12 +2466,8 @@ async function kanbanTouchEnd(e) {
   // that is a reorder within the column, which is just as valid a move.
   if (!newStatus) return
   try {
-    const r = await fetch(`/api/kanban/${encodeURIComponent(cardId)}/move`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus, sort_order: sortOrder, actor: kanbanMoveActor() }),
-    })
-    if (!r.ok) throw new Error('move failed')
+    const card = kanbanCards.find((candidate) => candidate.id === cardId)
+    if (!card || !(await kanbanMoveRequest(card, newStatus, sortOrder))) return
     loadKanban()
   } catch {
     showToast(t('kanban.toast.move_error'))
@@ -2592,6 +2833,11 @@ async function showCardDetail(card) {
       <span class="meta-label">${t('kanban.meta.status')}</span>
       <span class="meta-value meta-value-editable" id="metaStatusValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${statusLabels[card.status] || card.status}</span>
     </div>
+    ${card.status === 'waiting' ? `<div class="meta-item kanban-wait-detail">
+      <span class="meta-label">${t('kanban.wait.reason')}</span>
+      <span class="meta-value">${escapeHtml(kanbanWaitReasonText(card))}</span>
+      <span class="kanban-wait-detail-actions"><button type="button" class="btn-secondary btn-compact wait-edit">${t('common.edit')}</button><button type="button" class="btn-secondary btn-compact wait-clear">${t('kanban.wait.clear')}</button></span>
+    </div>` : ''}
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.assignee')}</span>
       <span class="meta-value meta-value-editable" id="metaAssigneeValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${escapeHtml(assigneeDisplay)}</span>${(assignee && assignee.nickname) ? `<span class="kanban-nickname">${escapeHtml(assignee.nickname)}</span>` : ''}
@@ -2617,6 +2863,33 @@ async function showCardDetail(card) {
       <span class="meta-value" title="${escapeHtml(formatActiveTime(card.active_seconds) ? t('kanban.active.tooltip') : t('kanban.active.tooltip_none'))}">${escapeHtml(formatActiveTime(card.active_seconds) ?? t('kanban.active.none'))}</span>
     </div>
   `
+
+  const waitEdit = meta.querySelector('.wait-edit')
+  if (waitEdit) waitEdit.addEventListener('click', async () => {
+    const wait = await kanbanAskWaitReason(card)
+    if (!wait) return
+    try {
+      const response = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/wait`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wait),
+      })
+      if (!response.ok) throw new Error('wait update failed')
+      card.wait_kind = wait.kind
+      card.wait_note = wait.note || null
+      card.wait_until = wait.until || null
+      await loadKanban()
+      showCardDetail(kanbanCards.find((candidate) => candidate.id === card.id) || card)
+    } catch { showToast(t('kanban.toast.move_error')) }
+  })
+  const waitClear = meta.querySelector('.wait-clear')
+  if (waitClear) waitClear.addEventListener('click', async () => {
+    try {
+      const response = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/wait`, { method: 'DELETE' })
+      if (!response.ok) throw new Error('wait clear failed')
+      card.wait_kind = card.wait_note = card.wait_until = null
+      await loadKanban()
+      showCardDetail(kanbanCards.find((candidate) => candidate.id === card.id) || card)
+    } catch { showToast(t('kanban.toast.move_error')) }
+  })
 
   // Inline edit for status on detail view. HTML5 drag & drop is the only way to
   // change a card's column, and it is dead on touch devices (no dragstart is
@@ -2646,12 +2919,7 @@ async function showCardDetail(card) {
       const newVal = sel.value
       if (newVal === current) { restore(current); return }
       try {
-        const r = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: newVal, sort_order: 0, actor: kanbanMoveActor() }),
-        })
-        if (!r.ok) throw new Error('move failed')
+        if (!(await kanbanMoveRequest(card, newVal, 0))) { restore(current); return }
         card.status = newVal
         restore(newVal)
         showToast(t('kanban.toast.status_updated'))

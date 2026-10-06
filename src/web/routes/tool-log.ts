@@ -1,5 +1,5 @@
 import { logToolCall, analyzeWorkflowCandidates, getRecentToolCalls, pruneToolCallLog } from '../../db.js'
-import { readBody, json } from '../http-helpers.js'
+import { readBody, json, rejectUnknownQueryParams } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
 export async function tryHandleToolLog(ctx: RouteContext): Promise<boolean> {
@@ -36,12 +36,33 @@ export async function tryHandleToolLog(ctx: RouteContext): Promise<boolean> {
   //   1. A call refused by a PreToolUse gate produces NO row at all -- not a
   //      failure row, nothing. Measured the same afternoon: an egress-gate block
   //      landed in store/egress-blocked.log and left this table untouched.
-  //   2. Only the main agent registers the capture hook; sub-agent tool calls,
-  //      successes included, are absent.
+  //   2. Not every agent registers the capture hook, so an agent missing from
+  //      the rows may simply not be logged. (Measured 2026-10-06: the last
+  //      hour held marveen, cody and roxy rows -- no longer the main agent only.)
   // Rows tagged `[interrupt] ` in input_summary are user stops, not tool errors.
+  //
+  // #185: until 2026-10-06 only `since` was read. `?agent=roxy`, `?limit=5` and
+  // a misspelt `?agnet=` all answered 200 with the same unfiltered rows, so a
+  // caller read every agent's calls as one agent's. `agent` (alias `agent_id`)
+  // and `limit` now filter, and any other parameter is a 400.
   if (path === '/api/tool-log' && method === 'GET') {
+    if (rejectUnknownQueryParams(res, url, ['since', 'agent', 'agent_id', 'limit'])) return true
     const since = parseInt(url.searchParams.get('since') || '3600')
-    json(res, getRecentToolCalls(since))
+    const agent = url.searchParams.get('agent')
+    const agentIdParam = url.searchParams.get('agent_id')
+    if (agent !== null && agentIdParam !== null && agent !== agentIdParam) {
+      json(res, { error: 'agent and agent_id name different agents; send one of them' }, 400)
+      return true
+    }
+    const agentId = agent ?? agentIdParam ?? undefined
+    if (agentId !== undefined && !agentId.trim()) { json(res, { error: 'agent must not be empty' }, 400); return true }
+    const rawLimit = url.searchParams.get('limit')
+    const limit = rawLimit === null ? undefined : Number(rawLimit)
+    if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+      json(res, { error: 'limit must be a positive integer' }, 400)
+      return true
+    }
+    json(res, getRecentToolCalls(since, { agentId, limit }))
     return true
   }
 

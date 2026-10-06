@@ -66,6 +66,9 @@ const EXPECTED: Record<string, string[]> = {
     // network destinations a Bash command reaches for, and
     // global-skill-write-gate.mjs stops a write aimed at the shared skill tree.
     'bash-egress-gate.mjs', 'global-skill-write-gate.mjs',
+    // Local (owner, Telegram msg 5850, 2026-10-04): the Checked block has to
+    // exist BEFORE a Telegram reply leaves, not only at the end of the turn.
+    'check-before-send.py',
   ],
   // Local addition on this install (reviewed 2026-09-16, v1.38.0 merge):
   // ledger-midturn-capture.py backfills mid-turn inbound rows into the

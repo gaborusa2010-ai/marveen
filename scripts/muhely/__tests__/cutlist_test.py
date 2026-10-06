@@ -84,6 +84,53 @@ def test_material_missing_from_list_is_reported():
     check("hianyzo anyag: jelentve", substituted, ["6mm"])
 
 
+def _run(job, *extra):
+    """Run cutlist.py as a caller would, on a throwaway job file."""
+    import json
+    import subprocess
+    import tempfile
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "job.json")
+        with open(path, "w") as fh:
+            json.dump(job, fh)
+        args = [a.replace("{d}", d) for a in extra]
+        r = subprocess.run([sys.executable, os.path.join(here, "cutlist.py"), path, *args],
+                           capture_output=True, text=True)
+        pdf_written = any(a.endswith(".pdf") and os.path.exists(a) for a in args)
+        return r.returncode, r.stdout, pdf_written
+
+
+def test_unplaced_part_is_not_success():
+    """A part that fits no sheet must not exit 0 (#408, Cody, msg 7021).
+
+    The report still has to come out: the workshop needs to see WHICH part
+    is missing, so the exit code signals it and the output keeps it.
+    """
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "ok", "w": 500, "h": 400, "qty": 1},
+                     {"name": "oriasi", "w": 3000, "h": 600, "qty": 1}]}
+    rc, out, _ = _run(job)
+    check("nem fer: szoveges mod exit 4", rc, 4)
+    check("nem fer: a darab neve kiirva", "oriasi" in out and "NEM FER RA" in out, True)
+    rc, out, _ = _run(job, "--json")
+    check("nem fer: json mod exit 4", rc, 4)
+    check("nem fer: json unplaced", '"oriasi"' in out, True)
+    rc, _, pdf = _run(job, "--pdf", "{d}/out.pdf")
+    check("nem fer: pdf mod exit 4", rc, 4)
+    check("nem fer: a pdf ettol meg elkeszul", pdf, True)
+
+
+def test_everything_fits_is_zero():
+    """Negative control: the same run without the oversized part stays 0."""
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "ok", "w": 500, "h": 400, "qty": 2}]}
+    rc, _, _ = _run(job)
+    check("minden fer: szoveges mod exit 0", rc, 0)
+    rc, _, _ = _run(job, "--json")
+    check("minden fer: json mod exit 0", rc, 0)
+
+
 if __name__ == "__main__":
     print("cutlist.py stock-kezeles")
     test_single_material_keeps_label()
@@ -91,6 +138,9 @@ if __name__ == "__main__":
     test_spread_keeps_size_and_price()
     test_explicit_list_per_material()
     test_material_missing_from_list_is_reported()
+    print("cutlist.py kilepesi kod")
+    test_unplaced_part_is_not_success()
+    test_everything_fits_is_zero()
     print()
     if FAILED:
         print(f"BUKOTT: {len(FAILED)} -- {', '.join(FAILED)}")

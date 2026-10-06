@@ -25,7 +25,11 @@
       "Bash(sudo:*)",
       "Bash(rm:*)",
       "Bash(curl -X POST:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Read(${HOME}/.finstack/**)",
+      "Edit(${HOME}/.finstack/**)",
+      "Write(${HOME}/.finstack/**)",
+      "Bash(cat ${HOME}/.finstack/*)"
     ]
   }
 }

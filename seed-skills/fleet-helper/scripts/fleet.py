@@ -5,7 +5,9 @@ tokens hand-rolling curl/SQL/escaping in the model.
 
 Covers: dashboard API auth (token always read from store/.dashboard-token, never
 hardcoded), memory save/search, daily log, inter-agent messages, agent list,
-kanban read helpers, and Telegram MarkdownV2 escaping.
+kanban read helpers, the "Rád vár" label toggle (kanban-rad-var), wait reasons
+(kanban-var), and
+Telegram MarkdownV2 escaping.
 
 Importable as a module or used from the CLI. See README.md for usage.
 
@@ -159,6 +161,82 @@ def kanban_by_status(status):
     return _kanban("status = ? ORDER BY priority DESC, updated_at DESC", (status,))
 
 
+# The "Rád vár" label puts an agent's card into the owner's queue strip on the
+# dashboard (web/app.js, KANBAN_OWNER_QUEUE_LABEL) while the card stays with
+# the agent. Put it on when you ask the owner for a decision, take it off when
+# he has answered. Matched by name with accents and case folded, the same way
+# the dashboard matches it, so both sides agree on which label counts.
+OWNER_QUEUE_LABEL = "Rád vár"
+
+
+def _fold(s):
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(s or ""))
+                   if not unicodedata.combining(ch)).strip().lower()
+
+
+def kanban_owner_queue(ref, remove=False):
+    """Put the "Rád vár" label on a card (or take it off with remove=True).
+    `ref` is the card number as the owner sees it (427, #427) or its hex id.
+    Goes through the dashboard API, never the database. Idempotent: a second
+    call reports changed=False instead of failing."""
+    ref = str(ref).strip().lstrip("#")
+    cards = api("GET", "/api/kanban")
+    if ref.isdigit():
+        hit = [c for c in cards if c.get("seq") == int(ref)]
+    else:
+        hit = [c for c in cards if c.get("id") == ref]
+    if not hit:
+        raise RuntimeError(f"no card {ref!r} among the non-archived cards")
+    card = hit[0]
+    want = _fold(OWNER_QUEUE_LABEL)
+    label = next((l for l in api("GET", "/api/kanban/labels") if _fold(l.get("name")) == want), None)
+    if label is None:
+        raise RuntimeError(f"label {OWNER_QUEUE_LABEL!r} does not exist (GET /api/kanban/labels)")
+    has = any(l.get("id") == label["id"] for l in card.get("labels") or [])
+    changed = False
+    if remove and has:
+        api("DELETE", f"/api/kanban/{card['id']}/labels/{label['id']}")
+        changed = True
+    elif not remove and not has:
+        api("POST", f"/api/kanban/{card['id']}/labels", {"labelId": label["id"]})
+        changed = True
+    after = {l.get("id") for l in api("GET", f"/api/kanban/{card['id']}/labels")}
+    return {"seq": card.get("seq"), "id": card["id"], "title": card.get("title"),
+            "assignee": card.get("assignee"), "label": label["name"],
+            "on_owner_strip": label["id"] in after, "changed": changed}
+
+
+def _resolve_kanban_card(ref, cards):
+    ref = str(ref).strip().lstrip("#")
+    if ref.isdigit():
+        hit = [c for c in cards if c.get("seq") == int(ref)]
+    else:
+        hit = [c for c in cards if str(c.get("id", "")).startswith(ref)]
+    if len(hit) != 1:
+        raise RuntimeError(f"no unique card {ref!r} among the non-archived cards")
+    return hit[0]
+
+
+def kanban_wait_reason(ref, reason=None, clear=False):
+    cards = api("GET", "/api/kanban")
+    card = _resolve_kanban_card(ref, cards)
+    path = f"/api/kanban/{card['id']}"
+    if clear:
+        api("DELETE", path + "/wait")
+    elif card.get("status") == "waiting":
+        api("PUT", path + "/wait", reason)
+    else:
+        payload = {"status": "waiting", "sort_order": 0, "wait": reason}
+        agent = os.environ.get("FLEET_AGENT_NAME", "").strip()
+        if agent:
+            payload["actor"] = agent
+        api("POST", path + "/move", payload)
+    refreshed = _resolve_kanban_card(card["id"], api("GET", "/api/kanban"))
+    return {key: refreshed.get(key) for key in
+            ("seq", "id", "title", "status", "wait_kind", "wait_note", "wait_until")}
+
+
 _MDV2_SPECIAL = r"_*[]()~`>#+-=|{}.!\\"
 
 
@@ -236,6 +314,60 @@ def main(argv):
         _out(kanban_stuck(int(rest[0]) if rest else 14400))
     elif cmd == "kanban-status":
         _out(kanban_by_status(rest[0]))
+    elif cmd == "kanban-rad-var":
+        args = [a for a in rest if a != "--le"]
+        if len(args) != 1:
+            sys.stderr.write("usage: fleet.py kanban-rad-var <seq|id> [--le]\n")
+            return 2
+        _out(kanban_owner_queue(args[0], remove="--le" in rest))
+    elif cmd == "kanban-var":
+        usage = ("usage: fleet.py kanban-var <seq|id> "
+                 "(gazda|kulso <ki>|kartya <seq|id>|datum YYYY-MM-DD) "
+                 "[--megj SZOVEG] | kanban-var <seq|id> --torol\n")
+        if len(rest) == 2 and rest[1] == "--torol":
+            _out(kanban_wait_reason(rest[0], clear=True))
+        else:
+            try:
+                note = None
+                args = list(rest)
+                if "--megj" in args:
+                    pos = args.index("--megj")
+                    if pos + 1 >= len(args) or pos + 2 != len(args):
+                        raise ValueError
+                    note = args[pos + 1]
+                    args = args[:pos]
+                if len(args) < 2:
+                    raise ValueError
+                card_ref, kind = args[0], args[1].lower()
+                aliases = {"gazda": "owner", "owner": "owner", "kulso": "external",
+                           "external": "external", "kartya": "card", "card": "card",
+                           "datum": "date", "date": "date"}
+                kind = aliases[kind]
+                reason = {"kind": kind}
+                if note:
+                    reason["note"] = note
+                if kind == "owner" and len(args) != 2:
+                    raise ValueError
+                if kind == "external":
+                    if len(args) != 3 or note:
+                        raise ValueError
+                    reason["note"] = args[2]
+                elif kind == "card":
+                    if len(args) != 3:
+                        raise ValueError
+                    reason["blockerId"] = _resolve_kanban_card(args[2], api("GET", "/api/kanban"))["id"]
+                elif kind == "date":
+                    if len(args) != 3:
+                        raise ValueError
+                    from datetime import datetime, time
+                    from zoneinfo import ZoneInfo
+                    day = datetime.strptime(args[2], "%Y-%m-%d").date()
+                    reason["until"] = int(datetime.combine(day, time(23, 59, 59),
+                                                           ZoneInfo("Europe/London")).timestamp())
+                _out(kanban_wait_reason(card_ref, reason=reason))
+            except (KeyError, ValueError):
+                sys.stderr.write(usage)
+                return 2
     else:
         sys.stderr.write(f"unknown command: {cmd}\n")
         return 2

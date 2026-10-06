@@ -207,7 +207,7 @@ def main(argv=None):
     if not a.notify:
         print(build_message(fresh, today))
         return 0
-    if _guard().notify(build_message(fresh, today)):
+    if _guard().notify(build_message(fresh, today), to_owner=True):
         _write_state({"day": today, "notified": sorted(already | {r[0] for r in fresh})})
     else:
         # NOT recorded: an unsent notice must be retried, never marked done.

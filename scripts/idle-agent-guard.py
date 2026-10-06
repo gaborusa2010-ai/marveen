@@ -198,7 +198,7 @@ def main(argv=None):
     # Check the send. The stop branch of fleet-daily-budget.py dropped notify()'s
     # return value until 2026-09-17, so a failed send marked itself as delivered
     # and never retried. Same mistake, one file later, would be a choice.
-    if g.notify(msg):
+    if g.notify(msg, to_owner=True):
         st[today] = done + [r["agent"] for r in fresh]
         save(st)
     else:

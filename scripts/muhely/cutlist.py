@@ -16,6 +16,15 @@ Usage
 -----
   cutlist.py <job.json> [--svg out_prefix] [--pdf out.pdf] [--json]
 
+Exit codes
+----------
+  0  every part is on a sheet
+  2  no job file given
+  3  a part has no usable size; nothing was nested
+  4  the plan was made, but at least one part does NOT fit on its sheet.
+     The report, the JSON and the PDF are all still written, with the part
+     listed under "NEM FER RA A TABLARA" / "unplaced".
+
 Input JSON
 ----------
 {
@@ -454,9 +463,15 @@ def main(argv):
             print(f"Nyomtathato szabaslista: {out}")
             print()
 
+    # A plan with a part left off is not a finished plan. Until 2026-09-30 this
+    # still exited 0 (Cody measured it, msg 7021): the warning was on the
+    # screen, but a caller chaining on `&&` or reading only the exit code saw
+    # success. Same failure shape as the eleven parts dropped on 2026-09-04.
+    rc = 4 if result["unplaced"] else 0
+
     if as_json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
+        return rc
 
     print(f"MUNKA: {result['job']}")
     print(f"Furreszres: {kerf} mm")
@@ -488,7 +503,7 @@ def main(argv):
         print("NEM FER RA A TABLARA (daraboljuk vagy nagyobb tabla kell):")
         for u in result["unplaced"]:
             print(f"  [{u['material']}] {u['name']}  {u['w']:.0f} x {u['h']:.0f}")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

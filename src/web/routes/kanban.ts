@@ -11,6 +11,7 @@ import {
   addLabelToCard, removeLabelFromCard, getLabelsForAllCards, getLabelsForCard,
   addCardBlocker, removeCardBlocker, getBlockersForCard, getBlockedByCard,
   getBlockersForAllCards, blockerWouldCycle, parentWouldCycle,
+  setKanbanWaitReason, validateKanbanWaitReason,
   listArchivedKanbanCards,
   revertIdeaFromKanban,
   getHeartbeatKanbanSummary,
@@ -19,6 +20,7 @@ import {
   getDbFileSizeMb,
   getTokenPruneLag,
   getStuckKanbanCards,
+  listStaleKanbanCards, decideStaleKanbanCard, StaleKanbanDecisionError,
   type TokenPruneLag,
 } from '../../db.js'
 import { normalizeKanbanRefs } from '../kanban-ref-normalize.js'
@@ -43,8 +45,11 @@ const KANBAN_READONLY_FIELDS = new Set<string>([
   // dispatched_at is a real column set by the dispatch path (markKanbanCardDispatched),
   // never by a PUT, but getKanbanCard's SELECT * returns it so the dashboard's
   // whole-card send carries it back. Accept-and-ignore, do not 400.
-  'dispatched_at',
+  'dispatched_at', 'wait_kind', 'wait_note', 'wait_until', 'stale_kept_at',
 ])
+
+// Every key POST /api/kanban/:id/move accepts; anything else is a 400 (#437).
+const KANBAN_MOVE_FIELDS = ['status', 'sort_order', 'actor', 'wait'] as const
 
 // A headless agent cannot "drag" a card to done, so the dispatch hands it the
 // exact curl commands to (1) post a short, human-readable result summary as a
@@ -454,6 +459,31 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     return true
   }
 
+  if (path === '/api/kanban/stale' && method === 'GET') {
+    const raw = url.searchParams.get('days') ?? '14'
+    const days = Number(raw)
+    if (!Number.isInteger(days) || days <= 0) { json(res, { error: 'days must be a positive integer' }, 400); return true }
+    const cards = listStaleKanbanCards({ days })
+    json(res, { days, count: cards.length, cards })
+    return true
+  }
+
+  const staleDecisionMatch = path.match(/^\/api\/kanban\/([^/]+)\/stale-decision$/)
+  if (staleDecisionMatch && method === 'POST') {
+    const id = decodeURIComponent(staleDecisionMatch[1])
+    let data: { decision?: string; actor?: string }
+    try { data = JSON.parse((await readBody(req)).toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+    try {
+      json(res, decideStaleKanbanCard(id, data.decision as any, data.actor))
+    } catch (err) {
+      if (err instanceof StaleKanbanDecisionError) {
+        const status = err.code === 'not_found' ? 404 : err.code === 'archived' ? 409 : 400
+        json(res, { error: err.message, code: err.code }, status)
+      } else throw err
+    }
+    return true
+  }
+
   if (path === '/api/kanban/labels' && method === 'GET') {
     json(res, listLabels())
     return true
@@ -581,6 +611,37 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     return true
   }
 
+  const cardWaitMatch = path.match(/^\/api\/kanban\/([^/]+)\/wait$/)
+  if (cardWaitMatch && method === 'PUT') {
+    const cardId = decodeURIComponent(cardWaitMatch[1])
+    const card = getKanbanCard(cardId)
+    if (!card) { json(res, { error: 'Kártya nem található' }, 404); return true }
+    if (card.status !== 'waiting') { json(res, { error: 'A kártya nincs várakozó állapotban' }, 409); return true }
+    const parsed = validateKanbanWaitReason(JSON.parse((await readBody(req)).toString()))
+    if (!parsed.ok) { json(res, { error: parsed.error }, 400); return true }
+    if (parsed.reason === null) { json(res, { error: 'A várakozás oka kötelező' }, 400); return true }
+    if (parsed.reason.kind === 'card') {
+      const blockerId = parsed.reason.blockerId as string
+      if (!getKanbanCard(blockerId)) { json(res, { error: 'A blokkoló kártya nem található' }, 404); return true }
+      if (blockerWouldCycle(cardId, blockerId)) { json(res, { error: 'Ez a kapcsolat kört zárna be' }, 409); return true }
+    }
+    try { setKanbanWaitReason(cardId, parsed.reason) }
+    catch (err) { json(res, { error: (err as Error).message }, 409); return true }
+    json(res, { ok: true })
+    return true
+  }
+  if (cardWaitMatch && method === 'DELETE') {
+    const cardId = decodeURIComponent(cardWaitMatch[1])
+    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
+    setKanbanWaitReason(cardId, null)
+    json(res, { ok: true })
+    return true
+  }
+  if (cardWaitMatch) {
+    methodNotAllowed(res, method, ['PUT', 'DELETE'])
+    return true
+  }
+
   if (path === '/api/kanban-projects' && method === 'GET') {
     json(res, listKanbanProjects())
     return true
@@ -684,8 +745,41 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   if (kanbanMoveMatch && method === 'POST') {
     const id = decodeURIComponent(kanbanMoveMatch[1])
     const body = await readBody(req)
-    const { status, sort_order, actor } = JSON.parse(body.toString())
+    const moveBody = JSON.parse(body.toString()) as unknown
+    // #437: an unknown key used to be dropped while the move still answered
+    // ok:true -- measured 2026-10-06, `wait_kind`/`wait_note` instead of
+    // `wait: {kind, note}` moved the card and silently lost the wait reason.
+    // Same rule as the PUT (#1023): refuse the whole move, name the accepted fields.
+    if (moveBody === null || typeof moveBody !== 'object' || Array.isArray(moveBody)) {
+      json(res, { error: `Body must be a JSON object. Accepted fields: ${KANBAN_MOVE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    const unknownMoveKeys = Object.keys(moveBody).filter((k) => !(KANBAN_MOVE_FIELDS as readonly string[]).includes(k))
+    if (unknownMoveKeys.length > 0) {
+      json(res, { error: `Unknown field(s): ${unknownMoveKeys.join(', ')}. Accepted: ${KANBAN_MOVE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    const { status, sort_order, actor, wait } = moveBody as { status: Parameters<typeof moveKanbanCard>[1]; sort_order?: number; actor?: string; wait?: unknown }
+    let reason = null
+    if (wait !== undefined) {
+      if (status !== 'waiting') { json(res, { error: 'Várakozási ok csak várakozó állapothoz adható meg' }, 400); return true }
+      const parsed = validateKanbanWaitReason(wait)
+      if (!parsed.ok || parsed.reason === null) { json(res, { error: parsed.ok ? 'A várakozás oka kötelező' : parsed.error }, 400); return true }
+      reason = parsed.reason
+      if (reason.kind === 'card') {
+        const blockerId = reason.blockerId as string
+        if (!getKanbanCard(blockerId)) { json(res, { error: 'A blokkoló kártya nem található' }, 404); return true }
+        if (blockerWouldCycle(id, blockerId)) { json(res, { error: 'Ez a kapcsolat kört zárna be' }, 409); return true }
+      }
+      if (reason.kind === 'owner') {
+        const fold = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+        if (!listLabels().some((label) => fold(label.name) === fold('Rád vár'))) {
+          json(res, { error: 'A „Rád vár” címke nem létezik' }, 409); return true
+        }
+      }
+    }
     if (moveKanbanCard(id, status, sort_order ?? 0, actor)) {
+      if (reason) setKanbanWaitReason(id, reason)
       // Wake the assigned agent once when the card enters in_progress -- unless
       // that agent is the one who moved it (self-pickup needs no wake-up).
       if (status === 'in_progress') fireKanbanDispatch(id, actor)

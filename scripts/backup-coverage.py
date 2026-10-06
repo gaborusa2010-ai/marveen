@@ -68,6 +68,11 @@ SKIP_REPO = {
     "coverage",       # test output
     ".venv", "venv",
     "logs",           # runtime noise, rotated
+    # Added 2026-10-03: store/scheduled-runs is in backup.sh STORE_SKIP since the
+    # v1.40.0 merge (SCHEDPROMPTREF917 fire-time snapshots, 7-day disk retention,
+    # regenerated on every fire). Without this line the checker reported it as
+    # TELJESEN FEDETLEN on every run -- the checker's half of that ONE decision.
+    "scheduled-runs",
 }
 SKIP_HOME_CLAUDE = {
     "projects",       # transcripts are runtime bulk; the memory/ subdirs ARE taken (see backup.sh)

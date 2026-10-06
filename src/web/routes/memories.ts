@@ -15,6 +15,9 @@ import type { RouteContext } from './types.js'
 // src/db.ts so the API rejects bad values before they even reach SQLite.
 const MEMORY_CATEGORIES = new Set(['hot', 'warm', 'cold', 'shared'])
 
+// Every key PUT/PATCH /api/memories/:id honours. Anything else is a 400 (#347).
+const MEMORY_UPDATE_FIELDS = ['content', 'category', 'tier', 'agent_id', 'keywords', 'updated_by'] as const
+
 const SUSPICIOUS_PATTERNS = [
   /\bcurl\s+(-[a-zA-Z]\s+)*https?:\/\//i,
   /\bbash\s+-c\b/i,
@@ -32,12 +35,31 @@ function containsSuspiciousContent(content: string): boolean {
   return SUSPICIOUS_PATTERNS.some((pattern) => pattern.test(content))
 }
 
+// Every key POST /api/memories accepts; anything else is a 400 (#437).
+const MEMORY_CREATE_FIELDS = ['agent_id', 'content', 'tier', 'category', 'keywords'] as const
+
 export async function tryHandleMemories(ctx: RouteContext): Promise<boolean> {
   const { req, res, path, method, url } = ctx
 
   if (path === '/api/memories' && method === 'POST') {
     const body = await readBody(req)
-    const data = JSON.parse(body.toString()) as { agent_id?: string; content: string; tier?: string; category?: string; keywords?: string }
+    const parsedBody = JSON.parse(body.toString()) as unknown
+    if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+      json(res, { error: `Body must be a JSON object. Accepted fields: ${MEMORY_CREATE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    // #437: an unknown key used to be dropped while the save still answered
+    // ok:true, so a typo ("keyword", "categroy") saved a memory without the
+    // field the caller believed it set. Same rule as the PUT/PATCH (#347).
+    // Measured before the change (2026-10-06): the code callers (fleet.py
+    // save_memory, web/app.js, the agent-scaffold template) and 30 days of
+    // agent transcripts sent no key outside this list.
+    const unknownKeys = Object.keys(parsedBody).filter((k) => !(MEMORY_CREATE_FIELDS as readonly string[]).includes(k))
+    if (unknownKeys.length > 0) {
+      json(res, { error: `Unknown field(s): ${unknownKeys.join(', ')}. Accepted: ${MEMORY_CREATE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    const data = parsedBody as { agent_id?: string; content: string; tier?: string; category?: string; keywords?: string }
     if (!data.content?.trim()) { json(res, { error: 'Content is required' }, 400); return true }
     if (containsSuspiciousContent(data.content)) {
       logger.warn({ agent: data.agent_id }, 'Memory content rejected: suspicious pattern')
@@ -379,7 +401,24 @@ Respond ONLY with JSON, nothing else:
     // the write-trace. It is distinct from agent_id, which means "reassign
     // the row to this agent" -- an editor updating someone else's memory
     // attributes the WRITE without changing the OWNER.
-    const { content, category, tier, agent_id, keywords, updated_by } = JSON.parse(body.toString()) as { content?: string; category?: string; tier?: string; agent_id?: string; keywords?: string; updated_by?: string }
+    const parsed = JSON.parse(body.toString()) as unknown
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      json(res, { error: `Body must be a JSON object. Accepted fields: ${MEMORY_UPDATE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    // #347: an unknown key used to be dropped silently while the write still
+    // answered ok:true, so a typo ("keyword") or a field this route never had
+    // ("append") looked like a successful edit. Same rule as the kanban PUT
+    // (#1023): refuse the whole write and name the accepted fields. Measured
+    // before the change (2026-10-06): no code caller and no agent call in 30
+    // days of transcripts sent anything outside this list, except two
+    // deliberate probes of exactly this bug.
+    const unknown = Object.keys(parsed).filter((k) => !(MEMORY_UPDATE_FIELDS as readonly string[]).includes(k))
+    if (unknown.length > 0) {
+      json(res, { error: `Unknown field(s): ${unknown.join(', ')}. Accepted: ${MEMORY_UPDATE_FIELDS.join(', ')}` }, 400)
+      return true
+    }
+    const { content, category, tier, agent_id, keywords, updated_by } = parsed as { content?: string; category?: string; tier?: string; agent_id?: string; keywords?: string; updated_by?: string }
     const newCategory = (tier || category || '').toLowerCase() || undefined
     if (newCategory && !MEMORY_CATEGORIES.has(newCategory)) {
       json(res, { error: `Invalid category "${newCategory}". Allowed: ${[...MEMORY_CATEGORIES].join(', ')}` }, 400)

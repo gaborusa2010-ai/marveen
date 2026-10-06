@@ -1045,6 +1045,7 @@ export interface DetectPaneStateOptions {
 // Code renders when no mode is switched on -- i.e. it asks about everything.
 export function detectPermissionMode(pane: string): string | null {
   if (!pane || !pane.trim()) return null
+  pane = completeBareShellsFooter(pane)
   const m = pane.match(
     /((?:[A-Za-z][\w-]* ){1,3})on(?: \(shift\+tab to cycle\)| · [^\n]*?(?:ctrl\+t|↓ to manage|← for agents))/,
   )
@@ -1052,11 +1053,42 @@ export function detectPermissionMode(pane: string): string | null {
   return /\? for shortcuts/.test(pane) ? 'default' : null
 }
 
+// The background-shells footer WITHOUT any tail: `⏵⏵ bypass permissions on ·
+// 1 shell`, nothing after the count. The comment above IDLE_FOOTER_RX assumed
+// Claude Code always renders a `ctrl+t` / `↓ to manage` tail after the count;
+// it does not. Measured 2026-09-30 on a live fleet pane (roxy, card 28650706):
+// an idle session with one background shell showed exactly this bare form, read
+// 'unknown', and the router held a message for 10+ minutes until the shell
+// exited (then the footer went back to `(shift+tab to cycle)` and it delivered).
+//
+// Accepted ONLY as the last non-empty line of the capture, whole-line anchored,
+// with the `⏵⏵` mode glyph in front. That is where the live footer sits; the
+// same text quoted in scrollback, or embedded in a longer line, still fails.
+// Not folded into IDLE_FOOTER_RX itself: that regex is tested against the whole
+// pane at a dozen call sites, where a tail-less form would reopen exactly the
+// scrollback misread the required tail exists to prevent.
+const BARE_SHELLS_FOOTER_RX = /^\s*⏵⏵ (?:[A-Za-z][\w-]* ){1,3}on · \d+ shells?\s*$/
+
+/**
+ * If the live footer is the bare `· N shell(s)` form, return the pane with that
+ * one line completed to the `· ↓ to manage` shape every downstream probe already
+ * accepts; otherwise return the pane unchanged.
+ */
+function completeBareShellsFooter(pane: string): string {
+  const lines = pane.split('\n')
+  let last = lines.length - 1
+  while (last >= 0 && lines[last].trim() === '') last--
+  if (last < 0 || !BARE_SHELLS_FOOTER_RX.test(lines[last])) return pane
+  lines[last] = lines[last].replace(/\s*$/, '') + ' · ↓ to manage'
+  return lines.join('\n')
+}
+
 export function detectPaneState(
   pane: string,
   opts: DetectPaneStateOptions = {},
 ): PaneState {
   if (!pane || !pane.trim()) return 'unknown'
+  pane = completeBareShellsFooter(pane)
 
   const paneLines = pane.split('\n')
 

@@ -613,7 +613,7 @@ def cmd_edit(a):
         a.rate is not None
         and r.get("rate") in (None, 0, 0.0)
         and a.force
-        and not any([a.job, a.client, a.address, a.stop])
+        and not any([a.job, a.client, a.address, a.stop, getattr(a, "cis", False)])
     )
     if r.get("invoice_ref") and _rate_fill:
         r["rate"] = float(a.rate)
@@ -625,6 +625,46 @@ def cmd_edit(a):
         _save(rows)
         print(f"#{a.id} napidij potolva: {float(a.rate):g}. A {r['invoice_ref']} szamu "
               f"szamla valtozatlan, csak a rekord lett teljes.")
+        return 0
+    # THE CIS FLAG, SAME SHAPE AS THE RATE FILL ABOVE. Measured 2026-10-04: invoice
+    # 10020 went out with CIS 20% on four fitting days (owner, msg 830: "a beepiteses
+    # napokra jar a CIS"), set in the invoice file, while days #30-#33 kept
+    # cis=false. The record said less than the paper, and the next Palmer fitting
+    # day would have copied the false flag "a korabbi Palmer rekordok mintajara",
+    # which is how #30-#33 got it in the first place.
+    # Narrow on purpose: only switching ON, only with --force, nothing else in
+    # the same call, and only if the ISSUED invoice file itself carries CIS. A
+    # flag that disagrees with the paper is exactly what the guard below prevents.
+    if r.get("invoice_ref") and getattr(a, "cis", False):
+        if not a.force or any([a.job, a.client, a.address, a.stop, a.rate is not None]):
+            print(f"#{a.id} MAR SZAMLAZVA ({r['invoice_ref']}). A CIS-jelzo csak "
+                  f"--force-szal, es MAS valtozas nelkul vezetheto be.")
+            return 1
+        if r.get("cis"):
+            print("Nincs mit valtoztatni.")
+            return 0
+        import glob
+        ref = str(r["invoice_ref"])
+        paper = None
+        for f in sorted(glob.glob(os.path.join(STORE, "muhely", "invoices", f"{ref}-*.json"))):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    paper = json.load(fh)
+                break
+            except (OSError, ValueError):
+                continue
+        has_cis = bool(paper and paper.get("cis")
+                       and any(l.get("cis") for l in paper.get("lines", [])))
+        if not has_cis:
+            print(f"#{a.id}: a {ref} szamla fajljaban NINCS CIS (vagy nem talalom a "
+                  f"fajlt). A rekord nem mondhat mast, mint a papir: nem irom at.")
+            return 1
+        r["cis"] = True
+        r.setdefault("notes", []).append({"at": time.time(), "text":
+            f"CIS-JELZO BEVEZETVE: a {ref} szamla CIS-levonassal ment ki, a rekord "
+            f"cis=false-t mutatott. A szamla NEM valtozik, a rekord lett vele egyezo."})
+        _save(rows)
+        print(f"#{a.id} CIS bevezetve, a {ref} szamla szerint. A szamla valtozatlan.")
         return 0
     if r.get("invoice_ref"):
         print(f"#{a.id} MAR SZAMLAZVA ({r['invoice_ref']}). A leiras kiment egy "
@@ -682,6 +722,9 @@ def cmd_edit(a):
         if float(a.rate) != (float(old_r) if old_r is not None else None):
             changed.append(f"napidij: {old_r if old_r is not None else 'nincs'} -> {float(a.rate)}")
             r["rate"] = float(a.rate)
+    if getattr(a, "cis", False) and not r.get("cis"):
+        r["cis"] = True
+        changed.append("cis: false -> true")
     for field, new in (("client", a.client), ("job", a.job), ("address", a.address)):
         if new is None or new == r.get(field):
             continue
@@ -837,6 +880,7 @@ def cmd_szamla(a):
         print(cim_warn)
     if not cim_sorok and first.get("address"):
         cim_sorok = [first["address"]]
+    helyszin = _helyszin_megjegyzes(ids, by_id, cim_sorok)
     job = {
         "client": {"name": cim_nev, "address": cim_sorok},
         "job": a.leiras or _osszefoglalo(jobs_desc, ids, by_id),
@@ -849,6 +893,8 @@ def cmd_szamla(a):
         "_job_ids": ids,
         "_photos": photos,
     }
+    if helyszin:
+        job["notes"] = helyszin
     out = a.out or f"szamla-{'-'.join(str(i) for i in ids)}.json"
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(job, fh, indent=2, ensure_ascii=False)
@@ -856,6 +902,11 @@ def cmd_szamla(a):
     print(f"Kiirva: {out}")
     print(f"{len(ids)} nap, {len(lines)} sor, osszesen {total:,.2f}.")
     print(f"  napok: {', '.join('#' + str(i) for i in ids)}")
+    if helyszin:
+        print("Helyszin a Notes-ban: " + helyszin.replace("\n", " "))
+    else:
+        print("FIGYELEM: a napokon NINCS helyszin-cim, a szamlan nem lesz "
+              "'Work carried out at' sor. Ha helyszini munka volt, potold.")
     if nyers_leiras:
         # Named, not silently shipped. The ledger is written in Hungarian for
         # the workshop; the invoice is read by the customer in English. Nothing
@@ -867,6 +918,54 @@ def cmd_szamla(a):
     print(f"Ellenorizd a sorokat es az osszeget, aztan:")
     print(f"  python3 scripts/muhely/invoice.py invoice {out} --out szamla.pdf")
     return rc
+
+
+def _helyszin_megjegyzes(ids, by_id, cim_sorok):
+    """The 'Work carried out at ...' note for the invoice, from the days' address.
+
+    WHY: the owner asked for the site on 10018 (2026-09-27, Telegram msg 706 and
+    709), it was typed into that one file by hand, and on 2026-10-04 it was
+    missing again from 10019 and 10020 (msg 840: "A cimet megint lefelejtetted
+    rola!!!"). A wish that lives in one hand-edited file is not a rule, so the
+    command that builds the file writes it now.
+
+    Goes into `notes`, not the line text: a line is cut silently at 64
+    characters, notes wrap per line. A day whose address is the customer's own
+    (workshop days at Palmer's) is not a site and is left out.
+
+    The WORDING depends on what happened there (owner, msg 845, 2026-10-04: "aznap
+    csak kiszallitas volt, beepites nem... ne azt ird, hogy work carried out...
+    ird be hogy delivery address"). A day whose job text names a delivery and no
+    fitting gets "Delivery address:"; everything else "Work carried out at".
+    """
+    sajat = " ".join(cim_sorok or []).lower()
+    by_addr = {}
+    for i in ids:
+        addr = (by_id[i].get("address") or "").strip()
+        if not addr or addr.lower() in sajat:
+            continue
+        job = (by_id[i].get("job") or "").lower()
+        delivery = (any(w in job for w in ("kiszallit", "kiszállít", "delivery", "deliver"))
+                    and not any(w in job for w in ("beepit", "beépít", "fitting", "install",
+                                                   "szerel")))
+        by_addr.setdefault((addr, delivery), []).append(
+            datetime.fromtimestamp(by_id[i]["started_at"]).astimezone().date())
+    out = []
+    for (addr, delivery), days in by_addr.items():
+        days = sorted(set(days))
+        def fmt(d, year=True):
+            return f"{d.day} {d.strftime('%B')}" + (f" {d.year}" if year else "")
+        if len(days) == 1:
+            when = f"on {fmt(days[0])}."
+        elif (days[-1] - days[0]).days == len(days) - 1:
+            when = f"from {fmt(days[0], days[0].year != days[-1].year)} to {fmt(days[-1])}."
+        else:
+            when = "on " + ", ".join(fmt(d, False) for d in days[:-1]) + f" and {fmt(days[-1])}."
+        if delivery:
+            out.append(f"Delivery address: {addr}\nDelivered {when}")
+        else:
+            out.append(f"Work carried out at {addr}\n{when}")
+    return "\n".join(out)
 
 
 def _osszefoglalo(jobs_desc, ids, by_id):
@@ -1169,6 +1268,8 @@ def main(argv):
     p.add_argument("--stop", help="a befejezes idopontjanak javitasa, pl. 16:00")
     p.add_argument("--rate", type=float,
                    help="a napidij potlasa vagy javitasa, ha inditaskor lemaradt")
+    p.add_argument("--cis", action="store_true",
+                   help="CIS bekapcsolasa; szamlazott napon csak ha a szamla is CIS-es")
     p.add_argument("--force", action="store_true",
                    help="lezart munkanal is, ha biztos hogy meg nincs szamlazva")
     p.set_defaults(fn=cmd_edit)

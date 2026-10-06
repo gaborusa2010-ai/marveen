@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, chmodSync, openSync, closeSync, statSync } from 'node:fs'
-import { STORE_DIR, DB_FILENAME, ALLOWED_CHAT_ID, OLLAMA_URL, APP_TZ, EMBED_URL, EMBED_MODEL, EMBED_DIMS, MAIN_AGENT_ID } from './config.js'
+import { STORE_DIR, DB_FILENAME, ALLOWED_CHAT_ID, OLLAMA_URL, APP_TZ, EMBED_URL, EMBED_MODEL, EMBED_DIMS, MAIN_AGENT_ID, OWNER_NAME } from './config.js'
 import { getEffectiveSettingValue } from './settings-store.js'
 import { logger } from './logger.js'
 import { TOOL_TIMEOUTS } from './tool-timeouts.js'
@@ -237,6 +238,26 @@ export function initDatabase(dbPathOverride?: string): void {
   } catch {
     // column already exists
   }
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN wait_kind TEXT')
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN wait_note TEXT')
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN wait_until INTEGER')
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN stale_kept_at INTEGER')
+  } catch {
+    // column already exists
+  }
   // Migration: add agent_id, category, auto_generated columns to memories
   try {
     db.exec("ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'marveen'")
@@ -425,8 +446,8 @@ export function initDatabase(dbPathOverride?: string): void {
   // Stamp updated_at on CONTENT-shaped updates only. Maintenance writes
   // (salience decay, accessed_at bumps, embedding backfills) must NOT stamp,
   // or updated_at would degrade into "last decay time". A separate trigger
-  // rather than extending memories_au: that one is the FTS-sync contract and
-  // fires on every update by design.
+  // rather than extending memories_au: that one is the FTS-sync contract
+  // (re-created below, see #436).
   // Recursion safety under PRAGMA recursive_triggers=ON: the inner UPDATE
   // changes updated_at, so the re-fired trigger fails the
   // `new.updated_at IS old.updated_at` guard and stops. A writer that sets
@@ -463,6 +484,33 @@ export function initDatabase(dbPathOverride?: string): void {
       WHERE id = new.id;
     END
   `)
+
+  // #436: memories_au used to fire on EVERY update, so the touch trigger's
+  // own inner UPDATE (updated_at/updated_by only) re-ran the FTS sync. Touch
+  // fires first, and its inner memories_au run sees old = new = the NEW row,
+  // so it issued an FTS 'delete' for text the index did not hold yet; the
+  // outer memories_au then synced again. Usually the two runs cancel out, but
+  // when the new keywords share a token with the old ones FTS5 rejects the
+  // write with "database disk image is malformed". Measured 2026-10-06: two
+  // updateMemory() calls in the same second (the second changing keywords,
+  // 'kw' -> 'kw extra') hit it, because a same-second updated_at satisfies the
+  // touch guard. The index only holds content and keywords, so the sync only
+  // needs to run when an UPDATE writes one of those columns -- which also
+  // stops the maintenance writes (decay, accessed_at, embedding) from
+  // churning the index. DROP + CREATE for the same upgrade reason as above;
+  // the FTS column set decides the body (pre-keywords installs index content
+  // only).
+  const ftsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'memories_fts'").get() as { sql: string } | undefined)?.sql ?? ''
+  db.exec('DROP TRIGGER IF EXISTS memories_au')
+  db.exec(/\bkeywords\b/.test(ftsSql)
+    ? `CREATE TRIGGER memories_au AFTER UPDATE OF content, keywords ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content, keywords) VALUES('delete', old.id, old.content, old.keywords);
+        INSERT INTO memories_fts(rowid, content, keywords) VALUES (new.id, new.content, new.keywords);
+      END`
+    : `CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END`)
 
   // Daily logs table
   db.exec(`
@@ -2320,6 +2368,10 @@ export interface KanbanCard {
   // Planned start of the work, unix seconds; NULL = not planned (the timeline
   // then falls back to created_at).
   start_date?: number | null
+  // Why a waiting card is parked; nullable for legacy and agent-created waits.
+  wait_kind?: 'owner' | 'external' | 'card' | 'date' | null
+  wait_note?: string | null
+  wait_until?: number | null
   sort_order: number
   created_at: number
   updated_at: number
@@ -2327,6 +2379,7 @@ export interface KanbanCard {
   // falling back to created_at when it has never moved. Use this for ageing and
   // stuck detection; updated_at is reset by comments and edits.
   last_status_at?: number
+  stale_kept_at: number | null
   archived_at: number | null
   // Set the first time the card is moved to in_progress and the assigned agent
   // is woken (kanban -> agent dispatch). NULL = never dispatched; the once-only
@@ -2422,6 +2475,86 @@ export function listKanbanCards(
     if (v !== undefined) c.active_seconds = v
   }
   return cards
+}
+
+export interface StaleKanbanCard {
+  id: string
+  seq: number
+  title: string
+  status: KanbanCard['status']
+  assignee: string | null
+  priority: KanbanCard['priority']
+  last_status_at: number
+  stale_kept_at: number | null
+  idle_days: number
+}
+
+export function listStaleKanbanCards(opts: { days?: number; owner?: string; now?: number } = {}): StaleKanbanCard[] {
+  const days = opts.days ?? 14
+  const owner = (opts.owner ?? OWNER_NAME).trim().toLowerCase()
+  const now = opts.now ?? Math.floor(Date.now() / 1000)
+  const cutoff = now - days * 86400
+  const rows = db.prepare(`
+    SELECT c.rowid AS seq, c.id, c.title, c.status, c.assignee, c.priority,
+           COALESCE(MAX(e.created_at), c.created_at) AS last_status_at, c.stale_kept_at
+    FROM kanban_cards c
+    LEFT JOIN kanban_card_events e ON e.card_id = c.id
+    WHERE c.archived_at IS NULL AND c.status != 'done'
+    GROUP BY c.id
+  `).all() as Array<Omit<StaleKanbanCard, 'idle_days'>>
+  const labels = db.prepare(`
+    SELECT k.card_id, l.name FROM kanban_card_labels k JOIN labels l ON l.id = k.label_id
+  `).all() as Array<{ card_id: string; name: string }>
+  const excluded = new Set(labels.filter(({ name }) => ['folyamatos', 'rad var'].includes(normalizeKanbanLabelName(name))).map(({ card_id }) => card_id))
+  return rows
+    .filter((card) => !excluded.has(card.id))
+    .filter((card) => String(card.assignee ?? '').trim().toLowerCase() !== owner)
+    .map((card) => {
+      const idleAt = Math.max(card.last_status_at, card.stale_kept_at ?? 0)
+      return { ...card, idle_days: Math.floor((now - idleAt) / 86400), idleAt }
+    })
+    .filter((card) => card.idleAt <= cutoff)
+    .sort((a, b) => a.idleAt - b.idleAt)
+    .map(({ idleAt: _idleAt, ...card }) => card)
+}
+
+export type StaleKanbanDecision = 'keep' | 'idea' | 'close'
+
+export class StaleKanbanDecisionError extends Error {
+  constructor(public code: 'invalid_decision' | 'not_found' | 'archived', message: string) { super(message) }
+}
+
+export function decideStaleKanbanCard(id: string, decision: StaleKanbanDecision, actor?: string): { ok: true; decision: StaleKanbanDecision; idea_id?: string } {
+  if (!['keep', 'idea', 'close'].includes(decision)) throw new StaleKanbanDecisionError('invalid_decision', 'Invalid stale-card decision')
+  return db.transaction(() => {
+    const card = getKanbanCard(id)
+    if (!card) throw new StaleKanbanDecisionError('not_found', 'Kanban card not found')
+    if (card.archived_at != null) throw new StaleKanbanDecisionError('archived', 'Kanban card is already archived')
+    const now = Math.floor(Date.now() / 1000)
+    const by = String(actor || '').trim() || OWNER_NAME
+    let ideaId: string | undefined
+    if (decision === 'keep') {
+      db.prepare('UPDATE kanban_cards SET stale_kept_at = ? WHERE id = ?').run(now, id)
+    } else if (decision === 'idea') {
+      ideaId = randomUUID().slice(0, 8)
+      const note = `Kanban #${card.seq} (${card.id}) -> Ötletláda, ${by}`
+      createIdea({ id: ideaId, title: card.title, description: [card.description, note].filter(Boolean).join('\n'), category: 'Egyéb', scope: 'munka', status: 'reviewed', source: 'kanban-stale', kanban_id: null, impact: null, effort: null })
+      archiveKanbanCard(id)
+    } else {
+      moveKanbanCard(id, 'done', card.sort_order, by)
+      archiveKanbanCard(id)
+    }
+    const assignee = String(card.assignee ?? '').trim()
+    if (assignee && assignee.toLowerCase() !== OWNER_NAME.trim().toLowerCase()) {
+      const text = decision === 'keep'
+        ? `[Heti átnézés] ${OWNER_NAME} döntése: marad (a számláló nullázva, 14 nap múlva jön újra elő)`
+        : decision === 'idea'
+          ? `[Heti átnézés] ${OWNER_NAME} döntése: ötletbe került (Ötletláda), a kártya archiválva`
+          : `[Heti átnézés] ${OWNER_NAME} döntése: lezárva (done + archiválva)`
+      addKanbanComment(id, by, text)
+    }
+    return { ok: true as const, decision, ...(ideaId ? { idea_id: ideaId } : {}) }
+  })()
 }
 
 // Whether any card -- archived included -- is assigned to `name`, case-insensitively.
@@ -2720,8 +2853,8 @@ export function moveKanbanCard(id: string, status: KanbanCard['status'], sortOrd
   // parent_id comes along in the same read: the ancestor chain has to be stamped too, and this
   // path (drag / status change) is the most common subcard event there is -- an subcard moved to
   // done. Leaving it out would make the false alarm rarer instead of gone.
-  const row = db.prepare('SELECT status, parent_id FROM kanban_cards WHERE id=?').get(id) as
-    { status: string; parent_id: string | null } | undefined
+  const row = db.prepare('SELECT status, parent_id, wait_kind FROM kanban_cards WHERE id=?').get(id) as
+    { status: string; parent_id: string | null; wait_kind: string | null } | undefined
   const prev = row?.status
   // dispatched_at guards ONE in_progress spell (one activation -> one wake-up
   // message), it is not a permanent tombstone. Nothing used to clear it, so a
@@ -2730,11 +2863,16 @@ export function moveKanbanCard(id: string, status: KanbanCard['status'], sortOrd
   // every move that does not land in in_progress re-arms the next activation --
   // and heals a row already stuck this way, since the clear does not depend on
   // the previous status.
+  const leavesWaiting = prev === 'waiting' && status !== 'waiting'
   const changed = db.prepare(
     status === 'in_progress'
-      ? 'UPDATE kanban_cards SET status=?, sort_order=?, updated_at=? WHERE id=?'
-      : 'UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?, dispatched_at=NULL WHERE id=?'
+      ? `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL' : ''} WHERE id=?`
+      : `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?, dispatched_at=NULL${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL' : ''} WHERE id=?`
   ).run(status, sortOrder, now, id).changes > 0
+  if (changed && leavesWaiting && row?.wait_kind === 'owner') {
+    const ownerLabel = listLabels().find((label) => normalizeKanbanLabelName(label.name) === normalizeKanbanLabelName('Rád vár'))
+    if (ownerLabel) removeLabelFromCard(id, ownerLabel.id)
+  }
   if (changed) touchAncestorChain(row?.parent_id, now, id)
   if (changed && prev !== undefined && prev !== status) {
     db.prepare(
@@ -3035,6 +3173,72 @@ export function getLabelsForAllCards(): Map<string, Label[]> {
     else map.set(card_id, [label])
   }
   return map
+}
+
+export type KanbanWaitReason = {
+  kind: 'owner' | 'external' | 'card' | 'date'
+  note?: string
+  until?: number
+  blockerId?: string
+}
+
+export type KanbanWaitReasonValidation =
+  | { ok: true; reason: KanbanWaitReason | null }
+  | { ok: false; error: string }
+
+export function validateKanbanWaitReason(raw: unknown): KanbanWaitReasonValidation {
+  if (raw === null) return { ok: true, reason: null }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'A várakozás oka objektum kell legyen' }
+  }
+  const obj = raw as Record<string, unknown>
+  const allowed = new Set(['kind', 'note', 'until', 'blockerId'])
+  const unknown = Object.keys(obj).filter((key) => !allowed.has(key))
+  if (unknown.length) return { ok: false, error: `Ismeretlen mező(k): ${unknown.join(', ')}` }
+  if (!['owner', 'external', 'card', 'date'].includes(String(obj.kind))) {
+    return { ok: false, error: 'Ismeretlen várakozási ok' }
+  }
+  if (obj.note !== undefined && typeof obj.note !== 'string') {
+    return { ok: false, error: 'A megjegyzés szöveg kell legyen' }
+  }
+  const note = typeof obj.note === 'string' ? obj.note.trim() : ''
+  if (note.length > 200) return { ok: false, error: 'A megjegyzés legfeljebb 200 karakter lehet' }
+  const kind = obj.kind as KanbanWaitReason['kind']
+  if (kind === 'external' && !note) return { ok: false, error: 'Külső fél esetén a „Ki?” mező kötelező' }
+  if (kind === 'date' && (!Number.isInteger(obj.until) || (obj.until as number) < 0)) {
+    return { ok: false, error: 'Dátum esetén egész unix időbélyeg kötelező' }
+  }
+  if (kind === 'card' && (typeof obj.blockerId !== 'string' || !obj.blockerId.trim())) {
+    return { ok: false, error: 'Másik kártya esetén a blockerId kötelező' }
+  }
+  const reason: KanbanWaitReason = { kind }
+  if (note) reason.note = note
+  if (kind === 'date') reason.until = obj.until as number
+  if (kind === 'card') reason.blockerId = (obj.blockerId as string).trim()
+  return { ok: true, reason }
+}
+
+function normalizeKanbanLabelName(value: unknown): string {
+  return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+}
+
+export function setKanbanWaitReason(id: string, reason: KanbanWaitReason | null): void {
+  const card = getKanbanCard(id)
+  if (!card) throw new Error('Kártya nem található')
+  const ownerLabel = listLabels().find((label) => normalizeKanbanLabelName(label.name) === normalizeKanbanLabelName('Rád vár'))
+  if (reason?.kind === 'owner' && !ownerLabel) throw new Error('A „Rád vár” címke nem létezik')
+
+  db.transaction(() => {
+    db.prepare('UPDATE kanban_cards SET wait_kind=?, wait_note=?, wait_until=? WHERE id=?').run(
+      reason?.kind ?? null,
+      reason?.note ?? null,
+      reason?.kind === 'date' ? reason.until ?? null : null,
+      id,
+    )
+    if (card.wait_kind === 'owner' && reason?.kind !== 'owner' && ownerLabel) removeLabelFromCard(id, ownerLabel.id)
+    if (reason?.kind === 'owner' && ownerLabel) addLabelToCard(id, ownerLabel.id)
+    if (reason?.kind === 'card' && reason.blockerId) addCardBlocker(id, reason.blockerId)
+  })()
 }
 
 // === Card blockers ===
@@ -4841,9 +5045,19 @@ export interface WorkflowCandidate {
   duration_minutes: number
 }
 
-export function getRecentToolCalls(sinceSecs: number): ToolCallLogRow[] {
+// `limit` keeps the NEWEST rows (the tail of the window), still returned oldest
+// first, so a capped read shows what just happened, not the start of the hour.
+export function getRecentToolCalls(
+  sinceSecs: number,
+  opts: { agentId?: string; limit?: number } = {},
+): ToolCallLogRow[] {
   const cutoff = Math.floor(Date.now() / 1000) - sinceSecs
-  return db.prepare('SELECT * FROM tool_call_log WHERE created_at >= ? ORDER BY created_at ASC').all(cutoff) as ToolCallLogRow[]
+  const where = ['created_at >= ?']
+  const params: (string | number)[] = [cutoff]
+  if (opts.agentId !== undefined) { where.push('agent_id = ?'); params.push(opts.agentId) }
+  let sql = `SELECT * FROM tool_call_log WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC`
+  if (opts.limit !== undefined) { sql += ' LIMIT ?'; params.push(opts.limit) }
+  return (db.prepare(sql).all(...params) as ToolCallLogRow[]).reverse()
 }
 
 // Per-agent tool-call telemetry for the status view, in ONE query.

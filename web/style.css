@@ -7887,6 +7887,33 @@ body {
   border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
 }
 
+.kanban-card-wait {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kanban-card-wait.kind-owner { color: var(--accent); }
+.kanban-card-wait.missing { background: transparent; border-style: dashed; opacity: .75; }
+.kanban-card-wait.expired { color: var(--danger); font-weight: 600; }
+.kanban-wait-modal { width: min(92vw, 430px); }
+.kanban-wait-modal .modal-body { display: flex; flex-direction: column; gap: 12px; }
+.kanban-wait-kinds { display: grid; gap: 8px; }
+.kanban-wait-field { display: flex; flex-direction: column; gap: 5px; color: var(--text-muted); }
+.kanban-wait-field input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text); }
+.kanban-wait-field small { min-height: 1em; color: var(--text-muted); }
+.kanban-wait-field[hidden] { display: none; }
+.kanban-wait-detail { grid-column: 1 / -1; }
+.kanban-wait-detail-actions { display: inline-flex; gap: 5px; }
+
 /* === Owner strip: "what is waiting on YOU" ===
    The owner asked for it (Telegram msg 3427, 2026-09-22): a single row, ordered
    by priority, of the cards the process is blocked on until the person acts.
@@ -7959,6 +7986,32 @@ body {
 .kanban-owner-strip-item .dot.high   { background: var(--accent); }
 .kanban-owner-strip-item .dot.normal { background: var(--info); }
 .kanban-owner-strip-item .dot.low    { background: var(--border); }
+/* Whose card it is, when it reached the strip through the "Rád vár" label. */
+.kanban-owner-strip-item .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kanban-owner-strip-who-avatar { width: 18px; height: 18px; font-size: 10px; }
+
+.kanban-stale-chip { min-height: 40px; margin: 0 0 12px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-card); color: var(--text); font-weight: 600; }
+.kanban-stale-chip:hover { border-color: var(--accent); color: var(--accent); }
+.kanban-stale-modal { width: min(94vw, 640px); }
+.kanban-stale-list { display: flex; flex-direction: column; gap: 10px; }
+.kanban-stale-row { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); }
+.kanban-stale-card { display: flex; gap: 8px; min-width: 0; color: var(--text); }
+.kanban-stale-card .seq { flex: none; color: var(--text-muted); font-family: monospace; }
+.kanban-stale-card strong { overflow-wrap: anywhere; }
+.kanban-stale-meta { margin: 6px 0 10px; color: var(--text-muted); font-size: 12px; }
+.kanban-stale-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.kanban-stale-actions button { min-height: 40px; flex: 1 1 110px; }
+@media (max-width: 420px) { .kanban-stale-actions button { flex-basis: 90px; } }
 
 /* === Team view: one row per person === */
 .kanban-team-view { display: flex; flex-direction: column; gap: 10px; }
