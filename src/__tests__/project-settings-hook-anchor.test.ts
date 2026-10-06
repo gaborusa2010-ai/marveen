@@ -51,16 +51,25 @@ const EXPECTED: Record<string, string[]> = {
     // write -- it runs after the tool -- so it is deliberately a PostToolUse /
     // PostToolUseFailure pair rather than a gate.
     'global-skill-write-audit.mjs',
+    'memory-frontmatter-bash-gate.py',
+    // The persona guard watches the main agent's own CLAUDE.md/SOUL.md and
+    // every agents/*/ pair, and it must fire on EVERY tool call: the first
+    // version filtered on the Write/Edit file_path and a python3 heredoc
+    // walked straight past it. PostToolUse is the event that cannot be
+    // dodged by choosing a different tool.
+    'persona-change-notify.py',
   ],
   // A failed tool call fires PostToolUseFailure, never PostToolUse
   // (TOOLLOGVAKSIKER921): without this entry tool_call_log cannot hold a 0.
   // global-skill-write-audit.mjs rides both events for the same reason (see
   // PostToolUse below): a write that made the tool call FAIL still changed the
   // protected tree, so the snapshot diff has to run on the failure path too.
-  PostToolUseFailure: ['tool-log-capture.py', 'global-skill-write-audit.mjs'],
+  // KAPUEGYUT918: a failed Bash call can still have written a memory file.
+  PostToolUseFailure: ['tool-log-capture.py', 'global-skill-write-audit.mjs', 'memory-frontmatter-bash-gate.py'],
   PreToolUse: [
     'outgoing-copy-gate.py', 'email-approval-gate.py',
     'channel-image-resize.sh', 'egress-gate.mjs', 'memory-frontmatter-gate.py',
+    'memory-frontmatter-bash-gate.py',
     // Local additions on this install, both BEFORE-the-fact gates (the audit
     // hook above is the after-the-fact half): bash-egress-gate.mjs checks the
     // network destinations a Bash command reaches for, and
