@@ -308,7 +308,7 @@
     <!-- === Kanban Page === -->
     <div class="page" id="kanbanPage" hidden>
       <!-- View switcher: board vs gantt (top, always visible) -->
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px;">
         <button class="view-btn active" id="kanbanViewBoard" style="width:auto;padding:0 12px;" data-i18n="kanban.view.board">Tábla</button>
         <button class="view-btn" id="kanbanViewGantt" style="width:auto;padding:0 12px;" data-i18n="kanban.view.gantt">Idővonal</button>
         <button class="view-btn" id="kanbanViewTeam" style="width:auto;padding:0 12px;" data-i18n="kanban.view.team">Csapat</button>
@@ -2171,6 +2171,8 @@
             <label for="cardDue" data-i18n="kanban.modal.due_label">Határidő <span class="hint">(opcionális)</span></label>
             <input type="date" id="cardDue">
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-group form-half">
             <label for="cardProject" data-i18n="common.project">Projekt <span class="hint">(opcionális)</span></label>
             <input type="text" id="cardProject" list="projectSuggestions" placeholder="pl. Dream Engine" autocomplete="off">

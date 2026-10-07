@@ -31,11 +31,24 @@ elfogynak a tokenek". So the signal needs all THREE conditions together --
 running, idle, AND has work -- and an agent with nothing to do stays off the
 report entirely.
 
+Scheduled work is handed-over work
+----------------------------------
+Measured 2026-10-07 09:00, owner's question on Telegram (msg 6080, "Miert nem
+kapott munkat?") about a "FUT, DE NEM DOLGOZIK: margo" alert: margo had 5 open
+cards, but her work is TIMED -- 3d-esti-darab-bemutatas fires every day at
+19:00 with agent=margo. Nothing was missing at 09:00; the handover was already
+booked for the evening. So an agent with an enabled scheduled task that still
+fires TODAY (the current minute included) is not alerted. The row still shows
+when (`scheduled_today`), so the exemption is visible, not silent. A task that
+already fired earlier today does not count: it should have woken the agent.
+
   idle-agent-guard.py                 # measure, print JSON, no action
   idle-agent-guard.py --notify        # also send one Telegram line
   idle-agent-guard.py --max-idle-tokens 1000000 --daily-from 6
 """
 import argparse
+import datetime
+import glob
 import json
 import os
 import sys
@@ -48,7 +61,8 @@ STORE = os.path.join(REPO, "store")
 STATE = os.path.join(STORE, "idle-agent-guard.json")
 TOKEN_FILE = os.path.join(STORE, ".dashboard-token")
 SUBS = ("anorak", "cody", "forgacs", "margo", "roxy")
-API = "http://localhost:%s" % (os.environ.get("MARVEEN_WEB_PORT") or "3420")
+TASKS_DIR = os.path.expanduser("~/.claude/scheduled-tasks")
+API ="http://localhost:%s" % (os.environ.get("MARVEEN_WEB_PORT") or "3420")
 
 # NOT FROM MEASUREMENT, and saying so is the point (the fleet's own rule: a
 # number that looks measured but is not is worse than no number). The reasoning:
@@ -123,13 +137,103 @@ def open_work():
     return out
 
 
-def should_alert(running, tokens, work_count, max_idle_tokens):
+def send_to_main(text):
+    """Inter-agent message to marveen. Delivered ONLY if the helper printed an
+    `OK id=` line: curl exits 0 on a 4xx too, so the exit code proves nothing."""
+    import subprocess
+    try:
+        r = subprocess.run(["bash", os.path.join(REPO, "scripts", "agent-msg.sh"),
+                            "marveen", "marveen", text],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        sys.stderr.write("idle-agent-guard: agent-msg hiba: %s\n" % e)
+        return False
+    return r.stdout.strip().startswith("OK id=")
+
+
+def _cron_field(spec, lo, hi):
+    """One cron field -> set of ints. Supports *, N, N-M, lists and /step.
+    Raises ValueError on anything else, so a typo cannot read as "never"."""
+    out = set()
+    for part in spec.split(","):
+        step = 1
+        if "/" in part:
+            part, s = part.split("/", 1)
+            step = int(s)
+            if step < 1:
+                raise ValueError("step < 1: %r" % spec)
+        if part == "*":
+            a, b = lo, hi
+        elif "-" in part:
+            a, b = (int(x) for x in part.split("-", 1))
+        else:
+            a = int(part)
+            b = hi if step > 1 else a
+        if a < lo or b > hi or a > b:
+            raise ValueError("out of range %d-%d: %r" % (lo, hi, spec))
+        out.update(range(a, b + 1, step))
+    return out
+
+
+def first_fire_today(expr, now):
+    """Earliest HH:MM at or after `now` (same minute counts) and before midnight
+    when the 5-field cron `expr` fires, or None. Local time, like the scheduler
+    (SCHEDULER_TZ = the host zone). Day-of-month and day-of-week are OR-ed when
+    both are restricted, the Vixie/cron-parser rule."""
+    f = expr.split()
+    if len(f) != 5:
+        raise ValueError("not 5 fields: %r" % expr)
+    mins, hours = _cron_field(f[0], 0, 59), _cron_field(f[1], 0, 23)
+    doms, months = _cron_field(f[2], 1, 31), _cron_field(f[3], 1, 12)
+    dows = {d % 7 for d in _cron_field(f[4], 0, 7)}
+    if now.month not in months:
+        return None
+    dom_ok = now.day in doms
+    dow_ok = (now.isoweekday() % 7) in dows   # cron: 0 = Sunday
+    if f[2] != "*" and f[4] != "*":
+        day_ok = dom_ok or dow_ok
+    else:
+        day_ok = dom_ok and dow_ok
+    if not day_ok:
+        return None
+    for h in sorted(hours):
+        for m in sorted(mins):
+            if (h, m) >= (now.hour, now.minute):
+                return "%02d:%02d" % (h, m)
+    return None
+
+
+def scheduled_today(now=None, tasks_dir=None):
+    """{agent: earliest "HH:MM" still to fire today} from the enabled file-based
+    scheduled tasks. An unreadable config is reported and skipped: it then
+    counts as NO scheduled work, so the error makes the guard alert more, not less."""
+    now = now or datetime.datetime.now()
+    out = {}
+    for path in sorted(glob.glob(os.path.join(tasks_dir or TASKS_DIR, "*", "task-config.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            who = (cfg.get("agent") or "").strip().lower()
+            if who not in SUBS or cfg.get("enabled") is not True:
+                continue
+            at = first_fire_today(cfg.get("schedule") or "", now)
+        except (OSError, ValueError, AttributeError) as e:
+            sys.stderr.write("idle-agent-guard: utemezes nem olvashato, kihagyva: %s (%s)\n" % (path, e))
+            continue
+        if at and (who not in out or at < out[who]):
+            out[who] = at
+    return out
+
+
+def should_alert(running, tokens, work_count, max_idle_tokens, scheduled_later=False):
     """The whole decision, pure, so a test can drive BOTH answers.
 
     All three conditions together, per the owner's constraint: an agent with no
-    work for the day is not a finding, it is a rest day.
+    work for the day is not a finding, it is a rest day. And an agent whose
+    work is booked for later today already has its handover (2026-10-07).
     """
-    return bool(running) and tokens <= max_idle_tokens and work_count > 0
+    return (bool(running) and tokens <= max_idle_tokens and work_count > 0
+            and not scheduled_later)
 
 
 def load():
@@ -160,6 +264,7 @@ def main(argv=None):
     g = _load_guard()
     run = running_agents()
     work = open_work()
+    sched = scheduled_today()
 
     rows, unmeasurable = [], []
     for name in SUBS:
@@ -169,8 +274,10 @@ def main(argv=None):
             continue
         rows.append({"agent": name, "running": run.get(name, False), "tokens": tok,
                      "open_cards": work.get(name, 0),
+                     "scheduled_today": sched.get(name),
                      "alert": should_alert(run.get(name, False), tok,
-                                           work.get(name, 0), a.max_idle_tokens)})
+                                           work.get(name, 0), a.max_idle_tokens,
+                                           bool(sched.get(name)))})
 
     hits = [r for r in rows if r["alert"]]
     print(json.dumps({"rows": rows, "alert_count": len(hits),
@@ -194,11 +301,16 @@ def main(argv=None):
            + "\n".join("  %s: %.1fM token ma, %d nyitott kartya"
                        % (r["agent"], r["tokens"] / 1e6, r["open_cards"]) for r in fresh)
            + "\n\nMunkaja van, de nem kapott atadast. Nem inditottam es nem "
-             "allitottam le senkit.")
+             "allitottam le senkit. TEENDO (marveen): nezd meg a kartyait, es ha "
+             "van MOST kiadhato munka, add ki neki; ha a munkaja utemezett vagy "
+             "valaszra var, nincs teendo. A gazdanak NE tovabbitsd.")
     # Check the send. The stop branch of fleet-daily-budget.py dropped notify()'s
     # return value until 2026-09-17, so a failed send marked itself as delivered
     # and never retried. Same mistake, one file later, would be a choice.
-    if g.notify(msg, to_owner=True):
+    # The owner, Telegram msg 6085, 2026-10-07 09:04: "Ezt neked kell megkapod,
+    # nem nekem...es ha van munkaja akkor add ki neki". So the finding goes to
+    # the main agent's inbox, who hands the work over -- not to Telegram.
+    if send_to_main(msg):
         st[today] = done + [r["agent"] for r in fresh]
         save(st)
     else:

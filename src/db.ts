@@ -2826,8 +2826,13 @@ function normaliseDueDate(v: unknown): number | null {
   if (typeof v === 'string') {
     const trimmed = v.trim()
     if (/^\d+$/.test(trimmed)) return Number(trimmed)           // epoch sent as text
-    const ms = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00` : trimmed)
-    return Number.isNaN(ms) ? null : Math.floor(ms / 1000)      // ISO date, local midnight
+    // A bare "YYYY-MM-DD" parses as UTC midnight, which is what the dashboard's
+    // date field sends and what its edit modal reads back with toISOString().
+    // Local midnight here read back as the previous day in any zone east of
+    // UTC (Europe/London in summer is UTC+1), and saving the modal then wrote
+    // that earlier day back.
+    const ms = Date.parse(trimmed)
+    return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
   }
   return null
 }
@@ -2872,6 +2877,7 @@ export function parentWouldCycle(cardId: string, parentId: string): boolean {
 // returned 200, stored `archived_at=null` and `sort_order=0`, logged nothing).
 export const KANBAN_CREATE_FIELDS = [
   'title', 'description', 'status', 'assignee', 'priority', 'project', 'parent_id', 'due_date',
+  'start_date',
 ] as const
 
 export function createKanbanCard(card: {

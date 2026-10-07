@@ -99,14 +99,16 @@ class TestNotifyBukasaNemJelolodikElkuldottnek(unittest.TestCase):
     def _run(self, notify_ok, state_path):
         fake_guard = mock.Mock()
         fake_guard.window_tokens.return_value = (0, 1, 0.0, False)
-        fake_guard.notify.return_value = notify_ok
+        send = mock.Mock(return_value=notify_ok)
         with mock.patch.object(G, "_load_guard", return_value=fake_guard), \
+             mock.patch.object(G, "scheduled_today", return_value={}), \
+             mock.patch.object(G, "send_to_main", send), \
              mock.patch.object(G, "running_agents", return_value={n: (n == "cody") for n in G.SUBS}), \
              mock.patch.object(G, "open_work", return_value={n: (7 if n == "cody" else 0) for n in G.SUBS}), \
              mock.patch.object(G, "STATE", state_path), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             rc = G.main(["--notify"])
-        return rc, out.getvalue(), fake_guard
+        return rc, out.getvalue(), send
 
     def test_sikeres_kuldes_utan_csillapit(self):
         import tempfile
@@ -115,7 +117,7 @@ class TestNotifyBukasaNemJelolodikElkuldottnek(unittest.TestCase):
             rc, out, fg = self._run(True, p)
             self.assertEqual(rc, 0)
             self.assertEqual(json.loads(out)["alert_count"], 1)
-            fg.notify.assert_called_once()
+            fg.assert_called_once()
             with open(p, encoding="utf-8") as fh:
                 self.assertIn("cody", json.dumps(json.load(fh)))
 
@@ -125,7 +127,7 @@ class TestNotifyBukasaNemJelolodikElkuldottnek(unittest.TestCase):
             p = os.path.join(d, "s.json")
             rc, out, fg = self._run(False, p)
             self.assertEqual(rc, 0)
-            fg.notify.assert_called_once()
+            fg.assert_called_once()
             self.assertFalse(os.path.exists(p),
                              "elbukott kuldes utan nem szabad csillapitani")
 
@@ -133,6 +135,7 @@ class TestNotifyBukasaNemJelolodikElkuldottnek(unittest.TestCase):
         fake_guard = mock.Mock()
         fake_guard.window_tokens.return_value = (0, 1, 0.0, False)
         with mock.patch.object(G, "_load_guard", return_value=fake_guard), \
+             mock.patch.object(G, "scheduled_today", return_value={}), \
              mock.patch.object(G, "running_agents", return_value={n: True for n in G.SUBS}), \
              mock.patch.object(G, "open_work", return_value={n: 5 for n in G.SUBS}), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -146,6 +149,7 @@ class TestNemMerhetoNemCsendesAgens(unittest.TestCase):
         fake_guard = mock.Mock()
         fake_guard.window_tokens.return_value = (0, 0, 0.0, True)   # missing=True
         with mock.patch.object(G, "_load_guard", return_value=fake_guard), \
+             mock.patch.object(G, "scheduled_today", return_value={}), \
              mock.patch.object(G, "running_agents", return_value={n: True for n in G.SUBS}), \
              mock.patch.object(G, "open_work", return_value={n: 5 for n in G.SUBS}), \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out, \
@@ -156,6 +160,112 @@ class TestNemMerhetoNemCsendesAgens(unittest.TestCase):
         self.assertEqual(sorted(d["unmeasurable"]), sorted(G.SUBS))
         self.assertEqual(d["alert_count"], 0)
         self.assertIn("NEM MERHETO", err.getvalue())
+
+
+# 2026-10-07 was a Wednesday; the guard's 09:00 run raised the margo alert.
+WED_0900 = __import__("datetime").datetime(2026, 10, 7, 9, 0, 8)
+
+
+class TestFirstFireToday(unittest.TestCase):
+    """A cron-olvaso: a mai hatralevo elso idopont, vagy None."""
+
+    def test_napi_esti_feladat_reggel_meg_hatravan(self):
+        self.assertEqual(G.first_fire_today("0 19 * * *", WED_0900), "19:00")
+
+    def test_mar_lefutott_feladat_NEM_szamit(self):
+        self.assertIsNone(G.first_fire_today("0 7 * * 1-5", WED_0900))
+
+    def test_az_aktualis_perc_meg_szamit(self):
+        # A 09:00-s feladat promptja epp most megy ki; az agens meg nem kolthetett.
+        self.assertEqual(G.first_fire_today("0 9 * * *", WED_0900), "09:00")
+
+    def test_mas_napra_szolo_NEM_szamit(self):
+        self.assertIsNone(G.first_fire_today("0 19 * * 0", WED_0900))   # vasarnap
+        self.assertIsNone(G.first_fire_today("0 19 * * 7", WED_0900))   # 7 = vasarnap is
+        self.assertEqual(G.first_fire_today("0 19 * * 3", WED_0900), "19:00")
+
+    def test_lepes_tartomany_lista(self):
+        self.assertEqual(G.first_fire_today("*/30 6-22 * * *", WED_0900), "09:00")
+        self.assertEqual(G.first_fire_today("5,30 16,18 * * 1-6", WED_0900), "16:05")
+        self.assertEqual(G.first_fire_today("15/20 10 * * *", WED_0900), "10:15")
+
+    def test_honap_es_nap_szures(self):
+        self.assertIsNone(G.first_fire_today("0 9 27,30 11 *", WED_0900))
+        self.assertEqual(G.first_fire_today("0 12 7 10 *", WED_0900), "12:00")
+
+    def test_nap_es_hetnap_VAGY_kapcsolat(self):
+        # Mindketto korlatozott: eleg, ha az egyik illik (cron-parser szabaly).
+        self.assertEqual(G.first_fire_today("0 12 1 * 3", WED_0900), "12:00")
+        self.assertEqual(G.first_fire_today("0 12 7 * 1", WED_0900), "12:00")
+        self.assertIsNone(G.first_fire_today("0 12 1 * 1", WED_0900))
+
+    def test_hibas_kifejezes_HIBAT_dob(self):
+        for bad in ("0 19 * *", "61 * * * *", "0 25 * * *", "x * * * *", "*/0 * * * *", ""):
+            with self.assertRaises(ValueError, msg=bad):
+                G.first_fire_today(bad, WED_0900)
+
+
+class TestScheduledToday(unittest.TestCase):
+    def _dir(self, d, tasks):
+        for name, cfg in tasks.items():
+            os.makedirs(os.path.join(d, name))
+            with open(os.path.join(d, name, "task-config.json"), "w", encoding="utf-8") as fh:
+                fh.write(cfg if isinstance(cfg, str) else json.dumps(cfg))
+
+    def test_csak_az_engedelyezett_mai_sub_agens_feladat(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._dir(d, {
+                "esti": {"schedule": "0 19 * * *", "agent": "margo", "enabled": True},
+                "korabbi": {"schedule": "0 12 * * *", "agent": "Margo", "enabled": True},
+                "kikapcsolt": {"schedule": "0 10 * * *", "agent": "cody", "enabled": False},
+                "lefutott": {"schedule": "0 7 * * 1-5", "agent": "forgacs", "enabled": True},
+                "fo": {"schedule": "0 21 * * *", "agent": "marveen", "enabled": True},
+            })
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                got = G.scheduled_today(WED_0900, d)
+        self.assertEqual(got, {"margo": "12:00"})
+
+    def test_olvashatatlan_config_kihagyva_es_SZOL(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._dir(d, {
+                "rossz-json": "{nem json",
+                "rossz-cron": {"schedule": "0 19 * *", "agent": "roxy", "enabled": True},
+            })
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                got = G.scheduled_today(WED_0900, d)
+        self.assertEqual(got, {})   # nem mentesit: inkabb riaszt
+        self.assertEqual(err.getvalue().count("nem olvashato"), 2)
+
+
+class TestUtemezettMunkaNemRiaszt(unittest.TestCase):
+    """A 2026-10-07-i margo-eset, mindket iranyban."""
+
+    def test_should_alert_utemezett_munkaval_NEM_riaszt(self):
+        self.assertFalse(G.should_alert(True, 0, 5, 1_000_000, True))
+        self.assertTrue(G.should_alert(True, 0, 5, 1_000_000, False))
+
+    def _main(self, sched):
+        fake_guard = mock.Mock()
+        fake_guard.window_tokens.return_value = (0, 1, 0.0, False)
+        with mock.patch.object(G, "_load_guard", return_value=fake_guard), \
+             mock.patch.object(G, "scheduled_today", return_value=sched), \
+             mock.patch.object(G, "running_agents", return_value={n: (n == "margo") for n in G.SUBS}), \
+             mock.patch.object(G, "open_work", return_value={n: (5 if n == "margo" else 0) for n in G.SUBS}), \
+             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            G.main([])
+        return {r["agent"]: r for r in json.loads(out.getvalue())["rows"]}
+
+    def test_margo_19_orai_feladattal_csendes_de_latszik(self):
+        rows = self._main({"margo": "19:00"})
+        self.assertFalse(rows["margo"]["alert"])
+        self.assertEqual(rows["margo"]["scheduled_today"], "19:00")
+
+    def test_margo_utemezes_nelkul_riaszt(self):
+        rows = self._main({})
+        self.assertTrue(rows["margo"]["alert"])
+        self.assertIsNone(rows["margo"]["scheduled_today"])
 
 
 if __name__ == "__main__":

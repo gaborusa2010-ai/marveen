@@ -1277,8 +1277,10 @@ main {
 [data-theme="dark"] .kanban-card[data-priority="low"]    { --card-tint: rgba(250, 249, 245, 0.03); }
 
 /* Card aging: left stripe overrides priority border when card is stale.
-   Colour is set as --card-aging-color via inline style by JS. The 4px width is
-   set with the priority block above. */
+   Colour is set as --card-aging-color via inline style by JS. Only the colour
+   is overridden; the 4px width comes from the priority block above. Must stay
+   AFTER that block: both selectors have the same specificity. */
+.kanban-card[data-aging] { border-left-color: var(--card-aging-color); }
 
 /* Aging badge: hourglass + day/hour counter, top-right (left of the ⚡ action) */
 .kanban-card-aging-badge {
