@@ -27,6 +27,9 @@ echo "backup.sh: manifest match survives regex metacharacters"
 echo "======================================================="
 echo
 
+# Since v1.42.0 the block calls archive_list_has; load it the way backup.sh does.
+. "${REPO_ROOT}/scripts/lib/archive-list-has.sh"
+
 BLOCK="$(sed -n '/# verify-match-begin/,/# verify-match-end/p' "${BACKUP_SH}" | grep -v '^ *#')"
 [[ -n "${BLOCK}" ]] || { bad "no verify-match block found in ${BACKUP_SH}"; echo; echo "PASS=${PASS} FAIL=${FAIL}"; exit 1; }
 # The block ends with an open "if ! grep ...; then". Close it into a function

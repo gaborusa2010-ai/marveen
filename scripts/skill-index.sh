@@ -117,15 +117,11 @@ index_skills_dir() {
     fi
 
     local desc
-    # UTF8CUT901 (2026-09-01): `cut -c` vag BAJTOT, nem karaktert -- egy 120. bajtnal
-    # kettevagott ekezetes betu ERVENYTELEN UTF-8-at hagy a fajlban. A kovetkezmenye nem
-    # kozmetikai: a `file` mar "Non-ISO extended-ASCII"-nak latja, es a rendszer grep-je
-    # (ugrep) BINARISKENT atugorja -- nulla talalat, exit 1, SEMMI kiiras. Ketszer hittem
-    # aznap, hogy egy frissen letrehozott skill nincs benne az indexben, holott benne volt.
-    # Egy indexfajl, amire nem lehet keresni, pontosan annyit er, mint egy ures index.
-    # python3 mindig van (a projekt sajat szabalya), es karakterre vag.
+    # `cut -c` is byte-oriented in GNU coreutils even under a UTF-8 locale, so
+    # a 120-byte cut lands mid-character on accented text and writes a broken
+    # byte into the index every agent reads. python3 counts characters.
     desc=$(grep -m1 "^description:" "$skill_md" 2>/dev/null | sed 's/^description: *//' | tr -d '"' | tr -d "'" \
-             | python3 -c 'import sys; sys.stdout.write(sys.stdin.read().rstrip("\n")[:120])')
+      | python3 -c 'import sys; sys.stdout.write(sys.stdin.read().rstrip(chr(10))[:120])')
     if [ -z "$desc" ]; then
       desc="(nincs leírás)"
     fi
