@@ -8046,9 +8046,11 @@ body {
 .kanban-owner-strip-group.tier-later .kanban-owner-strip-group-head { color: #a16207; }
 .kanban-owner-strip-group.tier-later .kanban-owner-strip-item { border-color: #d4a017; }
 .kanban-owner-strip-group.tier-later .kanban-owner-strip-item .dot { background: #d4a017; }
-.kanban-owner-strip-group.tier-parked { border-left-color: var(--success); background: var(--success-soft); }
-.kanban-owner-strip-group.tier-parked .kanban-owner-strip-group-head { color: var(--success); }
-.kanban-owner-strip-group.tier-parked .kanban-owner-strip-item .dot { background: var(--success); }
+.kanban-owner-strip-group.tier-parked { border-left-color: #2f9e44; background: rgba(47, 158, 68, 0.12); }
+.kanban-owner-strip-group.tier-parked .kanban-owner-strip-group-head { color: #2b8a3e; }
+.kanban-owner-strip-group.tier-parked .kanban-owner-strip-item { border-color: #2f9e44; }
+.kanban-owner-strip-group.tier-parked .kanban-owner-strip-item .dot { background: #2f9e44; }
+[data-theme="dark"] .kanban-owner-strip-group.tier-parked .kanban-owner-strip-group-head { color: #51cf66; }
 [data-theme="dark"] .kanban-owner-strip-group.tier-later .kanban-owner-strip-group-head { color: #eab308; }
 .kanban-owner-strip-item {
   display: inline-flex;
