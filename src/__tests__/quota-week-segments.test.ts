@@ -96,10 +96,11 @@ function render(quota: Record<string, unknown>, lang = 'hu'): string[] {
       appendChild(c: { innerHTML: string }) { this.children.push(c.innerHTML) } }
     els[id] = el
   }
-  const document = { getElementById: (id: string) => els[id], createElement: () => ({ className: '', innerHTML: '' }) }
+  const document = { getElementById: (id: string) => els[id], createElement: () => ({ className: '', innerHTML: '', classList: { add() {} } }) }
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fn = new Function('document', 'window', 't', 'escapeHtml', 'formatDurationShort', 'formatRelative',
-    `${extractFn('quotaLevelClass')}; ${extractFn('quotaMeasuredText')}; ${extractFn('weekSegments')}; ${extractFn('renderQuotaStrip')}; return renderQuotaStrip`,
+    // Local fork: renderQuotaStrip also calls the reset-clock and monthly-spend helpers.
+    `${extractFn('quotaLevelClass')}; ${extractFn('quotaMeasuredText')}; ${extractFn('weekSegments')}; ${extractFn('currentLangTag')}; ${extractFn('formatQuotaResetClock')}; ${extractFn('formatMinorMoney')}; ${extractFn('renderQuotaMonthly')}; ${extractFn('renderQuotaStrip')}; return renderQuotaStrip`,
   )(document, { _lang: lang }, (k: string) => k, (s: string) => String(s), () => '1n', () => 'most')
   fn(quota, null)
   return els.quotaBars.children

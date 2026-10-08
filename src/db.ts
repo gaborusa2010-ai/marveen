@@ -2848,7 +2848,9 @@ function normaliseDueDate(v: unknown): number | null {
   if (typeof v === 'number') return Number.isFinite(v) ? Math.floor(v) : null
   if (typeof v === 'string') {
     const trimmed = v.trim()
-    if (/^\d+$/.test(trimmed)) return Number(trimmed)           // epoch sent as text
+    // epoch sent as text, also in a decimal shape ("1790000000.0"), which the
+    // INTEGER column would store as the same value (upstream kanban-field-events test)
+    if (/^\d+(\.\d+)?$/.test(trimmed)) return Math.floor(Number(trimmed))
     // A bare "YYYY-MM-DD" parses as UTC midnight, which is what the dashboard's
     // date field sends and what its edit modal reads back with toISOString().
     // Local midnight here read back as the previous day in any zone east of
