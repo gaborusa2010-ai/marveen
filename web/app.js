@@ -1313,44 +1313,63 @@ function renderKanbanOwnerStrip() {
   })
   el.appendChild(head)
 
-  const items = document.createElement('div')
-  items.className = 'kanban-owner-strip-items'
-  for (const card of mine) {
-    const chip = document.createElement('div')
-    chip.className = 'kanban-owner-strip-item'
-    chip.title = card.title
-    const dot = document.createElement('span')
-    dot.className = 'dot ' + (card.priority || 'normal')
-    const seq = document.createElement('span')
-    seq.className = 'seq'
-    seq.textContent = card.seq != null ? '#' + card.seq : ''
-    const title = document.createElement('span')
-    title.className = 'title'
-    title.textContent = card.title
-    chip.append(dot, seq, title)
-    // A labelled card stays with its agent; the chip says whose it is, so he
-    // knows who is waiting on the answer. His own cards carry no marker.
-    const raw = String(card.assignee || '').trim()
-    if (raw && raw.toLowerCase() !== owner.toLowerCase()) {
-      const m = kanbanAssignees.find((a) => a.name.toLowerCase() === raw.toLowerCase())
-      const name = m ? (m.displayName || m.name) : raw
-      const who = document.createElement('span')
-      who.className = 'who'
-      const av = document.createElement('span')
-      av.className = 'kanban-team-avatar kanban-owner-strip-who-avatar ' + (m ? m.type : 'unknown')
-      av.textContent = (name[0] || '?').toUpperCase()
-      if (m) kanbanDecorateAvatar(av, m.name)
-      const nm = document.createElement('span')
-      nm.className = 'who-name'
-      nm.textContent = name
-      who.append(av, nm)
-      chip.appendChild(who)
-      chip.title = card.title + ' (' + name + ')'
+  // Three tiers, urgent on top, each with its own colour (owner, Telegram msg
+  // 6295, 2026-10-08: "legyenek szetosztva 3 kategoriaba a kartyak a surgos
+  // legyen legfelul, es legyen szinkodja"). One chip row in priority order
+  // still made him read every dot to find what was urgent. The tiers come from
+  // the priority field: urgent+high = urgent, normal = can wait, low = parked.
+  const groups = document.createElement('div')
+  groups.className = 'kanban-owner-strip-groups'
+  const tierOf = (c) => (c.priority === 'urgent' || c.priority === 'high') ? 'urgent' : (c.priority === 'low' ? 'parked' : 'later')
+  for (const tier of ['urgent', 'later', 'parked']) {
+    const cards = mine.filter((c) => tierOf(c) === tier)
+    if (cards.length === 0) continue
+    const group = document.createElement('div')
+    group.className = 'kanban-owner-strip-group tier-' + tier
+    const gh = document.createElement('div')
+    gh.className = 'kanban-owner-strip-group-head'
+    gh.textContent = t('kanban.owner_strip.tier_' + tier) + ' · ' + cards.length
+    const items = document.createElement('div')
+    items.className = 'kanban-owner-strip-items'
+    group.append(gh, items)
+    groups.appendChild(group)
+    for (const card of cards) {
+      const chip = document.createElement('div')
+      chip.className = 'kanban-owner-strip-item'
+      chip.title = card.title
+      const dot = document.createElement('span')
+      dot.className = 'dot ' + (card.priority || 'normal')
+      const seq = document.createElement('span')
+      seq.className = 'seq'
+      seq.textContent = card.seq != null ? '#' + card.seq : ''
+      const title = document.createElement('span')
+      title.className = 'title'
+      title.textContent = card.title
+      chip.append(dot, seq, title)
+      // A labelled card stays with its agent; the chip says whose it is, so he
+      // knows who is waiting on the answer. His own cards carry no marker.
+      const raw = String(card.assignee || '').trim()
+      if (raw && raw.toLowerCase() !== owner.toLowerCase()) {
+        const m = kanbanAssignees.find((a) => a.name.toLowerCase() === raw.toLowerCase())
+        const name = m ? (m.displayName || m.name) : raw
+        const who = document.createElement('span')
+        who.className = 'who'
+        const av = document.createElement('span')
+        av.className = 'kanban-team-avatar kanban-owner-strip-who-avatar ' + (m ? m.type : 'unknown')
+        av.textContent = (name[0] || '?').toUpperCase()
+        if (m) kanbanDecorateAvatar(av, m.name)
+        const nm = document.createElement('span')
+        nm.className = 'who-name'
+        nm.textContent = name
+        who.append(av, nm)
+        chip.appendChild(who)
+        chip.title = card.title + ' (' + name + ')'
+      }
+      chip.addEventListener('click', () => showCardDetail(card))
+      items.appendChild(chip)
     }
-    chip.addEventListener('click', () => showCardDetail(card))
-    items.appendChild(chip)
   }
-  el.appendChild(items)
+  el.appendChild(groups)
 }
 
 // --- kanban stale review ---

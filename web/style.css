@@ -8030,7 +8030,22 @@ body {
   gap: 6px;
   margin-top: 9px;
 }
-.kanban-owner-strip.collapsed .kanban-owner-strip-items { display: none; }
+.kanban-owner-strip.collapsed .kanban-owner-strip-groups { display: none; }
+/* Three colour-coded tiers (owner, Telegram msg 6295): urgent red on top,
+   "can wait" blue, parked grey. The colour is on the whole group, not on a
+   dot, so the urgent block is visible without reading the chips. */
+.kanban-owner-strip-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 9px; }
+.kanban-owner-strip-group { padding: 6px 8px 8px; border-left: 4px solid var(--border); border-radius: var(--radius-sm); }
+.kanban-owner-strip-group .kanban-owner-strip-items { margin-top: 5px; }
+.kanban-owner-strip-group-head { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.kanban-owner-strip-group.tier-urgent { border-left-color: var(--danger); background: rgba(191, 77, 67, 0.14); }
+.kanban-owner-strip-group.tier-urgent .kanban-owner-strip-group-head { color: var(--danger); }
+.kanban-owner-strip-group.tier-urgent .kanban-owner-strip-item { border-color: var(--danger); }
+.kanban-owner-strip-group.tier-later { border-left-color: var(--info); background: rgba(59, 130, 246, 0.08); }
+.kanban-owner-strip-group.tier-later .kanban-owner-strip-group-head { color: var(--info); }
+.kanban-owner-strip-group.tier-parked { border-left-color: var(--border); background: rgba(127, 127, 127, 0.06); }
+.kanban-owner-strip-group.tier-parked .kanban-owner-strip-group-head { color: var(--text-muted); }
+.kanban-owner-strip-group.tier-parked .kanban-owner-strip-item { opacity: .75; }
 .kanban-owner-strip-item {
   display: inline-flex;
   align-items: center;
