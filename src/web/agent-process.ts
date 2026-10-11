@@ -28,6 +28,7 @@ import {
   firstRunAcceptKeys,
   stuckInputSignature,
   mcpTrustAcceptKeys,
+  visibleParkedInput,
   type FirstRunGateKind,
 } from '../pane-state.js'
 import { scheduleRecoveryBrief } from './restart-recovery-brief.js'
@@ -88,7 +89,7 @@ import { loadProfileTemplate, profileWantsThinChiefHandoff } from './profiles.js
 import { resolveAgentSecurityProfile } from './agent-team.js'
 import { writeAgentSettingsFromProfile, ensureFleetRosterSection, ensureProjectRootInClaudeMd, ensureAutonomySection, ensureSkillsPathTrapSection, ensureSystemDirectiveAuthSection, ensureAgentIdHeaderSection, ensureThinChiefHandoffSection, ensureMemorySearchLabelSection, ensureFleetAuthSection, ensureEvidenceSection, ensureMcpListChannelSection, ensureMessageCloseSection } from './agent-scaffold.js'
 import { schedulePluginUnlockAfterRespawn } from './channel-plugin-unlock.js'
-import { recordInjectedPrompt } from './injected-prompt-registry.js'
+import { recordInjectedPrompt, matchesInjectedPrompt } from './injected-prompt-registry.js'
 import { getSecret } from './vault.js'
 import { resolveOpenRouterModel } from './openrouter-models.js'
 import { reapChannelOrphans, reapDetachedChannelClaudes } from './channel-poller-reap.js'
@@ -3613,7 +3614,14 @@ export async function sendPromptToSession(
   for (let attempt = 0; ; attempt++) {
     await delay(SUBMIT_RETRY_POLL_MS)
     const pane = capturePane(session, host)
-    const action = decideSubmitFollowup(pane, payloadHint, attempt, SUBMIT_RETRY_MAX_ATTEMPTS)
+    let action = decideSubmitFollowup(pane, payloadHint, attempt, SUBMIT_RETRY_MAX_ATTEMPTS)
+    // The head hint is invisible when the box shows only the prompt's tail
+    // (height-capped or overfull box, see visibleParkedInput). If the visible
+    // parked text is a fragment of what we just typed, it is still ours and
+    // unsubmitted: press Enter again instead of reading 'done'.
+    if (action === 'done' && matchesInjectedPrompt(visibleParkedInput(pane), { text: oneLine, at: Date.now() })) {
+      action = attempt >= SUBMIT_RETRY_MAX_ATTEMPTS ? 'give-up' : 'retry-enter'
+    }
     if (action === 'done') break
     if (action === 'give-up') {
       logger.warn({ session, attempt }, 'sendPromptToSession: prompt still parked after retries')

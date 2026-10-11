@@ -1939,6 +1939,35 @@ export function overfullParkedInputTail(pane: string): string | null {
   return tail.length > 0 ? tail : null
 }
 
+// The text visible in an idle pane's input box, whitespace-collapsed, or null
+// when nothing is parked or the pane is busy. Covers both the overfull shape
+// (overfullParkedInputTail) and the HEIGHT-CAPPED box: Claude Code 2.1.293
+// scrolls a long input inside a fixed-height box and re-draws the ❯ glyph on
+// the first VISIBLE row, so the box looks complete but holds only the tail.
+// Measured 2026-10-11 on the 80x24 marveen-worker pane: every worker request
+// parked this way, and shouldRetrySubmit's head-of-prompt hint never matched,
+// so the post-send loop read 'done' and the request timed out after 20 min.
+// Callers must still prove the text is theirs (matchesInjectedPrompt). Pure.
+export function visibleParkedInput(pane: string | null): string | null {
+  if (!pane || !pane.trim()) return null
+  const overfull = overfullParkedInputTail(pane)
+  if (overfull) return overfull
+  const lines = pane.split('\n')
+  for (const rx of BUSY_INDICATORS) {
+    if (rx.test(liveTailRegion(lines, BUSY_LIVE_REGION_LINES))) return null
+  }
+  if (BUSY_ESC_TO_INTERRUPT_RX.test(liveTailRegion(lines, LIVE_FOOTER_REGION_LINES))) return null
+  if (!IDLE_FOOTER_RX.test(pane)) return null
+  const box = liveInputBox(pane)
+  if (box == null) return null
+  // A box whose text overflows ends its last visible row with a `+;=`
+  // overflow marker the TUI draws (never typed; seen on every frame of a
+  // height-capped box, Claude Code 2.1.293, 2026-10-11). Left in, it breaks
+  // the substring match against the sent prompt and the Enter is never retried.
+  const text = box.replace(/^\s*❯/, '').replace(/\s+/g, ' ').trim().replace(/\s*\+;=$/, '')
+  return text.length > 0 ? text : null
+}
+
 // Post-submit verification: did the parked input actually leave the box?
 //
 // `prevSig` is stuckInputSignature(pane) captured BEFORE the submit attempt
