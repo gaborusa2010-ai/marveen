@@ -48,13 +48,22 @@ class FakeGuard:
         return True
 
 
-def run(spends, argv, allapot, weekly=None):
+# A heti ablak "neutral" allasa: merheto, de nem szol bele -- a napi proxy dont.
+# 2026-10-11 ota (owner msg 7253) a NEM merheto heti szam mellett a kapu NEM allit
+# le, ezert az 1-9. eset, ami a napi proxyt meri, egy semleges, MERT heti szamot kap.
+SEMLEGES = {"window": "seven_day", "used_pct": 80.0, "elapsed_pct": 50.0,
+            "resets_at": 0, "hours_left": 84.0, "age_min": 1.0}
+_ALAP = object()
+
+
+def run(spends, argv, allapot, weekly=_ALAP):
     """Egy futas, rogzitett heti ablakkal.
 
-    A `weekly=None` alapertek SZANDEKOS: az 1-9. eset a napi proxy viselkedeset
-    meri, es ha a heti ablakot nem rogzitenenk, a teszt a GEP valodi
-    pillanatkepet olvasna -- vagyis napszaktol fuggoen menne at vagy bukna.
+    A heti ablakot MINDIG rogzitjuk: kulonben a teszt a GEP valodi pillanatkepet
+    olvasna -- vagyis napszaktol fuggoen menne at vagy bukna.
     """
+    if weekly is _ALAP:
+        weekly = SEMLEGES
     g = FakeGuard(spends)
     mod._load_guard = lambda: g
     mod.load = lambda: dict(allapot)
@@ -159,7 +168,7 @@ def main():
             allapot.clear(); allapot.update(d)
         mod.save = ment
         _eredeti = mod.read_weekly
-        mod.read_weekly = lambda **kw: None
+        mod.read_weekly = lambda **kw: SEMLEGES
         try:
             mod.main(["--budget", "520000000", "--notify", "--no-warn-notify"])
         finally:
@@ -210,15 +219,24 @@ def main():
               bool(g.sent) and g.sent[0].startswith("CLAUDE HETI KERET"),
               f"{g.sent[:1]}")
 
-        print("12. NEM MERHETO heti szam: a regi viselkedes, a napi proxy dont")
-        # Egy hianyzo meres nem felmentes. Ha a pillanatkep elavult vagy nincs,
-        # a kapu ugy dont, ahogy 2026-09-23 elott.
+        print("12. NEM MERHETO heti szam: NINCS leallitas, egy jelzes naponta (owner msg 7253)")
+        # 2026-10-11 elott itt a napi proxy leallitott. A gazda: leallitas elott
+        # ellenorizze, hogy tenyleg kell-e. Ha nem tudta ellenorizni, nem allit le.
         allapot = {}
         rc, g = fut(TULKOLTOK, ["--notify", "--budget", "520000000", "--no-warn-notify"],
                     allapot, None)
-        check("leallitott", sorted(g.stopped) == ["anorak", "roxy"], f"{g.stopped}")
-        check("az uzenet jelzi, hogy a heti szam nem merheto",
-              bool(g.sent) and "NEM MERHETO" in g.sent[0], f"{g.sent[:1]}")
+        check("senkit nem allitott le", not g.stopped, f"{g.stopped}")
+        check("szolt rola, es kimondja, hogy nem allitott le",
+              len(g.sent) == 1 and "NEM allitottam le" in g.sent[0], f"{g.sent[:1]}")
+        rc, g = fut(TULKOLTOK, ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, None)
+        check("masodik futasban mar nem szol", not g.sent and not g.stopped,
+              f"{g.sent} {g.stopped}")
+        allapot = {}
+        rc, g = fut(TULKOLTOK, ["--notify", "--budget", "520000000", "--no-warn-notify",
+                                "--ignore-weekly"], allapot, None)
+        check("--ignore-weekly mellett a regi viselkedes: leallit",
+              sorted(g.stopped) == ["anorak", "roxy"], f"{g.stopped}")
 
         print("13. NEUTRAL: a heti ablak ELoREFUTOTT, tehat a napi proxy dont")
         # 60% elhasznalva, az ablakbol 45% telt el, a megengedett elorefutas 10 pont:
@@ -260,13 +278,14 @@ def main():
         print("17. read_weekly: mit fogad el meresnek es mit nem")
         import time as _t
         most = _t.time()
-        def kep(td, source="authoritative", ok=True, windows=None, gen=None):
+        def kep(td, source="authoritative", ok=True, windows=None, gen=None, sl_age=None):
             from datetime import datetime as _dt, timezone as _tz
             g_at = gen if gen is not None else _dt.fromtimestamp(most - 60, _tz.utc).isoformat()
             p = os.path.join(td, "u.json")
+            extra = {} if sl_age is None else {"statusline_age_minutes": sl_age}
             with open(p, "w", encoding="utf-8") as fh:
                 json.dump({"generated_at": g_at,
-                           "claude": {"ok": ok, "source": source,
+                           "claude": {"ok": ok, "source": source, **extra,
                                       "windows": windows if windows is not None else
                                       {"seven_day": {"used_percent": 42.0,
                                                      "resets_at": most + 3600}}}}, fh)
@@ -290,12 +309,46 @@ def main():
         check("gyorsitotarazott hiteles forras -> meres",
               (mod.read_weekly(kep(td, source="authoritative_cached"), now=most) or {})
               .get("used_pct") == 42.0)
+        check("friss allapotsor-forras -> meres (2026-10-11, a 429-es nap)",
+              (mod.read_weekly(kep(td, source="statusline", sl_age=0.0), now=most) or {})
+              .get("used_pct") == 42.0)
+        check("allapotsor-forras kor nelkul -> NEM meres",
+              mod.read_weekly(kep(td, source="statusline"), now=most) is None)
+        check("friss pillanatkep, de regi allapotsor -> NEM meres (a ket kor osszeadodik)",
+              mod.read_weekly(kep(td, source="statusline", sl_age=70.0), now=most) is None)
         ketto = kep(td, windows={"seven_day": {"used_percent": 30.0, "resets_at": most + 3600},
                                  "seven_day_opus": {"used_percent": 77.0,
                                                     "resets_at": most + 3600}})
         w2 = mod.read_weekly(ketto, now=most)
         check("a ket heti ablak kozul a SZUKEBBET valasztja",
               w2 and w2["window"] == "seven_day_opus" and w2["used_pct"] == 77.0, f"{w2}")
+
+        print("17b. az allapotsor-fajl kozvetlen olvasasa: a FRISSEBB meres nyer")
+        def slf(td, used, age_min, name="rl.json"):
+            q = os.path.join(td, name)
+            with open(q, "w", encoding="utf-8") as fh:
+                json.dump({"written_at": most - age_min * 60,
+                           "rate_limits": {"seven_day": {"used_percentage": used,
+                                                         "resets_at": most + 3600}}}, fh)
+            return q
+        regi_kep = kep(td, gen=_dt.fromtimestamp(most - 40 * 60, _tz.utc).isoformat())
+        w3 = mod.read_weekly(regi_kep, now=most, statusline_path=slf(td, 51, 0.5))
+        check("friss allapotsor-fajl nyer a 40 perces pillanatkep ellen",
+              w3 and w3["used_pct"] == 51.0 and w3["age_min"] == 0.5, f"{w3}")
+        w4 = mod.read_weekly(kep(td), now=most, statusline_path=slf(td, 51, 30))
+        check("a 30 perces allapotsor-fajl veszit a 1 perces pillanatkep ellen",
+              w4 and w4["used_pct"] == 42.0, f"{w4}")
+        w5 = mod.read_weekly(kep(td, gen=_dt.fromtimestamp(most - 7200, _tz.utc).isoformat()),
+                             now=most, statusline_path=slf(td, 51, 2))
+        check("elavult pillanatkep mellett a friss fajl egymaga is meres",
+              w5 and w5["used_pct"] == 51.0, f"{w5}")
+        check("elavult fajl + elavult pillanatkep -> NEM meres",
+              mod.read_weekly(kep(td, gen=_dt.fromtimestamp(most - 7200, _tz.utc).isoformat()),
+                              now=most, statusline_path=slf(td, 51, 90)) is None)
+        check("hianyzo fajl nem torik el",
+              (mod.read_weekly(kep(td), now=most,
+                               statusline_path=os.path.join(td, "nincs.json")) or {})
+              .get("used_pct") == 42.0)
 
 
         print("18. window_day: az allapotfajl nap-kulcsa a 06:00-as horgonyhoz igazodik")

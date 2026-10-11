@@ -118,18 +118,78 @@ WEEKLY_WINDOW_SEC = 7 * 86400
 # A `usage-collect.py` negyedorankent ir. Egy oranal regebbi pillanatkep azt
 # jelenti, hogy a gyujto all -- olyankor a heti szam nem meres, hanem emlek.
 WEEKLY_MAX_AGE_MIN = 60
-_AUTHORITATIVE = ("authoritative", "authoritative_cached")
+_AUTHORITATIVE = ("authoritative", "authoritative_cached", "statusline")
+# WHY "statusline" COUNTS (added 2026-10-11, owner msg 7230). When the usage
+# endpoint answers 429/403, usage-collect.py falls back to the numbers Claude Code
+# itself hands every status-line render -- the same rate_limits.seven_day figure,
+# measured identical to the authoritative read on 2026-09-28 (usage-collect.py,
+# _read_statusline_rate_limits). Rejecting it here while usage-collect.py already
+# alerts on it (ALERTABLE_CLAUDE_SOURCES) made the gate blind on exactly the days
+# the endpoint fails: 2026-10-11 14:03 it stopped cody, margo and roxy on the daily
+# proxy (89.9%) while the week stood at 50% used / ~62% elapsed -- an override.
+# The status-line file has its own age, on top of the snapshot's; both must fit
+# inside max_age_min, so a stale render cannot pass as a fresh measurement.
 
 
-def read_weekly(path=None, max_age_min=WEEKLY_MAX_AGE_MIN, now=None):
-    """A Claude heti ablaka a legfrissebb pillanatkepbol, vagy None, ha nem merheto.
+STATUSLINE_RL = os.path.join(REPO, "store", ".claude-rate-limits.json")
+# WHY THE GATE READS THE STATUS-LINE FILE ITSELF (owner msg 7253, 2026-10-11:
+# "mielott leallitja ... ellenorizze le hogy tenyleg szukseges-e"). The snapshot
+# above is rewritten only every 15 minutes, so its status-line figure can already
+# be ~15 minutes old when the gate runs. scripts/statusline-ratelimit.sh rewrites
+# .claude-rate-limits.json on EVERY status-line render of ANY session, sub-agents
+# included -- so whenever someone is spending tokens, this file is minutes old.
+# The gate takes whichever of the two readings is FRESHER.
+
+
+def _read_statusline_file(path, max_age_min, now):
+    """Heti ablak kozvetlenul az allapotsor-fajlbol, vagy None."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+        written = float(d["written_at"])
+        w = ((d.get("rate_limits") or {}).get("seven_day")) or {}
+        used, resets = w.get("used_percentage"), w.get("resets_at")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if used is None or not resets:
+        return None
+    age_min = (now - written) / 60.0
+    if age_min > max_age_min or age_min < -5:
+        return None
+    return _with_pace({"window": "seven_day", "used_pct": float(used),
+                       "resets_at": float(resets)}, now, age_min)
+
+
+def _with_pace(best, now, age_min):
+    remaining = best["resets_at"] - now
+    elapsed = WEEKLY_WINDOW_SEC - remaining
+    best["elapsed_pct"] = max(0.0, min(100.0, elapsed / WEEKLY_WINDOW_SEC * 100.0))
+    best["hours_left"] = max(0.0, remaining / 3600.0)
+    best["age_min"] = round(age_min, 1)
+    return best
+
+
+def read_weekly(path=None, max_age_min=WEEKLY_MAX_AGE_MIN, now=None, statusline_path=None):
+    """A Claude heti ablaka a legfrissebb meresbol, vagy None, ha nem merheto.
 
     A ket heti ablak (`seven_day` es `seven_day_opus`) kozul a NAGYOBB fogyasztasut
     adja vissza: a szuk keresztmetszet allitja le a flottat, es ma nem mindig
     ugyanaz a ketto kozul.
+
+    Explicit `path` nelkul (eles futas) az allapotsor-fajlt is megnezi, es a
+    FRISSEBB meres nyer. Explicit `path` mellett csak azt olvassa, hacsak
+    `statusline_path`-t is nem kap (teszt).
     """
-    p = path or USAGE_SNAPSHOT
     now = now if now is not None else time.time()
+    snap = _read_snapshot(path or USAGE_SNAPSHOT, max_age_min, now)
+    sl_path = statusline_path or (None if path else STATUSLINE_RL)
+    live = _read_statusline_file(sl_path, max_age_min, now) if sl_path else None
+    if snap is None or live is None:
+        return snap or live
+    return live if live["age_min"] < snap["age_min"] else snap
+
+
+def _read_snapshot(p, max_age_min, now):
     try:
         with open(p, encoding="utf-8") as fh:
             snap = json.load(fh)
@@ -145,6 +205,11 @@ def read_weekly(path=None, max_age_min=WEEKLY_MAX_AGE_MIN, now=None):
     except (TypeError, ValueError):
         return None
     age_min = (now - gen_ts) / 60.0
+    if cl.get("source") == "statusline":
+        try:
+            age_min += float(cl.get("statusline_age_minutes"))
+        except (TypeError, ValueError):
+            return None
     if age_min > max_age_min or age_min < -5:
         return None
 
@@ -159,12 +224,7 @@ def read_weekly(path=None, max_age_min=WEEKLY_MAX_AGE_MIN, now=None):
     if best is None:
         return None
 
-    remaining = best["resets_at"] - now
-    elapsed = WEEKLY_WINDOW_SEC - remaining
-    best["elapsed_pct"] = max(0.0, min(100.0, elapsed / WEEKLY_WINDOW_SEC * 100.0))
-    best["hours_left"] = max(0.0, remaining / 3600.0)
-    best["age_min"] = round(age_min, 1)
-    return best
+    return _with_pace(best, now, age_min)
 
 
 def weekly_verdict(w, hard_stop, lead):
@@ -300,7 +360,28 @@ def main(argv=None):
     #   heti "stop"     -> leallitas akkor is, ha a nap nyugodt
     #   heti "override" -> a napi tullepes NEM ok a leallitasra
     #   egyebkent       -> a napi proxy dont, ahogy 2026-09-23 elott
-    kell_leallitani = (itelet == "stop") or (pct >= a.stop_at and itelet != "override")
+    #   heti "unknown"  -> NINCS leallitas (owner msg 7253, 2026-10-11): a kapu csak
+    #                      akkor allit le, ha leallitas elott ellenorizni TUDTA, hogy
+    #                      nincs heti tartalek. Ez nem vakfolt: az allapotsor-fajl
+    #                      minden kolto session minden lepesenel frissul, tehat ha
+    #                      egy oraja nincs friss szam, akkor egy oraja senki nem
+    #                      koltott. Egyszer szol rola naponta. --ignore-weekly
+    #                      visszaadja a regi, csak-napi viselkedest.
+    vak = itelet == "unknown" and not a.ignore_weekly
+    kell_leallitani = (itelet == "stop") or (
+        pct >= a.stop_at and itelet != "override" and not vak)
+    if vak and pct >= a.stop_at and not fuggoben:
+        if st.get("unknown_noted") != ma:
+            sz_total = f"{total:,}".replace(",", " ")
+            sz_budget = f"{a.budget:,}".replace(",", " ")
+            if g.notify(f"FLOTTA NAPI KERET: {pct:.0f}% ({sz_total} / {sz_budget} token).\n\n"
+                        "NEM allitottam le senkit: a Claude heti szamat most nem tudtam "
+                        "frissen lemerni, es meres nelkul nem allitok le. Errol ma "
+                        "tobbet nem szolok."):
+                st = dict(st, day=ma, unknown_noted=ma,
+                          bands=sorted(kuldott), stopped=sorted(allitott))
+                save(st)
+        return 0
     if kell_leallitani:
         koltok = sorted(n for n in SUBS
                         if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott)
