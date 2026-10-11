@@ -219,11 +219,12 @@ DIRECTIVE_SENDER = "system"
 
 def pane_shape(text):
     """The delivery mapping, EXACTLY as src/web/pane-text.ts applies it: every
-    line break becomes one space. Not a general whitespace collapse -- that would
+    line break becomes one space, and so does every other control character
+    (tab, \\x01, DEL: they reach the TUI as keys). Not a general whitespace collapse -- that would
     be a loosening; this is the one deterministic transformation the row goes
     through on its way into the pane. 48 of 492 system rows on this host carry
     line breaks (measured 2026-09-20), so the multi-line case is real."""
-    return re.sub(r"\r?\n", " ", text or "")
+    return re.sub(r"[\x00-\x1f\x7f]", " ", re.sub(r"\r?\n", " ", text or ""))
 # Age bound on the row (review of #1411, Marveen 27288): the row proves ORIGIN,
 # not TIME. Without a bound any directive ever delivered stays replayable for
 # ever, and the verified branch is silent -- measured: the real 18-hour-old

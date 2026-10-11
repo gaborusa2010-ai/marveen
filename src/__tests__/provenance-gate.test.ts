@@ -672,6 +672,7 @@ describe('provenance-gate: system directive row verification (CTXBORITEK919)', (
 
     it('the mapping is exactly newline -> one space, nothing else', () => {
       expect(paneOneLine('a\r\nb\nc  d')).toBe('a b c  d')
+      expect(paneOneLine('a\tb\x01c\x02d\x7fe')).toBe('a b c d e')
     })
 
     it('the live bug: a single-line row delivered through the pane is VERIFIED (header + space + body)', () => {
