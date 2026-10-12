@@ -61,7 +61,7 @@ def gates(title: str, text: str) -> list:
     return bad
 
 def vault(key: str) -> str:
-    tok = open(os.path.expanduser("~/ClaudeClaw/store/.dashboard-token")).read().strip()
+    tok = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "store", ".dashboard-token")).read().strip()
     req = urllib.request.Request(f"http://localhost:3420/api/vault/{key}",
                                  headers={"Authorization": f"Bearer {tok}"})
     with urllib.request.urlopen(req, timeout=10) as r:
@@ -92,7 +92,10 @@ def main() -> int:
               file=sys.stderr)
         return 3
 
-    key = vault("MARVEEN_IO_API_KULCS")
+    # The key lives in store/.marveen-io-key (the vault has no MARVEEN_IO_API_KULCS entry).
+    key_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "store", ".marveen-io-key")
+    key = open(key_path).read().strip() if os.path.exists(key_path) else vault("MARVEEN_IO_API_KULCS")
     if not key:
         print("STOP: nincs API-kulcs a vaultban", file=sys.stderr)
         return 4

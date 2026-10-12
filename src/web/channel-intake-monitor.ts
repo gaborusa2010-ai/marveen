@@ -112,15 +112,20 @@ interface TelegramWebhookInfoBody {
  * verdict on our credentials, so it reads as missing evidence exactly like
  * status 0 does. Only a 4xx (401 unauthorized, 404 bot deleted) is Telegram
  * actually refusing the token, and that still alerts.
+ *
+ * 429 is the one 4xx that is not about the token, and it BIT US on 2026-10-09
+ * 02:19: Margo's probe got "Too Many Requests: retry after 5" and the owner was
+ * told the token was refused. A rate limit says "ask later", not "who are you",
+ * so it reads as missing evidence like a 5xx.
  */
 export function parseIntakeProbe(status: number, body: unknown): IntakeProbe {
   if (status === 0) {
     return { reachable: false, tokenOk: true, pendingUpdates: null, webhookUrl: null, lastErrorMessage: null }
   }
   const parsed = (body ?? {}) as TelegramWebhookInfoBody
-  if (status >= 500) {
+  if (status >= 500 || status === 429) {
     // Keep the upstream text: it is what tells a later reader this was a 502
-    // and not a silent drop.
+    // or a 429 and not a silent drop.
     return {
       reachable: false,
       tokenOk: true,

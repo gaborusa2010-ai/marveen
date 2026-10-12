@@ -89,12 +89,20 @@ CHAT_ID = "8547011582"
 
 
 def _tg_env():
-    """Bot token file: install-scoped first (#915), legacy HOME as fallback.
+    """Bot token file: Ariel's bot first, then install-scoped (#915), then HOME.
+
+    Auctions are Ariel's job, so the warning goes out through Ariel's bot. The
+    owner asked why it came from the main bot (tg 7128, 2026-10-11: "ez az
+    Ariel dolga,mit keres itt?"). The main-bot paths stay as a fallback so a
+    missing Ariel token does not silently swallow a closing warning.
 
     Measured 2026-09-16: ~/.claude/channels was empty while the real token sat
     in <install>/.claude/channels/telegram/.env, so this module could not send
     anything. The shell senders (scripts/limit-monitor.sh) already tried both.
     """
+    ariel = os.path.join(REPO, "agents", "ariel", ".claude", "channels", "telegram", ".env")
+    if os.path.exists(ariel):
+        return ariel
     local = os.path.join(REPO, ".claude", "channels", "telegram", ".env")
     if os.path.exists(local):
         return local

@@ -58,6 +58,16 @@ curl -s -X PUT "http://localhost:3420/api/memories/<id>" \
 curl -s -H "Authorization: Bearer $T" \
   "http://localhost:3420/api/memories?agent=marveen&q=KULCSSZÓ"
 
+# JELENTÉS SZERINTI KERESÉS (a "tudástár"): mode=hybrid. Kulcsszó (FTS) + vektor
+# (nomic-embed-text, helyi ollama), mondattal is lehet kérdezni, és olyat is megtalál,
+# amiben a szó nem szerepel szó szerint. Mérve 2026-10-08 (kártya #449, e4d68fbd):
+# 1195 emlékből 1192-nek van embeddingje; "a mentes nem futott le soha" -> a heti
+# mentés hibás ütemezéséről szóló cold emlék, fejléc: fts=2; vector=6; relaxed=false.
+# A fejlécben a vector=N mutatja, hogy a vektor-ág tényleg futott.
+curl -s -G -D /tmp/mem-fejlec-marveen.txt -H "Authorization: Bearer $T" \
+  --data-urlencode "agent=marveen" --data-urlencode "q=TELJES MONDAT" \
+  --data-urlencode "mode=hybrid" "http://localhost:3420/api/memories"
+
 # HARMADIK CSAPDA, mérve 2026-09-04: NE tedd a keresés mellé a `&category=warm`-ot.
 # Ez a példa nyolc helyen állt így (mind az öt ágens CLAUDE.md-je, ez a fájl, a
 # CLAUDE.md sablon és a scaffold, ami minden ÚJ ágensnek beleírja), és rossz

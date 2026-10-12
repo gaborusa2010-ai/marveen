@@ -116,6 +116,25 @@ setup; : > "$TMP/base/store/night-briefing-anorak.txt.sent-19990101-230000"
 MSG_RESULT=ok run > "$TMP/out"
 has "regi .sent- mellett tovabbra is jelez" "eligazitas-hiany jelezve"
 
+# STANDING1010 (2026-10-10): eligazitas-fajl nelkul az ALLANDO eligazitas kimegy
+# az agensnek, es MARAD (sosem nyugdijazodik); a fo-agens jelzese tovabbra is megy.
+setup; printf 'allando\n' > "$TMP/base/store/standing-briefing-anorak.txt"
+MSG_RESULT=ok run > "$TMP/out"
+has "allando eligazitas kimegy, ha nincs napi fajl" "allando eligazitas kikuldve"
+has "allando eligazitas mellett is jelez a fo-agensnek" "eligazitas-hiany jelezve"
+[ -s "$TMP/base/store/standing-briefing-anorak.txt" ] && ok "az allando eligazitas fajlja MARAD" || no "az allando fajlnak maradnia kell"
+
+setup; printf 'allando\n' > "$TMP/base/store/standing-briefing-anorak.txt"
+MSG_RESULT=fail run > "$TMP/out"
+has "allando eligazitas FAIL (exit 0!) -> 'NEM igazolt'" "allando eligazitas NEM igazolt"
+
+setup; MSG_RESULT=ok run > "$TMP/out"
+grep -q "allando eligazitas" "$TMP/out" && no "allando fajl nelkul nem szabad allando kuldest jelenteni" || ok "allando fajl nelkul nincs allando kuldes"
+
+setup; printf 'napi\n' > "$TMP/base/store/night-briefing-anorak.txt"; printf 'allando\n' > "$TMP/base/store/standing-briefing-anorak.txt"
+MSG_RESULT=ok run > "$TMP/out"
+grep -q "allando eligazitas" "$TMP/out" && no "napi fajl mellett az allando NEM megy" || ok "napi fajl mellett az allando nem megy ki"
+
 echo "==============================================================="
 echo "Results: $PASS/$((PASS+FAIL)) passed"
 [ "$FAIL" -gt 0 ] && exit 1

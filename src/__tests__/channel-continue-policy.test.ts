@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { decideContinueFlag, verifyContinueLaunch, CONTINUE_MIN_CLI, type ContinueDecisionInput } from '../web/channel-continue-policy.js'
+import { decideContinueFlag, estimateResumeReattachPct, verifyContinueLaunch, CONTINUE_MIN_CLI, type ContinueDecisionInput } from '../web/channel-continue-policy.js'
 
 // CONTRESUME922 narrowing (approved 2026-09-23 with three conditions). The
 // measurement: on Claude Code 2.1.280 a hand-launched --continue session of a
@@ -29,6 +29,22 @@ describe('decideContinueFlag', () => {
     expect(decideContinueFlag({ ...measured, priorContextPct: 0.6, guardActPct: 0.9 }).useContinue).toBe(true)
     expect(decideContinueFlag({ ...measured, priorContextPct: null, guardActPct: 0.9 }).useContinue).toBe(true)
     expect(decideContinueFlag({ ...measured, priorContextPct: 1.2, guardActPct: null }).useContinue).toBe(true)
+  })
+  it('#251: a resume must leave first-turn headroom below the threshold', () => {
+    // anorak 2026-10-07 23:00: resumed at 85.6%, guard handoff two minutes later.
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.856, guardActPct: 0.9 })).toMatchObject({ useContinue: false, reason: expect.stringContaining('first-turn headroom') })
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.89155, guardActPct: 0.9 }).useContinue).toBe(false)
+    // forgacs 2026-10-09 03:00 (78.5%) and cody 2026-10-08 03:00 (79.2%) ran for hours: still resumed
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.78471, guardActPct: 0.9 }).useContinue).toBe(true)
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.79155, guardActPct: 0.9 }).useContinue).toBe(true)
+  })
+  it('#251: a changed instruction block counts against the headroom', () => {
+    // anorak 2026-10-08 23:00: resumed at 68.5%, the re-attached block (~36%) pushed it past 100%.
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.685, guardActPct: 0.9, resumeReattachPct: 0.33 })).toMatchObject({ useContinue: false, reason: expect.stringContaining('re-attached instructions') })
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.685, guardActPct: 0.9, resumeReattachPct: 0 }).useContinue).toBe(true)
+    expect(decideContinueFlag({ ...measured, priorContextPct: 0.3, guardActPct: 0.9, resumeReattachPct: 0.33 }).useContinue).toBe(true)
+    // unmeasured fill: the estimate alone never forces a fresh launch
+    expect(decideContinueFlag({ ...measured, priorContextPct: null, guardActPct: 0.9, resumeReattachPct: 0.9 }).useContinue).toBe(true)
   })
   it('the measured shape resumes: telegram + fleet token + no launch-secret + CLI >= floor', () => {
     expect(decideContinueFlag(measured).useContinue).toBe(true)
@@ -87,5 +103,33 @@ describe('the launch path is wired to the policy', () => {
     expect(block).toContain('probeChannelPluginLiveness(pid, agentProvider, name)')
     expect(block).toContain("['kill-session', '-t', exactTmuxTarget(session)]")
     expect(block).toContain('startAgentProcess(name, { fresh: true })')
+  })
+})
+
+describe('estimateResumeReattachPct (#251)', () => {
+  const files: Record<string, { mtimeMs: number; size: number }> = {
+    '/t/a.jsonl': { mtimeMs: 1000, size: 1 },
+    '/t/b.jsonl': { mtimeMs: 2000, size: 1 },
+    '/root/CLAUDE.md': { mtimeMs: 1500, size: 60_000 },
+    '/agent/CLAUDE.md': { mtimeMs: 1800, size: 40_000 },
+  }
+  const stat = (p: string) => files[p] ?? null
+  const listJsonl = () => ['/t/a.jsonl', '/t/b.jsonl']
+  const base = { instructionFiles: ['/root/CLAUDE.md', '/agent/CLAUDE.md', '/missing/MEMORY.md'], transcriptDir: '/t', limitTokens: 200_000, stat, listJsonl }
+
+  it('is 0 when every instruction file is older than the newest transcript', () => {
+    expect(estimateResumeReattachPct(base)).toBe(0)
+  })
+  it('counts the WHOLE block when any one file changed after the last turn', () => {
+    const changed: Record<string, { mtimeMs: number; size: number }> = { ...files, '/agent/CLAUDE.md': { mtimeMs: 2500, size: 40_000 } }
+    expect(estimateResumeReattachPct({ ...base, stat: (p: string) => changed[p] ?? null })).toBeCloseTo(100_000 / 2 / 200_000)
+  })
+  it('cannot tell without a transcript or a limit', () => {
+    expect(estimateResumeReattachPct({ ...base, listJsonl: () => [] })).toBeNull()
+    expect(estimateResumeReattachPct({ ...base, limitTokens: null })).toBeNull()
+  })
+  it('is wired into the launch decision', () => {
+    expect(PROCESS_SRC).toContain('resumeReattachPct = estimateResumeReattachPct(')
+    expect(PROCESS_SRC).toMatch(/decideContinueFlag\(\{[\s\S]*?resumeReattachPct/)
   })
 })

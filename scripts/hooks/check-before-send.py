@@ -51,6 +51,18 @@ UNVERIFIED_LINE = re.compile(
     r"\[nem ellen|unverified|not\s+verified|not\s+checked",
     re.I)
 
+# A reply that hands the owner a list of OPEN items. Measured 2026-10-11 16:21 BST
+# (owner msg 7355, "megint nem ellenorzod le magad"): the Checked block listed only
+# the two claims I HAD measured; the to-do list (two items already done) was added
+# from memory and simply never written into the block. A gate that only reads
+# admitted gaps cannot see an omitted claim, so for this reply shape it asks for
+# evidence instead: a live board/notes read in the same turn.
+OPEN_LIST = re.compile(
+    r"list[aá](m|r[oó]l)\b|list[aá]n\s+(([ií]gy|m[eé]g)\b|maradt)|m[eé]g\s+(ott\s+van|nyitva)|"
+    r"nyitott\s+(k[aá]rty|t[eé]tel|feladat|teend)",
+    re.I)
+BOARD_READ = re.compile(r"/api/kanban|/api/notes|jegyzetek\.py")
+
 
 def log(entry: dict) -> None:
     try:
@@ -105,6 +117,10 @@ def texts_since_turn_start(path: str) -> list:
                 out.append(b["text"])
             # The usable carrier: a Write of CHECKED_FILE. Its content is in the
             # tool_use input, which IS persisted before the next tool runs.
+            if b.get("type") == "tool_use" and b.get("name") == "Bash":
+                cmd = str((b.get("input") or {}).get("command", ""))
+                if BOARD_READ.search(cmd):
+                    out.append("\x00BOARD_READ")
             if b.get("type") == "tool_use" and b.get("name") == "Write":
                 inp = b.get("input") or {}
                 if os.path.basename(str(inp.get("file_path", ""))) == CHECKED_FILE:
@@ -150,6 +166,14 @@ def main() -> int:
                 + "\nA gazda dontese (msg 5856): eloszor megnezed, utana valaszolsz; a "
                 "'nem neztem meg' az uzenetben NEM megoldas, es a kihagyas sem (msg 5859: "
                 "'utana ugyis meg kell nezzed'). Ellenorizd MOST, es frissitsd a Checked: blokkot.")
+        if OPEN_LIST.search(reply) and "\x00BOARD_READ" not in texts:
+            log({"outcome": "block-open-list-unread", "reply_len": len(reply)})
+            return block(
+                "BLOKKOLVA (check-before-send): a valaszban nyitott tetelek listaja all, de "
+                "ebben a korben nem futott kanban- vagy jegyzet-lekerdezes (/api/kanban, "
+                "/api/notes, jegyzetek.py). A lista fejbol jott, es 10-11-en ket kesz tetelt "
+                "adott at nyitottkent (gazda msg 7355). Kerdezd le a tablat MOST, vesd ossze "
+                "minden tetellel, es ird be a Checked: blokkba.")
         log({"outcome": "allow", "gaps": len(gaps), "reply_len": len(reply)})
         return 0
     except Exception as exc:

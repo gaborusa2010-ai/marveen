@@ -23,6 +23,8 @@
 //   3. after a `--continue` launch the system verifies gates (b) bun poller and
 //      (c) bot.pid within a window, and falls back to a fresh launch when they
 //      do not appear -- a silently deaf channel agent costs more than a lost context.
+import { readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { compareVersions } from '../claude-cli-support.js'
 
 /** The measured floor: the regression was observed on 2.1.193 and absent on 2.1.280. */
@@ -30,6 +32,23 @@ export const CONTINUE_MIN_CLI = '2.1.280'
 /** How long a resumed session gets to bring its plugin up before the fresh fallback. */
 export const CONTINUE_VERIFY_WINDOW_MS = 90_000
 export const CONTINUE_VERIFY_INTERVAL_MS = 3_000
+/**
+ * Headroom a resume must leave below the guard handoff threshold. The first
+ * resumed turn is not free: the wake prompt, the briefing and its tool output
+ * land on top of the old context. MEASURED (anorak, Anorak's #251 retro,
+ * 2026-10-08): resumed at 85.6% on 10-07 23:00, at 97% two minutes later, so
+ * the guard handed it off with a stale HANDOFF.md. Resumes at 78-79%
+ * (forgacs 10-09 03:00, cody 10-08 03:00) ran for hours.
+ */
+export const RESUME_HEADROOM_PCT = 0.10
+/**
+ * Bytes of instruction files per context token when Claude Code re-attaches
+ * them on a resume. Calibrated on the one measured re-attach (anorak 10-08
+ * 23:01, `instructions` attachment, `changed: true`): ~131k chars of
+ * CLAUDE.md + agent CLAUDE.md + MEMORY.md moved the context by ~72k tokens.
+ * Rounded DOWN so the estimate errs towards a fresh launch.
+ */
+export const REATTACH_BYTES_PER_TOKEN = 2
 
 export interface ContinueDecisionInput {
   hasPriorSession: boolean
@@ -52,6 +71,10 @@ export interface ContinueDecisionInput {
   /** The guard's handoff threshold (actPct) for this agent, null when the
    *  guard is not enabled for it. */
   guardActPct?: number | null
+  /** Estimated extra fill (0..1 of the guard limit) a resume adds because an
+   *  instruction file changed after the prior session's last turn and Claude
+   *  Code re-attaches the whole instruction block. 0/null when nothing changed. */
+  resumeReattachPct?: number | null
   /**
    * Co-listen providers loaded next to the primary (AGENTEXTRACH1006). With a
    * channel-having primary they ride its decision (and the post-launch verify
@@ -76,6 +99,18 @@ export function decideContinueFlag(i: ContinueDecisionInput): ContinueDecision {
   // the guard would hand off on its next sweep anyway, so do not resume it.
   if (i.priorContextPct != null && i.guardActPct != null && i.priorContextPct >= i.guardActPct) {
     return { useContinue: false, reason: `prior session at ${Math.round(i.priorContextPct * 100)}% context, at/above the guard handoff threshold ${Math.round(i.guardActPct * 100)}% -- resuming it would re-adopt a session the guard abandons` }
+  }
+  // #251 retro: below the threshold is not enough. A resume that lands within
+  // a few minutes of the threshold (first-turn growth, or the re-attached
+  // instruction block after a CLAUDE.md change) is handed off by the guard
+  // with a stale HANDOFF.md -- a fresh launch is cheaper and loses less.
+  if (i.priorContextPct != null && i.guardActPct != null) {
+    const reattach = i.resumeReattachPct ?? 0
+    const projected = i.priorContextPct + RESUME_HEADROOM_PCT + reattach
+    if (projected >= i.guardActPct) {
+      const parts = `${Math.round(i.priorContextPct * 100)}% + ${Math.round(RESUME_HEADROOM_PCT * 100)}% first-turn headroom` + (reattach > 0 ? ` + ${Math.round(reattach * 100)}% re-attached instructions (changed since the last turn)` : '')
+      return { useContinue: false, reason: `prior session would resume at ${parts} = ${Math.round(projected * 100)}%, at/above the guard handoff threshold ${Math.round(i.guardActPct * 100)}%` }
+    }
   }
   const extras = i.extraProviders ?? []
   if (!i.hasChannel && extras.length === 0) return { useContinue: true, reason: 'channel-less agent keeps its context' }
@@ -119,4 +154,45 @@ export async function verifyContinueLaunch(deps: {
     if (now() - started >= windowMs) return { outcome: 'timeout', polls, elapsedMs: now() - started }
     await sleep(intervalMs)
   }
+}
+
+/**
+ * #251: estimate how much a `--continue` resume adds because an instruction
+ * file changed after the prior session's last turn. Claude Code then
+ * re-attaches the WHOLE instruction block (every loaded CLAUDE.md and the
+ * MEMORY.md index), not just the changed file -- measured once, anorak
+ * 2026-10-08 23:01 (`instructions` attachment, `changed: true`). That trigger
+ * is an inference from the attachment, not read from Claude Code's source,
+ * so the estimate only ever pushes towards a fresh launch.
+ *
+ * `instructionFiles` are the files the agent loads; missing ones are skipped.
+ * Returns 0 when nothing changed after the newest transcript, null when it
+ * cannot tell (no transcript, no limit).
+ */
+export function estimateResumeReattachPct(i: {
+  instructionFiles: readonly string[]
+  transcriptDir: string
+  limitTokens: number | null
+  stat?: (p: string) => { mtimeMs: number; size: number } | null
+  listJsonl?: (dir: string) => string[]
+}): number | null {
+  if (!i.limitTokens || i.limitTokens <= 0) return null
+  const stat = i.stat ?? ((p: string) => { try { const s = statSync(p); return { mtimeMs: s.mtimeMs, size: s.size } } catch { return null } })
+  const listJsonl = i.listJsonl ?? ((dir: string) => { try { return readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f)) } catch { return [] } })
+  let lastTurn: number | null = null
+  for (const f of listJsonl(i.transcriptDir)) {
+    const s = stat(f)
+    if (s && (lastTurn === null || s.mtimeMs > lastTurn)) lastTurn = s.mtimeMs
+  }
+  if (lastTurn === null) return null
+  let changed = false
+  let bytes = 0
+  for (const f of i.instructionFiles) {
+    const s = stat(f)
+    if (!s) continue
+    bytes += s.size
+    if (s.mtimeMs > lastTurn) changed = true
+  }
+  if (!changed) return 0
+  return bytes / REATTACH_BYTES_PER_TOKEN / i.limitTokens
 }

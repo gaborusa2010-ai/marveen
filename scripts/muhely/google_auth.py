@@ -41,6 +41,9 @@ REDIRECT = "http://localhost"
 # gmail.modify: reading enquiries does not require the power to delete mail.
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    # gmail.modify: labels/filters/archive for the inbox clean-up (#462, owner tg 7373).
+    # It cannot permanently delete mail; that needs the full mail.google.com scope.
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive",
@@ -50,6 +53,7 @@ SCOPES = [
 
 SCOPE_PLAIN = {
     "gmail.readonly": "beérkező levelek olvasása",
+    "gmail.modify": "levelek címkézése, archiválása (végleges törlés nélkül)",
     "gmail.send": "levél küldése a nevedben",
     "calendar": "naptár olvasása és írása",
     "drive": "Drive fájlok olvasása és írása",

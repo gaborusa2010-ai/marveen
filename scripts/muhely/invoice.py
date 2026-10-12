@@ -370,7 +370,9 @@ def render(kind, job, business, out_path):
     if vat_no:
         total_row(f"VAT @ {rate:g}%", vat); y -= 14
     if cis:
-        total_row(f"CIS @ {cis_rate:g}% (labour)", -cis); y -= 14
+        # No "(labour)" suffix: the owner's decision, Telegram msg 913, 2026-10-11:
+        # "a CIS melle miert van odairva, hogy labor? Az nem kell oda..."
+        total_row(f"CIS @ {cis_rate:g}%", -cis); y -= 14
     total_row("Total", total, bold=True, size=11); y -= 16
 
     if deposit:

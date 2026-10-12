@@ -296,7 +296,21 @@ def main():
         return 4
 
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    shot_prefix = os.path.join(OUTDIR, f"{stamp}-{dom.replace('.', '_')}")
+    # Two runs on the same host in the same second used to share one name, and
+    # the second silently overwrote the first (Margo, 2026-10-10 19:05:58, two
+    # parallel makerworld fetches). The .txt is claimed with O_EXCL up front, and
+    # a taken name gets a -2, -3 ... suffix; the shots share the claimed prefix.
+    os.makedirs(OUTDIR, exist_ok=True)
+    base = os.path.join(OUTDIR, f"{stamp}-{dom.replace('.', '_')}")
+    shot_prefix, n = base, 1
+    while True:
+        try:
+            os.close(os.open(shot_prefix + ".txt", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            n += 1
+            shot_prefix = f"{base}-{n}"
+    path = shot_prefix + ".txt"
     cmd = ["node", RENDER, a.url]
     if a.shots:
         os.makedirs(OUTDIR, exist_ok=True)
@@ -309,11 +323,16 @@ def main():
         os.makedirs(OUTDIR, exist_ok=True)
         cmd += ["--actions", shot_prefix + "-act", json.dumps(steps_in)]
     # Five views at ~4 s each plus a reload do not fit the plain two-minute cap.
-    rr = subprocess.run(cmd, capture_output=True, text=True,
-                        timeout=480 if steps_in else 300 if a.shots else 120)
+    try:
+        rr = subprocess.run(cmd, capture_output=True, text=True,
+                            timeout=480 if steps_in else 300 if a.shots else 120)
+    except BaseException:
+        os.remove(path)  # an empty claimed .txt must not read as a fetched page
+        raise
     if rr.returncode != 0:
         print(f"A renderelés elakadt (exit {rr.returncode}): {rr.stderr.strip()[:400]}",
               file=sys.stderr)
+        os.remove(path)
         return 5
     # The log line goes in ONLY on a fetch that actually happened, and it goes in
     # BEFORE we report success: a page we pulled but did not count is exactly the
@@ -330,9 +349,9 @@ def main():
         data = json.loads(rr.stdout)
     except Exception:
         print("A renderelo nem ertelmezheto JSON-t adott.", file=sys.stderr)
+        os.remove(path)
         return 5
 
-    path = os.path.join(OUTDIR, f"{stamp}-{dom.replace('.', '_')}.txt")
     body = data.get("text") or ""
     links = data.get("links") or []
     # The links section is OPT-IN, and the default stays exactly as it was: a page

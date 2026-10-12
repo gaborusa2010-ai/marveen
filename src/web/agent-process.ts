@@ -61,7 +61,7 @@ import {
 } from './ssh-tmux.js'
 import { parseTelegramToken } from './telegram.js'
 import { getProvider, getProviderType, channelStateDir, readChannelToken, type ChannelProviderType } from '../channel-provider.js'
-import { decideContinueFlag, verifyContinueLaunch } from './channel-continue-policy.js'
+import { decideContinueFlag, estimateResumeReattachPct, verifyContinueLaunch } from './channel-continue-policy.js'
 import { buildChannelStateFence } from './channel-state-fence.js'
 import { measureClaudeCliVersion } from './claude-cli-version.js'
 import { decideStateObserver, stateObserverLaunchEnv } from './state-observer.js'
@@ -2482,6 +2482,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // would be a cycle.
     let priorContextPct: number | null = null
     let guardActPct: number | null = null
+    let resumeReattachPct: number | null = null
     if (hasPriorSession && !opts.fresh) {
       try {
         const { readContextGuardConfig } = await import('./context-guard-store.js')
@@ -2490,6 +2491,20 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
           const { measurePct } = await import('./context-guard-runner.js')
           guardActPct = guardCfg.actPct
           priorContextPct = measurePct(name, guardCfg.limitTokens)
+          // #251: the instruction files this agent loads. A sub-agent dir under
+          // PROJECT_ROOT also loads the root CLAUDE.md (Claude Code walks up),
+          // and the MEMORY.md index lives under either project slug.
+          const underRoot = (dir + '/').startsWith(PROJECT_ROOT + '/')
+          resumeReattachPct = estimateResumeReattachPct({
+            instructionFiles: [
+              ...(underRoot && dir !== PROJECT_ROOT ? [join(PROJECT_ROOT, 'CLAUDE.md')] : []),
+              join(dir, 'CLAUDE.md'),
+              join(projectsRoot, encodedProject, 'memory', 'MEMORY.md'),
+              ...(underRoot && dir !== PROJECT_ROOT ? [join(projectsRoot, encodeClaudeProjectDir(PROJECT_ROOT), 'memory', 'MEMORY.md')] : []),
+            ],
+            transcriptDir: join(projectsRoot, encodedProject),
+            limitTokens: guardCfg.limitTokens,
+          })
         }
       } catch (err) {
         logger.warn({ name, err }, 'prior-session context probe failed; resume decision falls back to the other conditions')
@@ -2498,10 +2513,10 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     const continueDecision = decideContinueFlag({
       hasPriorSession, fresh: !!opts.fresh, hasChannel, isMainAgent: name === MAIN_AGENT_ID,
       provider: agentProvider, usesLaunchSecret, fleetTokenLaunch: oauthTokenEnv !== '',
-      useMcpJsonForChannel, installedCli, priorContextPct, guardActPct, extraProviders: extraLaunch.providers,
+      useMcpJsonForChannel, installedCli, priorContextPct, guardActPct, resumeReattachPct, extraProviders: extraLaunch.providers,
     })
     if ((hasAnyChannel || priorContextPct !== null) && hasPriorSession && !opts.fresh) {
-      logger.info({ name, priorContextPct, guardActPct, useContinue: continueDecision.useContinue, reason: continueDecision.reason, installedCli }, 'channel agent resume decision')
+      logger.info({ name, priorContextPct, guardActPct, resumeReattachPct, useContinue: continueDecision.useContinue, reason: continueDecision.reason, installedCli }, 'channel agent resume decision')
     }
     const continueFlag = continueDecision.useContinue ? '--continue ' : ''
     const stateEnvVar = agentProvider === 'slack' ? 'SLACK_STATE_DIR' : agentProvider === 'discord' ? 'DISCORD_STATE_DIR' : agentProvider === 'googlechat' ? 'GOOGLECHAT_STATE_DIR' : agentProvider === 'teams' ? 'TEAMS_STATE_DIR' : 'TELEGRAM_STATE_DIR'

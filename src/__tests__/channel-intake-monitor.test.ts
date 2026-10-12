@@ -86,6 +86,15 @@ describe('parseIntakeProbe', () => {
     expect(r.lastErrorMessage).toBeNull()
   })
 
+  // 2026-10-09 02:19: "margo: a Telegram elutasitotta a bot tokent (Too Many
+  // Requests: retry after 5)". A rate limit is not a verdict on the token.
+  it('treats a Telegram 429 as missing evidence, not as a refused token', () => {
+    const r = parseIntakeProbe(429, { ok: false, error_code: 429, description: 'Too Many Requests: retry after 5' })
+    expect(r.tokenOk).toBe(true)
+    expect(r.reachable).toBe(false)
+    expect(r.lastErrorMessage).toBe('Too Many Requests: retry after 5')
+  })
+
   // The other direction: the fix must not silence a genuinely dead token.
   it('still marks the token invalid on 404 (bot deleted)', () => {
     const r = parseIntakeProbe(404, { ok: false, error_code: 404, description: 'Not Found' })

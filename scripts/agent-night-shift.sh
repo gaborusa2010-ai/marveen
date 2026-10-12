@@ -128,9 +128,30 @@ send_night_briefing() {
     # hianya esemeny, nem alapallapot. Es kifejezetten a fo-agensnek szol, mert
     # o az, aki meg tudja irni -- az ejszakai munkasnak ebbol nincs haszna.
     echo "$(date '+%F %T') $AGENT NINCS eligazitas-fajl ($BRIEF), ures prompton indul"
+    # STANDING1010 (2026-10-10, measured). Until 10-09 an empty start was rescued
+    # by the resume: the old session still carried the night's work. With the
+    # resume-headroom rule (live 10-09 07:5x) a big session starts FRESH, and on
+    # 10-09 23:00 Anorak got neither a briefing file nor a follow-up message
+    # (the notice below went to the main agent, who closed it without sending
+    # anything): it sat on an empty prompt until 06:30 and wrote no journal.
+    # A fixed, never-retired store/standing-briefing-<agent>.txt is the floor:
+    # the agent's own standing order, so an empty prompt cannot happen. The notice
+    # to the main agent still goes out -- the standing order is not today's news.
+    local STANDING="$BASE/store/standing-briefing-$AGENT.txt"
+    if [ -s "$STANDING" ]; then
+      if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen "$AGENT" - < "$STANDING" 2>&1)"; then
+        case "$OUT" in
+          *"OK id="*) echo "$(date '+%F %T') $AGENT allando eligazitas kikuldve ($OUT)" ;;
+          *) echo "$(date '+%F %T') $AGENT allando eligazitas NEM igazolt: $OUT" >&2 ;;
+        esac
+      else
+        echo "$(date '+%F %T') $AGENT allando eligazitas kuldes HIBA: $OUT" >&2
+      fi
+    fi
     if OUT="$(bash "$BASE/scripts/agent-msg.sh" marveen marveen - <<EOF
 [INDULAS ELIGAZITAS NELKUL] $AGENT elindult, es NINCS eligazitas-fajl: $BRIEF
-Ures prompton all. Ha van mit atadni neki, kuldd el kozvetlen uzenetben most.
+Allando eligazitas ($STANDING): $([ -s "$STANDING" ] && echo kiment || echo NINCS, ures prompton all).
+Ha van mai mondanivalo neki, kuldd el kozvetlen uzenetben most.
 Ezt a sort az agent-night-shift.sh irja, nem maga az agens.
 EOF
     )"; then

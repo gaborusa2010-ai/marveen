@@ -58,6 +58,10 @@ const EXPECTED: Record<string, string[]> = {
     // walked straight past it. PostToolUse is the event that cannot be
     // dodged by choosing a different tool.
     'persona-change-notify.py',
+    // Local (owner, Telegram msg 7441, 2026-10-11): line-cap-gate.py re-counts
+    // the capped files (SKILL.md, hand-written CLAUDE.md) after a Bash call,
+    // because a shell write cannot be predicted by the PreToolUse half.
+    'line-cap-gate.py',
   ],
   // A failed tool call fires PostToolUseFailure, never PostToolUse
   // (TOOLLOGVAKSIKER921): without this entry tool_call_log cannot hold a 0.
@@ -78,6 +82,9 @@ const EXPECTED: Record<string, string[]> = {
     // Local (owner, Telegram msg 5850, 2026-10-04): the Checked block has to
     // exist BEFORE a Telegram reply leaves, not only at the end of the turn.
     'check-before-send.py',
+    // Local (owner, Telegram msg 7441): a Write/Edit that would push a SKILL.md
+    // or a hand-written CLAUDE.md past 500 lines is denied before it lands.
+    'line-cap-gate.py',
   ],
   // Local addition on this install (reviewed 2026-09-16, v1.38.0 merge):
   // ledger-midturn-capture.py backfills mid-turn inbound rows into the
