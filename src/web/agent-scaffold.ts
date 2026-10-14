@@ -3347,7 +3347,7 @@ Memória mentés:
 curl -s -X POST ${dashboardOrigin}/api/memories -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"agent_id":"AGENT_NAME","content":"MIT","category":"CATEGORY","keywords":"kulcsszo1, kulcsszo2"}'
 
 Napi napló (append-only):
-curl -s -X POST ${dashboardOrigin}/api/daily-log -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"agent_id":"AGENT_NAME","content":"## HH:MM -- Tema\nMi tortent, mi lett az eredmeny"}'
+curl -s -X POST ${dashboardOrigin}/api/daily-log -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"agent_id":"AGENT_NAME","content":"[LEZART] Tema -- mi tortent, mi lett az eredmeny"}'
 
 **A NAPLO APPEND-ONLY, TEHAT EGY RESZEREDMENY VEGEREDMENYNEK LATSZIK. Ird oda,
 hogy LEZART vagy FOLYAMATBAN.** (Forgacs szabalya, a sajat esetebol, 2026-09-04.)
@@ -3358,8 +3358,8 @@ kozben megdolt.
 Nem tobb ket szonal a bejegyzes elejen, es kulonben egy delelotti reszeredmeny ugy
 nez ki a naploban, mint egy vegeredmeny:
 
-    ## 10:00 -- [FOLYAMATBAN] Lyford Road szabaslista ellenorzes. Eddig egyezik.
-    ## 11:15 -- [LEZART] Lyford Road szabaslista ujraszamolva, a 10:00-as sor MEGDOLT.
+    ## [FOLYAMATBAN] Lyford Road szabaslista ellenorzes. Eddig egyezik.
+    ## [LEZART] Lyford Road szabaslista ujraszamolva, a fenti FOLYAMATBAN sort MEGDONTI.
 
 Ha egy korabbi sorod ervenyet veszti, ne torold (nem is lehet): az UJ sorban mondd
 ki, MELYIK sort irja felul. Egy naplo, amiben ket egymasnak ellentmondo bejegyzes

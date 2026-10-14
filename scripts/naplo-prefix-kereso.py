@@ -37,16 +37,17 @@ ezt meg lehet nezni. De garancia ez sem: aki backtick nelkul ir le egy sablont
 egy magyarazo mondatban (rossz markdown, de elofordul), talalatot fog kapni.
 Ezert all a kimenetben minden talalat SORA is.
 """
-import re, sys, os
+import re, sys, os, glob
 
 MINTA = re.compile(r'(?:^|"|\\n)\s*##\s*(?:\d{2}:\d{2}|HH:MM)\s*--')
 
-ALAP = [
-    'CLAUDE.md',
-    'agents/anorak/CLAUDE.md', 'agents/cody/CLAUDE.md', 'agents/forgacs/CLAUDE.md',
-    'agents/margo/CLAUDE.md', 'agents/roxy/CLAUDE.md',
-    'docs/marveen-agent-reference.md',
-]
+# Glob, not a fixed list: a fixed list missed kiron, merlin and prospero
+# (Anorak's fleet retro, 2026-10-12) -- every new agent must be covered.
+ALAP = (
+    ['CLAUDE.md']
+    + sorted(glob.glob('agents/*/CLAUDE.md'))
+    + ['docs/marveen-agent-reference.md']
+)
 
 # ------------------------------------------------------------------------------
 # ONTESZT. `python3 scripts/naplo-prefix-kereso.py --onteszt`

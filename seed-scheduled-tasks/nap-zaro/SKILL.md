@@ -86,7 +86,7 @@ find ~/.claude/skills ~/.claude/scheduled-tasks {{INSTALL_DIR}}/.claude/skills -
    ```bash
 python3 -c "import json,sys; print(json.dumps({'agent_id':'{{MAIN_AGENT_ID}}','content':sys.stdin.read()}))" <<'TXT' \
   | curl -s -X POST "http://localhost:$PORT/api/daily-log" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d @-
-## HH:MM -- Napzáró (utolsó bejegyzés óta: HH:MM)
+[LEZART] Napzáró (utolsó bejegyzés óta: HH:MM)
 <témák szerinti összefoglaló>
 TXT
    ```
