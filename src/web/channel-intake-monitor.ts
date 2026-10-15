@@ -97,6 +97,8 @@ interface TelegramWebhookInfoBody {
   }
 }
 
+const TOKEN_REJECTED_STATUSES = new Set([401, 404])
+
 /**
  * Turn one getWebhookInfo response into a probe reading.
  *
@@ -123,16 +125,12 @@ export function parseIntakeProbe(status: number, body: unknown): IntakeProbe {
     return { reachable: false, tokenOk: true, pendingUpdates: null, webhookUrl: null, lastErrorMessage: null }
   }
   const parsed = (body ?? {}) as TelegramWebhookInfoBody
-  if (status >= 500 || status === 429) {
-    // Keep the upstream text: it is what tells a later reader this was a 502
-    // or a 429 and not a silent drop.
-    return {
-      reachable: false,
-      tokenOk: true,
-      pendingUpdates: null,
-      webhookUrl: null,
-      lastErrorMessage: parsed.description ?? null,
-    }
+  // Only 401/404 mean Telegram refused THIS token (revoked / malformed). A 5xx
+  // ("Bad Gateway") or 429 is Telegram's own hiccup and says nothing about the
+  // token: reading it as token-invalid paged the owner nightly around 03:11
+  // about bots whose getMe answered 200 a minute later (INTAKE5XX1008).
+  if (status !== 200 && !TOKEN_REJECTED_STATUSES.has(status)) {
+    return { reachable: false, tokenOk: true, pendingUpdates: null, webhookUrl: null, lastErrorMessage: parsed.description ?? null }
   }
   if (status !== 200 || parsed.ok !== true || !parsed.result) {
     return {

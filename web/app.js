@@ -640,7 +640,10 @@ function renderStaticI18n() {
       const nodes = [...el.childNodes]
       for (let i = nodes.length - 1; i >= 0; i--) {
         if (nodes[i].nodeType === 3 && nodes[i].textContent.trim()) {
-          nodes[i].textContent = ' ' + val
+          // Keep the node's trailing whitespace: it separates the label text from a
+          // following inline child such as the "(optional)" hint.
+          const trailing = nodes[i].textContent.match(/\s*$/)[0]
+          nodes[i].textContent = ' ' + val + trailing
           break
         }
       }
@@ -1058,11 +1061,6 @@ function setupAssigneeFilter() {
   syncOwnerFilterBtn()
 }
 
-// Project + assignee + label filters, independent of the priority quick-filter
-// Project + assignee filters only -- the baseline the label quick-filter
-// chip counts are computed against, independent of which labels are
-// currently active, so a chip's count stays meaningful whether it's the one
-// being toggled or not.
 // Does the card match the toolbar search box? Two modes, decided by the shape
 // of the query, so one field serves both needs:
 //   "295" / "#295"  -> exact card-number (seq) match, nothing else
@@ -1103,6 +1101,11 @@ function kanbanCardSorter() {
   return (a, b) => a.sort_order - b.sort_order
 }
 
+// Project + assignee + label filters, independent of the priority quick-filter
+// Project + assignee filters only -- the baseline the label quick-filter
+// chip counts are computed against, independent of which labels are
+// currently active, so a chip's count stays meaningful whether it's the one
+// being toggled or not.
 function kanbanCardMatchesBaseFilters(card) {
   if (!kanbanCardMatchesSearch(card)) return false
   if (kanbanProjectFilter && (card.project || '') !== kanbanProjectFilter) return false
@@ -1165,29 +1168,6 @@ function renderKanbanQuickFilters() {
     clearAll.textContent = t('kanban.filter.clear')
     clearAll.addEventListener('click', clearKanbanQuickFilters)
     row.appendChild(clearAll)
-  }
-}
-
-// One line next to the search box saying what the query actually found. Two
-// cases deserve their own words, because in both of them the board legitimately
-// shows nothing and the reason is not the query:
-//   - every match sits in a column the user hid (the chips above)
-//   - no match at all, which for a card number usually means it is archived,
-//     and the archived view is a separate tab that this search does not reach
-function renderKanbanSearchHint() {
-  const hintEl = document.getElementById('kanbanSearchHint')
-  if (!hintEl) return
-  if (!kanbanSearchQuery.trim()) { hintEl.textContent = ''; return }
-  const matches = kanbanCards.filter((c) => kanbanCardMatchesSearch(c))
-  const hiddenCount = matches.filter((c) => kanbanHiddenColumns.has(c.status)).length
-  if (matches.length === 0) {
-    hintEl.textContent = t('kanban.filter.search_none')
-  } else if (hiddenCount === matches.length) {
-    hintEl.textContent = t('kanban.filter.search_all_hidden', { n: matches.length })
-  } else if (hiddenCount > 0) {
-    hintEl.textContent = t('kanban.filter.search_some_hidden', { n: matches.length, h: hiddenCount })
-  } else {
-    hintEl.textContent = t('kanban.filter.search_hits', { n: matches.length })
   }
 }
 
@@ -1611,7 +1591,6 @@ function formatActiveTime(sec, form = 'long') {
   if (h >= 1) return t('kanban.active.h_m', { h, m })
   return t('kanban.active.m', { m })
 }
-
 function renderKanbanTotals(visibleCardIds) {
   const el = document.getElementById('kanbanTotals')
   if (!el) return
@@ -1621,6 +1600,67 @@ function renderKanbanTotals(visibleCardIds) {
     txt += ' ' + t('kanban.totals_filtered', { n: visibleCardIds.size })
   }
   el.textContent = txt
+}
+
+// One line next to the search box saying what the query actually found. Two
+// cases deserve their own words, because in both of them the board legitimately
+// shows nothing and the reason is not the query:
+//   - every match sits in a column the user hid (the chips above)
+//   - no match at all, which for a card number usually means it is archived,
+//     and the archived view is a separate tab that this search does not reach
+function renderKanbanSearchHint() {
+  const hintEl = document.getElementById('kanbanSearchHint')
+  if (!hintEl) return
+  if (!kanbanSearchQuery.trim()) { hintEl.textContent = ''; return }
+  const matches = kanbanCards.filter((c) => kanbanCardMatchesSearch(c))
+  // An ongoing card stays visible in the strip even when its status column is hidden.
+  const hiddenCount = matches.filter((c) => kanbanHiddenColumns.has(c.status) && !kanbanIsOngoing(c)).length
+  if (matches.length === 0) {
+    hintEl.textContent = t('kanban.filter.search_none')
+  } else if (hiddenCount === matches.length) {
+    hintEl.textContent = t('kanban.filter.search_all_hidden', { n: matches.length })
+  } else if (hiddenCount > 0) {
+    hintEl.textContent = t('kanban.filter.search_some_hidden', { n: matches.length, h: hiddenCount })
+  } else {
+    hintEl.textContent = t('kanban.filter.search_hits', { n: matches.length })
+  }
+}
+
+// Ongoing tasks (owner, Telegram msg 5611 and 5617, 2026-10-03): open cards labelled "Folyamatos" are standing duties (a weekly
+// check, a long-running watch), not work heading for "done". In the In progress
+// column they read as if they were about to finish, so they are pulled out of
+// their status column into a slim strip above the board. The card keeps its
+// real status, which can still be changed from its detail view; the strip is
+// not a drop target and nothing is ever posted with a virtual status.
+// The label is matched by name, case-insensitively: "Folyamatos" (the Hungarian
+// name the fleet uses) or "Ongoing".
+const KANBAN_ONGOING_LABELS = ['folyamatos', 'ongoing']
+
+function kanbanIsOngoing(card) {
+  return card.status !== 'done' && (card.labels || []).some((l) =>
+    l && typeof l.name === 'string' && KANBAN_ONGOING_LABELS.includes(l.name.trim().toLowerCase()))
+}
+
+function renderKanbanOngoing(cards) {
+  const strip = document.getElementById('kanbanOngoing')
+  const body = document.getElementById('kanbanOngoingBody')
+  if (!strip || !body) return
+  document.getElementById('countOngoing').textContent = cards.length
+  strip.hidden = cards.length === 0
+  body.innerHTML = ''
+  for (const card of cards.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0))) {
+    const chip = document.createElement('button')
+    chip.type = 'button'
+    chip.className = 'kanban-ongoing-chip'
+    const seq = document.createElement('span')
+    seq.className = 'kanban-ongoing-seq'
+    seq.textContent = card.seq ? '#' + card.seq : ''
+    chip.appendChild(seq)
+    chip.appendChild(document.createTextNode(' ' + (card.title || '')))
+    chip.title = card.title || ''
+    chip.addEventListener('click', () => showCardDetail(card))
+    body.appendChild(chip)
+  }
 }
 
 function renderKanban() {
@@ -1655,24 +1695,23 @@ function renderKanban() {
     if (parent.status === card.status) embeddedSubtaskIds.add(card.id)
   }
 
-  const grouped = { standing: [], planned: [], in_progress: [], waiting: [], testing: [], done: [] }
+  const grouped = { planned: [], in_progress: [], waiting: [], testing: [], done: [] }
+  const ongoing = []
   for (const card of kanbanCards) {
     if (embeddedSubtaskIds.has(card.id)) continue
     if (!visibleCardIds.has(card.id)) continue
-    if (kanbanIsStanding(card)) { grouped.standing.push(card); continue }
+    if (kanbanIsOngoing(card)) { ongoing.push(card); continue }
     if (grouped[card.status]) grouped[card.status].push(card)
   }
+  renderKanbanOngoing(ongoing)
 
   // Update counts (embedded subtasks don't count as separate cards)
-  document.getElementById('countStanding').textContent = grouped.standing.length
   document.getElementById('countPlanned').textContent = grouped.planned.length
   document.getElementById('countInProgress').textContent = grouped.in_progress.length
   document.getElementById('countTesting').textContent = grouped.testing.length
   document.getElementById('countWaiting').textContent = grouped.waiting.length
   document.getElementById('countDone').textContent = grouped.done.length
 
-  renderKanbanOngoing(grouped.standing)
-  delete grouped.standing
 
   const flatBoard = document.getElementById('kanbanBoard')
   const swimlaneBoard = document.getElementById('kanbanSwimlaneBoard')
@@ -1721,39 +1760,6 @@ function renderKanban() {
     flatBoard.hidden = true
     swimlaneBoard.hidden = false
     renderSwimlaneBoard(grouped, embeddedSubtaskIds)
-  }
-}
-
-// Ongoing tasks (owner, Telegram msg 5611 and 5617, 2026-10-03): open cards
-// carrying the "Folyamatos" label are pulled out of their status column, where
-// "in progress" read as if they were about to finish. A full column took too
-// much room for three cards, and "Álló" read as "stalled", so they now sit in a
-// slim strip of their own above the board. The card keeps its real status;
-// nothing is ever posted with a virtual status.
-const KANBAN_STANDING_LABEL = 'Folyamatos'
-function kanbanIsStanding(card) {
-  return card.status !== 'done' && (card.labels || []).some((l) => l && l.name === KANBAN_STANDING_LABEL)
-}
-
-function renderKanbanOngoing(cards) {
-  const strip = document.getElementById('kanbanOngoing')
-  const body = document.getElementById('kanbanOngoingBody')
-  if (!strip || !body) return
-  document.getElementById('countStanding').textContent = cards.length
-  strip.hidden = cards.length === 0
-  body.innerHTML = ''
-  for (const card of cards.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0))) {
-    const chip = document.createElement('button')
-    chip.type = 'button'
-    chip.className = 'kanban-ongoing-chip'
-    const seq = document.createElement('span')
-    seq.className = 'kanban-ongoing-seq'
-    seq.textContent = card.seq ? '#' + card.seq : ''
-    chip.appendChild(seq)
-    chip.appendChild(document.createTextNode(' ' + (card.title || '')))
-    chip.title = card.title || ''
-    chip.addEventListener('click', () => showCardDetail(card))
-    body.appendChild(chip)
   }
 }
 
@@ -1953,7 +1959,6 @@ function renderSwimlaneBoard(grouped, embeddedSubtaskIds) {
 
 // Map column status keys to their count-span IDs
 const WIP_COUNT_IDS = {
-  standing: 'countStanding',
   planned: 'countPlanned',
   in_progress: 'countInProgress',
   testing: 'countTesting',
@@ -2826,6 +2831,7 @@ async function renderCardBlockersSection(card) {
 }
 
 // === Card detail ===
+
 async function showCardDetail(card) {
   // Running number (#N) in the title bar, plus the stable hex id in the meta.
   const seqPrefix = card.seq != null ? `#${card.seq} ` : ''
@@ -16532,6 +16538,11 @@ const TU_MODEL_PRICING = {
   'claude-sonnet-4-5':   { in: 3.0,   out: 15.0,  cw: 3.75,  cr: 0.30 },
   'claude-fable-5':      { in: 10.0,  out: 50.0,  cw: 12.50, cr: 1.00 },
   'claude-mythos-5':     { in: 10.0,  out: 50.0,  cw: 12.50, cr: 1.00 },
+  // Haiku 5.5, from the official pricing page (2026-10-08): prompts up to 100k
+  // tokens 0.10 / 0.50 (5m cache write 0.125, hit 0.01); prompts over 100k
+  // tokens 0.50 / 2.50. This table holds one price per model, so the <=100k
+  // tier is used and spend on >100k prompts is understated.
+  'claude-haiku-5-5':    { in: 0.10,  out: 0.50,  cw: 0.125, cr: 0.01 },
   'claude-haiku-4-5':    { in: 1.0,   out: 5.0,   cw: 1.25,  cr: 0.10 },
   default:               { in: 3.0,   out: 15.0,  cw: 3.75,  cr: 0.30 },
 }
@@ -19499,7 +19510,7 @@ async function openResearchDoc(agent, name) {
 
     // Filter: cards that have a due_date
     // Standing tasks have no end, so they never go on the timeline (owner, msg 5611).
-    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date && !kanbanIsStanding(c))
+    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date && !kanbanIsOngoing(c))
 
     if (ganttOverdueOnly) {
       // Keep cards that are overdue OR due within 7 days
@@ -19779,6 +19790,10 @@ async function openResearchDoc(agent, name) {
 
   window._initGanttViewSwitcher = initGanttViewSwitcher
   window.renderGantt = renderGantt
+  // A direct #kanban load routes (switchPage) earlier in this file, before the
+  // initializer above exists, so that first call skipped it and the Board /
+  // Timeline / Archived buttons stayed dead. Catch up if the board is showing.
+  if (document.getElementById('kanbanPage')?.hidden === false) initGanttViewSwitcher()
 })()
 
 // VIDEOREVIEW1002: reveal the sidebar link to the review page only when the

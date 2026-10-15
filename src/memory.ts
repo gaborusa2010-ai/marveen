@@ -103,7 +103,7 @@ export async function saveConversationTurn(
   // Episodic memories come from daily digest and session checkpoints
   if (SEMANTIC_PATTERN.test(userMsg)) {
     const content = `Felhasznalo: ${userMsg.slice(0, 500)}\nAsszisztens: ${assistantMsg.slice(0, 500)}`
-    saveMemory(chatId, content, 'semantic')
+    saveMemory(chatId, content, 'semantic', undefined, MAIN_AGENT_ID)
     logger.debug({ chatId }, 'Szemantikus emlek mentve')
   }
   // Non-semantic turns are NOT saved individually -- they go into daily digest

@@ -812,6 +812,9 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
         return true
       }
     }
+    // PUT to in_progress clears but does not dispatch; /move remains the only
+    // dispatch path (KARTYADISPATCH1010). updateKanbanCard applies the shared
+    // dispatched_at clear; no fireKanbanDispatch call belongs here.
     if (updateKanbanCard(id, data, who.actor)) { json(res, { ok: true }); return true }
     json(res, { error: 'Kártya nem található' }, 404)
     return true
@@ -843,7 +846,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
       json(res, { error: `Unknown field(s): ${unknownMoveKeys.join(', ')}. Accepted: ${KANBAN_MOVE_FIELDS.join(', ')}` }, 400)
       return true
     }
-    const { status, sort_order, actor, wait } = moveBody as { status: Parameters<typeof moveKanbanCard>[1]; sort_order?: number; actor?: string; wait?: unknown }
+    const { status, sort_order, actor, wait } = moveBody as { status: Parameters<typeof moveKanbanCard>[1]; sort_order?: number; actor?: unknown; wait?: unknown }
     let reason = null
     if (wait !== undefined) {
       if (status !== 'waiting') { json(res, { error: 'Várakozási ok csak várakozó állapothoz adható meg' }, 400); return true }
@@ -925,7 +928,9 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   const kanbanCommentsMatch = path.match(/^\/api\/kanban\/([^/]+)\/comments$/)
   if (kanbanCommentsMatch && method === 'GET') {
     const cardId = decodeURIComponent(kanbanCommentsMatch[1])
-    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
+    // Same guard as the POST below: an empty array for a mistyped id reads as
+    // "this card has no comments", which is indistinguishable from a real answer.
+    if (!getKanbanCard(cardId)) { json(res, { error: `Kártya nem található: ${cardId}` }, 404); return true }
     json(res, getKanbanComments(cardId))
     return true
   }
@@ -1035,6 +1040,9 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
           id,
           title: st.title,
           description: st.description,
+          // The breakdown prompt allows a null assignee, and an ownerless child
+          // is easy to lose on the board; the parent's owner is almost always
+          // right for a piece of the same work, and is one click to change.
           assignee: st.assignee ?? parent.assignee ?? undefined,
           priority: (st.priority as any) ?? 'normal',
           project: parent.project ?? undefined,
