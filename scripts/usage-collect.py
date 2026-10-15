@@ -56,6 +56,7 @@ CONFIG = {
     "pace_min_elapsed_fraction": 0.15,      # below this elapsed fraction, skip OVER/UNDER (early-window noise)
     "hard_near_exhaustion": 0.92,           # used_fraction >= this -> backstop alert regardless of pace
     "pace_over_refire_minutes": 45,         # min gap between repeated ongoing OVERUSE alerts
+    "pace_over_refire_min_growth": 0.05,    # ...and usage must have grown this much since the last one
     "near_exhaustion_refire_minutes": 45,   # min gap between repeated ongoing near-exhaustion alerts
     "pace_under_refire_hours": 12,          # min gap between repeated ongoing UNDERUSE alerts
     "underuse_min_window_sec": 86400,       # UNDERUSE only makes sense for windows where unused
@@ -965,8 +966,18 @@ def compute_alerts(snapshot, state, now_utc=None):
             and proj_epoch is not None
             and proj_epoch < pace["resets_at"]
         )
-        if _should_fire(state, f"{scope_key}_over", cond_over, "cross_refire", now_ts,
-                         refire_seconds=CONFIG["pace_over_refire_minutes"] * 60):
+        # An ongoing OVERUSE only refires once usage has actually grown since
+        # the last alert. Without this a stale snapshot (Codex is read from the
+        # CLI's last session file) repeated the same 37% every 45 minutes.
+        over_key = f"{scope_key}_over"
+        prev = state.get(over_key, {})
+        refire_s = CONFIG["pace_over_refire_minutes"] * 60
+        if (cond_over and prev.get("active") and prev.get("last_used") is not None
+                and pace["used_fraction"] - prev["last_used"] < CONFIG["pace_over_refire_min_growth"]):
+            refire_s = float("inf")
+        if _should_fire(state, over_key, cond_over, "cross_refire", now_ts,
+                         refire_seconds=refire_s):
+            state[over_key]["last_used"] = pace["used_fraction"]
             proj_local, _ = fmt_reset(proj_epoch, now_utc)
             alerts.append(
                 f"ALERT: OVERUSE: {name} {used_pct:.0f}% used at {elapsed_pct:.0f}% elapsed "

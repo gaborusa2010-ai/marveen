@@ -189,7 +189,15 @@ if [ "$NOW" != "$OLD" ]; then
   exit 2
 fi
 if [ -n "$CONFLICTS" ]; then
-  state conflict "tartalmi utkozes: $CONFLICTS"
+  NEWSTATE="tartalmi utkozes: $CONFLICTS"
+  # Quiet repeat, same rule as the blocked branch: same conflict set as last
+  # tick -> state only, no wake-up (2026-10-14 it woke marveen every 15 min).
+  if [ "$PREV_RESULT" = "conflict" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
+    state conflict "$NEWSTATE"
+    echo "$TS CONFLICT (unchanged, not notified): $CONFLICTS" >&2
+    exit 0
+  fi
+  state conflict "$NEWSTATE"
   notify "$(printf '%s\n' \
     "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe fut a helyi munkaval." \
     "Erintett fajlok: $CONFLICTS" \

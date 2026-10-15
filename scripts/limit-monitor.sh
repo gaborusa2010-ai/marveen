@@ -148,6 +148,10 @@ if [ -s "$QUOTA_FILE" ] && command -v python3 >/dev/null 2>&1; then
       QSTATE="$STORE/.limit-monitor-quota-state"
       if [ "$QKEY" = "$(cat "$QSTATE" 2>/dev/null)" ]; then
         log "quota signal unchanged, already alerted"
+      elif [ "${LIMIT_MONITOR_QUOTA_TELEGRAM:-1}" = "0" ]; then
+        # Owner asked these off Telegram (tg 7610, 2026-10-13). Logged only; the
+        # stamp is NOT written, so re-enabling sends the current signal once.
+        log "quota signal (Telegram off, LIMIT_MONITOR_QUOTA_TELEGRAM=0): $QKEY $QTEXT"
       else
         # The stamp is written AFTER a confirmed delivery, never before: a failed
         # alert buried by its own suppression stamp is lost forever, and the next

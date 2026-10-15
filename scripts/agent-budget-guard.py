@@ -65,13 +65,25 @@ STATE = os.path.join(STORE, "agent-budget-guard.json")
 OVERRIDE = os.path.join(STORE, "agent-budget-override.json")
 
 
-def override_today(agent):
+def override_today(agent, daily_from=None):
+    """True if the agent is exempted for the day being counted.
+
+    With a --daily-from window the counted day runs from <hour>:00 to <hour>:00,
+    so between midnight and that hour it is still YESTERDAY's day. Comparing the
+    exemption with the calendar date let it expire at midnight while the window
+    kept counting (Anorak retro 2026-10-14: margo stopped at 00:06 despite
+    {"margo": "2026-10-13"}). The exemption therefore names the counted day.
+    """
     try:
         with open(OVERRIDE, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return False
-    return isinstance(data, dict) and data.get(agent) == datetime.now().strftime("%Y-%m-%d")
+    if daily_from is not None:
+        day = datetime.fromtimestamp(day_start(daily_from)).strftime("%Y-%m-%d")
+    else:
+        day = datetime.now().strftime("%Y-%m-%d")
+    return isinstance(data, dict) and data.get(agent) == day
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
@@ -174,6 +186,11 @@ def window_tokens(agent, hours, cache_read_weight=1.0, daily_from=None):
     total = 0
     files = 0
     last = 0.0
+    # Claude Code writes one JSONL line per content block of an API response,
+    # and EVERY such line carries the full usage of that response (same
+    # message.id / requestId). Summing lines counted each response 1.9-2.1x
+    # (Anorak retro 2026-10-14, measured on margo and cody). Count each once.
+    seen = set()
     if not os.path.isdir(d):
         # SILENTZERO901 (Forgacs, 2026-09-01): a missing project dir used to
         # return the same shape as a quiet agent -- 0 tokens, 0 files, exit 0,
@@ -210,8 +227,13 @@ def window_tokens(agent, hours, cache_read_weight=1.0, daily_from=None):
                                     continue
                             except ValueError:
                                 pass
-                        u = ((rec.get("message") or {}).get("usage")
-                             or rec.get("usage") or {})
+                        msg = rec.get("message") or {}
+                        key = msg.get("id") or rec.get("requestId")
+                        if key:
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                        u = (msg.get("usage") or rec.get("usage") or {})
                         for k in TOKEN_FIELDS:
                             v = int(u.get(k) or 0)
                             # A gazda dontese 2026-09-05: a plafon az 5 oras
@@ -442,7 +464,7 @@ def main(argv=None):
     if total < trigger:
         return 0
 
-    if override_today(a.agent):
+    if override_today(a.agent, a.daily_from):
         print(f"# {a.agent}: kuszob folott ({total}), de mara felmentve ({OVERRIDE}), nem allitom le",
               file=sys.stderr)
         return 0
