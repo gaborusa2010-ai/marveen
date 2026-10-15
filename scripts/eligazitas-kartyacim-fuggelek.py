@@ -71,6 +71,27 @@ def referenced(text):
     return out
 
 
+def mask_titles(text, cards_list):
+    """Blank out every open card's title that the briefing quotes verbatim.
+
+    A title can itself contain '#N' ("Build and launch utility website #1",
+    cards #475-477). Read from the raw text, that '#1' became a reference to
+    card #1 and earned a false "not found" line (Cody, msg 9402, 2026-10-13);
+    the day a card #1 is open it would get the WRONG title beside it. Masking
+    the quoted titles leaves only the numbers the prose itself names. A title
+    long enough to be cut by a generator is also matched on its [:90] prefix.
+    """
+    for c in cards_list:
+        t = (c.get("title") or "").strip()
+        if len(t) < 8 or "#" not in t:
+            continue
+        for cand in (t, t[:90]):
+            if cand in text:
+                text = text.replace(cand, " " * len(cand))
+                break
+    return text
+
+
 def main():
     if len(sys.argv) != 2:
         sys.stderr.write("usage: eligazitas-kartyacim-fuggelek.py <briefing-file>\n")
@@ -94,11 +115,14 @@ def main():
         return 0
 
     try:
-        by_seq = {c.get("seq"): c for c in cards()}
+        board = cards()
+        by_seq = {c.get("seq"): c for c in board}
     except Exception as exc:                      # noqa: BLE001 -- see CONTRACT
         sys.stderr.write("kartyalista nem jott meg (%s), az eligazitas valtozatlanul megy\n" % exc)
         sys.stdout.write(text)
         return 0
+
+    seqs = referenced(mask_titles(text, board))
 
     lines = []
     for n in seqs:

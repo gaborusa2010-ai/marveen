@@ -806,7 +806,7 @@ class TestComputeAlerts(unittest.TestCase):
 
     # --- de-dup --------------------------------------------------------------
 
-    def test_overuse_dedup_suppresses_immediate_repeat_then_refires_after_45min(self):
+    def test_overuse_dedup_suppresses_repeat_then_refires_after_45min_only_on_growth(self):
         resets_at = self._resets_at(self.WEEK, 0.2)  # fixed absolute reset instant
         window = {"seven_day": {"used_percent": 50, "resets_at": resets_at}}
         state = {}
@@ -819,10 +819,16 @@ class TestComputeAlerts(unittest.TestCase):
         second = uc.compute_alerts(self._snapshot(claude_windows=window), state, now_utc=soon)
         self.assertEqual(second, [])
 
-        # 50 min after the first fire: interval elapsed -- re-fires.
+        # 50 min after the first fire, usage unchanged (a stale snapshot): silent.
         later = self.NOW + timedelta(minutes=50)
         third = uc.compute_alerts(self._snapshot(claude_windows=window), state, now_utc=later)
-        self.assertTrue(any("OVERUSE" in a for a in third))
+        self.assertEqual(third, [])
+
+        # Interval elapsed AND usage grew by >= 5 points: re-fires.
+        grown = {"seven_day": {"used_percent": 56, "resets_at": resets_at}}
+        fourth = uc.compute_alerts(self._snapshot(claude_windows=grown), state,
+                                   now_utc=self.NOW + timedelta(minutes=55))
+        self.assertTrue(any("OVERUSE" in a for a in fourth))
 
     def test_underuse_dedup_throttles_for_12_hours(self):
         resets_at = self._resets_at(self.WEEK, 0.57)

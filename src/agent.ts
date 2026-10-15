@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { PROJECT_ROOT } from './config.js'
@@ -117,7 +118,44 @@ function resolveClaudeCodeBin(): string | undefined {
 // 'sdk' keeps the legacy Agent SDK `query` path (API billing) as an emergency
 // rollback via MARVEEN_AGENT_BACKEND=sdk.
 function agentBackend(): 'worker' | 'sdk' {
-  return (process.env.MARVEEN_AGENT_BACKEND || 'worker').toLowerCase() === 'sdk' ? 'sdk' : 'worker'
+  if ((process.env.MARVEEN_AGENT_BACKEND || 'worker').toLowerCase() === 'sdk') return 'sdk'
+  return apiCreditsKey() ? 'sdk' : 'worker'
+}
+
+// API-credits mode (2026-10-14, owner tg 7689): the Max plan's monthly API
+// credits expire unused, so while store/.anthropic-api-key exists the
+// background runAgent calls bill on that key instead of the subscription.
+// The key is handed ONLY to the SDK child (never to process.env), so no other
+// claude process starts billing on it. When the credits run out the SDK call
+// fails; that latches back to the subscription worker for the rest of this
+// process. Deleting the key file also switches back (read per call).
+export const API_CREDITS_KEY_FILE = join(PROJECT_ROOT, 'store', '.anthropic-api-key')
+let apiCreditsExhausted = false
+
+function apiCreditsKey(): string | null {
+  if (apiCreditsExhausted) return null
+  try {
+    const k = readFileSync(API_CREDITS_KEY_FILE, 'utf-8').trim()
+    return k.startsWith('sk-ant-') ? k : null
+  } catch {
+    return null
+  }
+}
+
+// Credit/billing failure of the API path -> fall back to the subscription.
+// Matched on the classifier reason or a thrown error message. An AUP block or
+// a timeout does not match and keeps its old handling.
+export function isApiCreditFailure(reason: string | undefined): boolean {
+  if (!reason) return false
+  return /credit balance|credits?\b.*(exhaust|insufficient|too low)|billing|api_error_status=(401|402|403)|invalid x-api-key|authentication_error/i.test(reason)
+}
+
+// Isolated config dir for the API-key SDK child: no installed plugins, so it
+// can never open a second Telegram long-poll (the bot-deaf failure mode).
+function apiCreditsEnv(key: string): Record<string, string | undefined> {
+  const dir = join(homedir(), '.marveen-api-credits', '.claude-config')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return { ANTHROPIC_API_KEY: key, CLAUDE_CODE_OAUTH_TOKEN: undefined, CLAUDE_CONFIG_DIR: dir }
 }
 
 export interface RunAgentOpts {
@@ -160,6 +198,15 @@ export async function runAgent(
     logger.error('runAgent: worker auth unrecoverable, falling back to SDK backend for this call (API billing)')
   }
   // --- legacy SDK path (rollback: MARVEEN_AGENT_BACKEND=sdk; API billing) ---
+  const creditsKey = apiCreditsKey()
+  if (creditsKey) {
+    env = { ...(env ?? {}), ...apiCreditsEnv(creditsKey) }
+  }
+  const fallBackToWorker = async (why: string) => {
+    apiCreditsExhausted = true
+    logger.error({ why }, 'runAgent: API credits unusable, switching back to the subscription worker for this process')
+    return runAgent(message, sessionId, onTyping, allowTools, cwd, undefined, opts)
+  }
   let newSessionId: string | undefined
   let resultText: string | null = null
   let blockedReason: string | undefined
@@ -183,7 +230,7 @@ export async function runAgent(
         ...(claudeCodeBin ? { pathToClaudeCodeExecutable: claudeCodeBin } : {}),
         ...(allowTools ? {} : { disallowedTools: DEFAULT_DISALLOWED_TOOLS }),
         ...(sessionId ? { resume: sessionId } : {}),
-        ...(env ? { env: { ...process.env, ...env } } : {}),
+        ...(env ? { env: Object.fromEntries(Object.entries({ ...process.env, ...env }).filter(([, v]) => v !== undefined)) } : {}),
       },
     })
 
@@ -217,6 +264,11 @@ export async function runAgent(
         resultText = `A feldolgozas tullepte a ${mins} perces idokorlatot. Probald rovidebben megfogalmazni, vagy bontsd tobb lepesre.`
       }
     } else {
+      if (creditsKey && isApiCreditFailure(String(err?.message ?? err))) {
+        clearTimeout(timeout)
+        if (typingInterval) clearInterval(typingInterval)
+        return fallBackToWorker(String(err?.message ?? err))
+      }
       logger.error({ err }, 'Agent hiba')
       throw err instanceof Error ? err : new Error(String(err))
     }
@@ -225,5 +277,8 @@ export async function runAgent(
     if (typingInterval) clearInterval(typingInterval)
   }
 
+  if (creditsKey && resultText == null && isApiCreditFailure(blockedReason)) {
+    return fallBackToWorker(blockedReason!)
+  }
   return { text: resultText, newSessionId, error: blockedReason }
 }

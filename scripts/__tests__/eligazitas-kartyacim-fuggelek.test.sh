@@ -55,6 +55,8 @@ CARDS = [
    "title": "A gazda megbizasa: hangok gyujtese a kollekcioba -- EGYELORE CSAK ANGOL ES MAGYAR"},
   {"seq": 240, "id": "30ac65fa", "status": "planned", "priority": "normal", "assignee": "anorak",
    "title": "ALLO MEGKOTES: a gazda ele csak AZNAP visszamert tetel mehet"},
+  {"seq": 475, "id": "aa475aa4", "status": "planned", "priority": "normal", "assignee": "cody",
+   "title": "Build and launch utility website #1 (Month 1)"},
 ]
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -128,6 +130,21 @@ OUT4="$(python3 "$HELPER" "$TMP/gone.txt" 2>&1)"
 has "it says the card is not among the OPEN cards" "$OUT4" "nem talalhato a NYITOTT kartyak kozott"
 has "and names archived as a possibility" "$OUT4" "archivalt"
 hasnt "it does NOT assert the card does not exist" "$OUT4" "NINCS ILYEN KARTYA"
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "(3b) A '#N' inside a quoted card TITLE is not a card reference"
+# ---------------------------------------------------------------------------
+# Cody, msg 9402, 2026-10-13: cards #475-477 are titled "... utility website #1"
+# and the appendix listed #1/#2/#3 as "not found". With a card #1 open it would
+# have printed the wrong title.
+printf 'Kartyak:\n  #475  planned normal  Build and launch utility website #1 (Month 1)\n' > "$TMP/titlehash.txt"
+OUT6="$(python3 "$HELPER" "$TMP/titlehash.txt" 2>&1)"
+has "the real reference #475 is still appended" "$OUT6" "[planned / normal / cody]"
+hasnt "the '#1' inside the title earns no line" "$OUT6" "#1     [nem talalhato"
+printf 'A #1-es kartyara is gondolj.\n' > "$TMP/prosehash.txt"
+OUT7="$(python3 "$HELPER" "$TMP/prosehash.txt" 2>&1)"
+has "but a '#1' the PROSE names is still looked up" "$OUT7" "#1     [nem talalhato"
 
 # ---------------------------------------------------------------------------
 echo ""
