@@ -151,9 +151,10 @@ describe('saveMemory agent_id (MAIN_AGENT_ID = orin)', () => {
     saveMemory('chat-digest', 'digest input two', 'episodic')
     const digest = await runDailyDigest('chat-digest')
     expect(digest).toBe('quokkadigest summary of the day')
-    const row = getDb().prepare("SELECT agent_id FROM memories WHERE content LIKE '[Napi naplo %' AND content LIKE '%quokkadigest%'")
+    // Local fork (DIARYSPLIT901): the digest goes to daily_logs, not to memories.
+    const row = getDb().prepare("SELECT agent_id FROM daily_logs WHERE content LIKE '%quokkadigest%'")
       .get() as { agent_id: string }
     expect(row.agent_id).toBe('orin')
-    expect(searchAgentMemories('orin', 'quokkadigest', 10).length).toBe(1)
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM memories WHERE content LIKE '%quokkadigest%'").get()).toEqual({ n: 0 })
   })
 })

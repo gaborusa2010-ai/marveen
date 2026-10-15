@@ -1568,29 +1568,6 @@ function renderKanbanTeamView() {
   host.appendChild(note)
 }
 
-// Card.active_seconds -> human text. Two forms: `long` for the detail panel,
-// `short` for the one-line chip on a team row.
-//
-// undefined means the card has no status-change history at all, which is NOT
-// the same as zero and must not render as "0m" -- the event table starts
-// mid-history, so an old card that never moved since would otherwise claim a
-// measured zero it has not got.
-function formatActiveTime(sec, form = 'long') {
-  if (sec === undefined || sec === null) return null
-  const s = Math.max(0, Math.floor(sec))
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  if (form === 'short') {
-    if (d >= 1) return t('kanban.active.short_d', { d })
-    if (h >= 1) return t('kanban.active.short_h', { h })
-    return t('kanban.active.short_m', { m })
-  }
-  if (s === 0) return t('kanban.active.zero')
-  if (d >= 1) return t('kanban.active.d_h', { d, h })
-  if (h >= 1) return t('kanban.active.h_m', { h, m })
-  return t('kanban.active.m', { m })
-}
 function renderKanbanTotals(visibleCardIds) {
   const el = document.getElementById('kanbanTotals')
   if (!el) return
@@ -2831,6 +2808,30 @@ async function renderCardBlockersSection(card) {
 }
 
 // === Card detail ===
+
+// Card.active_seconds -> human text. Two forms: `long` for the detail panel,
+// `short` for the one-line chip on a team row.
+//
+// undefined means the card has no status-change history at all, which is NOT
+// the same as zero and must not render as "0m" -- the event table starts
+// mid-history, so an old card that never moved since would otherwise claim a
+// measured zero it has not got.
+function formatActiveTime(sec, form = 'long') {
+  if (sec === undefined || sec === null) return null
+  const s = Math.max(0, Math.floor(sec))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (form === 'short') {
+    if (d >= 1) return t('kanban.active.short_d', { d })
+    if (h >= 1) return t('kanban.active.short_h', { h })
+    return t('kanban.active.short_m', { m })
+  }
+  if (s === 0) return t('kanban.active.zero')
+  if (d >= 1) return t('kanban.active.d_h', { d, h })
+  if (h >= 1) return t('kanban.active.h_m', { h, m })
+  return t('kanban.active.m', { m })
+}
 
 async function showCardDetail(card) {
   // Running number (#N) in the title bar, plus the stable hex id in the meta.

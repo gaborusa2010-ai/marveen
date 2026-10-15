@@ -102,7 +102,10 @@ const FOOTER_TRUNCATED_RX = /(?:[A-Za-z][\w-]* ){1,3}on · [^\n]*·[^\n]*…\s*$
 // mode word, `on`, then only `· N shell(s)` and an optional `· N monitor(s)`
 // to the end of the line, and ONLY on the last non-empty line, so the same
 // words quoted in a log line in the scrollback never count.
-const FOOTER_SHELL_TAIL_RX = /(?:[A-Za-z][\w-]* ){1,3}on(?: \(shift\+tab to cycle\))? · \d+ shells?(?: · \d+ monitors?)?\s*$/
+// Whole-line anchored with the `⏵⏵` glyph (local card 28650706): a log line
+// that merely ENDS in the footer words, or the words without the glyph, is not
+// the live footer even when it is the last line.
+const FOOTER_SHELL_TAIL_RX = /^\s*⏵⏵ (?:[A-Za-z][\w-]* ){1,3}on(?: \(shift\+tab to cycle\))? · \d+ shells?(?: · \d+ monitors?)?\s*$/
 
 /**
  * Index of the idle footer line, or -1. The full footer may sit anywhere the

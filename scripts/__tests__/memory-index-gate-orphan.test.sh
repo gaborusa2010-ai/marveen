@@ -32,7 +32,36 @@ trap 'rm -rf "$TMP"' EXIT
 
 [ -f "$GATE" ]  || { echo "FAIL: gate not found at $GATE"; exit 1; }
 [ -f "$CHECK" ] || { echo "FAIL: link checker not found at $CHECK"; exit 1; }
-command -v jq      >/dev/null 2>&1 || { echo "FAIL: jq is required"; exit 1; }
+# jq is not installed on every fleet host (CLAUDE.md), so without it a small
+# python3 stand-in answers the only shapes this suite asks: `jq -r EXPR [FILE]`
+# with EXPR = .key, .key[N], `.key // "default"`, and the pipe stages
+# `length` and `map(select(. == "X"))`.
+if ! command -v jq >/dev/null 2>&1; then
+jq() {
+  [ "$1" = "-r" ] && shift
+  python3 -c '
+import json, re, sys
+expr = sys.argv[1]
+src = open(sys.argv[2]) if len(sys.argv) > 2 else sys.stdin
+v = json.load(src)
+expr, _, dflt = expr.partition(" // ")
+path, *stages = [p.strip() for p in expr.split("|")]
+try:
+    for key, idx in re.findall(r"\.(\w+)(?:\[(\d+)\])?", path):
+        v = v[key] if idx == "" else v[key][int(idx)]
+    for st in stages:
+        m = re.fullmatch(r"map\(select\(\. == \"(.*)\"\)\)", st)
+        if st == "length": v = len(v)
+        elif m: v = [x for x in v if x == m.group(1)]
+        else: raise SystemExit("jq stand-in: unsupported stage " + st)
+    if v is None or v is False and dflt: raise KeyError
+except (KeyError, IndexError, TypeError):
+    if not dflt: v = None
+    else: v = json.loads(dflt)
+print(v if isinstance(v, str) else json.dumps(v))
+' "$@"
+}
+fi
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 is required"; exit 1; }
 
 MEM="$TMP/memory"; mkdir -p "$MEM"

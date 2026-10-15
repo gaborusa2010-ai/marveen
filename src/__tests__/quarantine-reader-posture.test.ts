@@ -8,7 +8,7 @@
 // the posture read (and that it reads like the hook), the deploy write in both
 // directions, and -- against the unchanged hook -- the live install's controls.
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, copyFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, copyFileSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -144,6 +144,8 @@ describe('quarantineReaderPosture', () => {
     mkdirSync(join(root, 'store'), { recursive: true })
     const copy = join(root, 'scripts', 'hooks', 'egress-gate.mjs')
     copyFileSync(join(PROJECT_ROOT, 'scripts', 'hooks', 'egress-gate.mjs'), copy)
+    // The local gate imports its helpers from ./lib, so the copy needs them too.
+    cpSync(join(PROJECT_ROOT, 'scripts', 'hooks', 'lib'), join(root, 'scripts', 'hooks', 'lib'), { recursive: true })
     const hook = await import(pathToFileURL(copy).href)
     const cases = [
       JSON.stringify({ quarantine_reader_posture: 'denylist' }),
