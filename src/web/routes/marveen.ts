@@ -10,6 +10,7 @@ import { readMarveenTelegramConfig, readMarveenDiscordConfig, readMarveenSlackCo
 import { hardRestartMarveenChannels } from '../channel-monitor.js'
 import { readFileOr } from '../agent-config.js'
 import { nicknameFor } from '../team-nicknames.js'
+import { kanbanFeatureEnabled } from '../kanban-features.js'
 import { parseMultipart } from '../multipart.js'
 import { readBody, json, serveFile } from '../http-helpers.js'
 import { MAIN_CHANNELS_SESSION } from '../main-agent.js'
@@ -134,6 +135,18 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
         warnColor: getEffectiveSettingValue('KANBAN_WIP_WARN_COLOR'),
         fullColor: getEffectiveSettingValue('KANBAN_WIP_FULL_COLOR'),
         overColor: getEffectiveSettingValue('KANBAN_WIP_OVER_COLOR'),
+      },
+      // Each kanban feature is switchable on its own (owner msg 6475). Read
+      // per request through the settings layer, so a toggle on the Settings
+      // page shows on the next board load without a restart. Off = the UI
+      // hides the feature and its write routes answer 403; data is kept.
+      kanbanFeatures: {
+        recurring: kanbanFeatureEnabled('recurring'),
+        checklist: kanbanFeatureEnabled('checklist'),
+        attachments: kanbanFeatureEnabled('attachments'),
+        calendar: kanbanFeatureEnabled('calendar'),
+        intakeForm: kanbanFeatureEnabled('intakeForm'),
+        map: kanbanFeatureEnabled('map'),
       },
       kanbanSwimlanes: {
         defaultGroup: getEffectiveSettingValue('KANBAN_SWIMLANE_DEFAULT_GROUP'),

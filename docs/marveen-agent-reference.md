@@ -286,6 +286,42 @@ curl -s -X POST -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/I
 - **Öregedés és beakadás mérésére a `last_status_at` mezőt használd, SOHA az `updated_at`-ot.**
   Az `updated_at`-ot egy puszta komment is átírja.
 
+#### Ismétlődés, ellenőrzőlista, csatolmány (#452-#454)
+
+Mindhárom a Beállítások oldalon KÜLÖN kikapcsolható (`KANBAN_FEATURE_RECURRING`,
+`_CHECKLIST`, `_ATTACHMENTS`). Kikapcsolva az írás `403 {"error":"feature disabled"}`,
+az olvasás és a meglévő adat marad.
+
+```bash
+# Ismétlődés: daily | weekly (weekday 1=hétfő..7) | monthly (day 1..31) | interval (days 1..365); null = kikapcsol
+curl -s -X PUT http://localhost:3420/api/kanban/ID \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $T" \
+  -d '{"recurrence":{"freq":"weekly","weekday":1}}'
+# Ellenőrzőlista
+curl -s -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/ID/checklist
+curl -s -X POST http://localhost:3420/api/kanban/ID/checklist \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $T" -d '{"text":"TÉTEL"}'
+curl -s -X PUT http://localhost:3420/api/kanban/ID/checklist/TETEL_ID \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $T" -d '{"done":true}'
+curl -s -X DELETE -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/ID/checklist/TETEL_ID
+# Csatolmány (pl. a gazda Telegram-fotója: előbb download_attachment, aztán ez a helyi útvonallal)
+curl -s -X POST http://localhost:3420/api/kanban/ID/attachments \
+  -H "Authorization: Bearer $T" -F "file=@/a/helyi/kep.jpg" -F "uploaded_by=marveen"
+curl -s -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/ID/attachments      # lista, benne a "url"
+curl -s -H "Authorization: Bearer $T" -o ki.jpg http://localhost:3420/api/kanban/ID/attachments/CSATOLMANY_ID
+curl -s -X DELETE -H "Authorization: Bearer $T" http://localhost:3420/api/kanban/ID/attachments/CSATOLMANY_ID
+```
+
+- **Ismétlődés:** amikor a kártya `done` lesz (`/move` vagy `PUT status`), létrejön a
+  következő példány `planned` státusszal, a határidő az előző határidőből (ha nincs, a mai
+  napból) számolva, Europe/London szerint. A szabály ÁTKÖLTÖZIK az újra, a régin a
+  `recurrence_spawned_id` mutat rá, és mindkét kártyán automatikus komment jelzi. Kétszeri
+  `done` sem csinál két utódot.
+- **Csatolmány:** `multipart/form-data`, egy `file` mező, max. 15 MB. Engedélyezett:
+  png, jpg/jpeg, gif, webp, pdf, txt, md, csv, docx, xlsx, pptx, odt, ods (SVG és HTML NEM).
+  A kiszolgált Content-Type a kiterjesztésé, nem a feltöltő által állított.
+  A `-F` alaknál a curl maga állítja a `Content-Type`-ot, azt kézzel NE add meg.
+
 ### Ütemezett feladatok
 
 Fájl-alapúak: `~/.claude/scheduled-tasks/<nev>/` (SKILL.md + task-config.json). A runner

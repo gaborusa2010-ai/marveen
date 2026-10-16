@@ -2071,6 +2071,21 @@ function createCardEl(card, embeddedChildren = []) {
   const blockedHtml = openBlockers.length > 0
     ? `<span class="kanban-card-blocked" title="${escapeHtml(t('kanban.blocker.card_tooltip', { n: openBlockers.length }))}">${t('kanban.blocker.card_badge')}${openBlockers.length > 1 ? ' ' + openBlockers.length : ''}</span>`
     : ''
+  // Feature badges (cards #452-#454): recurrence, checklist progress and the
+  // attachment count. Each is hidden while its Settings switch is off; the
+  // counts come embedded in the board GET, never a per-card fetch.
+  let featureBadgesHtml = ''
+  if (kanbanFeatureOn('recurring') && card.recurrence) {
+    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-recur" title="${escapeHtml(kanbanRecurrenceText(card.recurrence))}">↻</span>`
+  }
+  if (kanbanFeatureOn('checklist') && card.checklist_total > 0) {
+    const allDone = card.checklist_done >= card.checklist_total
+    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-checklist${allDone ? ' complete' : ''}" title="${escapeHtml(t('kanban.checklist.badge_tooltip', { done: card.checklist_done, total: card.checklist_total }))}">☑ ${card.checklist_done}/${card.checklist_total}</span>`
+  }
+  if (kanbanFeatureOn('attachments') && card.attachment_count > 0) {
+    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-attach" title="${escapeHtml(t('kanban.attach.badge_tooltip', { n: card.attachment_count }))}">📎 ${card.attachment_count}</span>`
+  }
+
   const waitReason = card.status === 'waiting' ? kanbanWaitReason(card) : null
   const waitHtml = card.status === 'waiting' && waitReason?.source !== 'blockers'
     ? `<span class="kanban-card-wait ${waitReason ? `kind-${waitReason.kind}` : 'missing'} ${waitReason?.expired ? 'expired' : ''}"${waitReason?.note && waitReason.kind !== 'external' ? ` title="${escapeHtml(waitReason.note)}"` : ''}>${escapeHtml(kanbanWaitReasonText(card, waitReason))}</span>`
@@ -2125,7 +2140,7 @@ function createCardEl(card, embeddedChildren = []) {
   el.innerHTML = `
     ${projectHtml}
     <div class="kanban-card-title">${seqHtml}${escapeHtml(card.title)}</div>
-    <div class="kanban-card-footer">${assigneeHtml}${dueHtml}${waitHtml}${blockedHtml}</div>
+    <div class="kanban-card-footer">${assigneeHtml}${dueHtml}${featureBadgesHtml}${waitHtml}${blockedHtml}</div>
     ${labelsHtml}
     <div class="kanban-card-actions">
       <button class="card-breakdown-btn" title="${t('kanban.btn.breakdown')}" aria-label="${t('kanban.btn.breakdown')}">⚡</button>
@@ -2807,6 +2822,278 @@ async function renderCardBlockersSection(card) {
   }
 }
 
+// === Kanban feature switches (owner msg 6475) ===
+// Each ClickUp-like addition is switchable on its own in Settings; /api/marveen
+// carries the resolved flags (re-fetched on every loadKanban, so a toggle shows
+// on the next board load). Missing payload = on, the registry default: an older
+// server or a failed fetch must not hide data that exists. Off only HIDES the
+// feature here; the server keeps the data and refuses writes with 403.
+function kanbanFeatureOn(name) {
+  const flags = window._marveen?.kanbanFeatures
+  return !flags || flags[name] !== false
+}
+
+// The four rule shapes of src/kanban-recurrence.ts. Weekday is ISO (1 = Monday).
+function kanbanParseRecurrence(raw) {
+  if (!raw) return null
+  try {
+    const rule = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return rule && typeof rule === 'object' && rule.freq ? rule : null
+  } catch { return null }
+}
+
+function kanbanWeekdayName(n) {
+  return t(`kanban.recur.weekday_${n}`)
+}
+
+function kanbanRecurrenceText(raw) {
+  const rule = kanbanParseRecurrence(raw)
+  if (!rule) return t('kanban.recur.none')
+  if (rule.freq === 'daily') return t('kanban.recur.text_daily')
+  if (rule.freq === 'weekly') return t('kanban.recur.text_weekly', { day: kanbanWeekdayName(rule.weekday) })
+  if (rule.freq === 'monthly') return t('kanban.recur.text_monthly', { day: rule.day })
+  if (rule.freq === 'interval') return t('kanban.recur.text_interval', { n: rule.days })
+  return t('kanban.recur.none')
+}
+
+// Recurrence selector. Saved with a PUT carrying only `recurrence` (a partial
+// PUT keeps every other field). The server validates and canonicalises the rule;
+// the next instance is created by the server when the card reaches done.
+function renderCardRecurrenceSection(card) {
+  const section = document.getElementById('cardRecurrenceSection')
+  if (!kanbanFeatureOn('recurring')) { section.style.display = 'none'; return }
+  section.style.display = ''
+  const freqSel = document.getElementById('cardRecurFreq')
+  const weekdaySel = document.getElementById('cardRecurWeekday')
+  const dayInput = document.getElementById('cardRecurDay')
+  const daysInput = document.getElementById('cardRecurDays')
+  const hint = document.getElementById('cardRecurHint')
+  const rule = kanbanParseRecurrence(card.recurrence)
+
+  freqSel.innerHTML = ['', 'daily', 'weekly', 'monthly', 'interval']
+    .map((f) => `<option value="${f}">${escapeHtml(t(`kanban.recur.freq_${f || 'none'}`))}</option>`).join('')
+  weekdaySel.innerHTML = [1, 2, 3, 4, 5, 6, 7]
+    .map((n) => `<option value="${n}">${escapeHtml(kanbanWeekdayName(n))}</option>`).join('')
+  freqSel.value = rule ? rule.freq : ''
+  // Sensible starting values: the weekday / day of the current due date, else today.
+  const ref = card.due_date ? new Date(card.due_date * 1000) : new Date()
+  weekdaySel.value = String(rule?.weekday ?? (ref.getDay() === 0 ? 7 : ref.getDay()))
+  dayInput.value = String(rule?.day ?? ref.getDate())
+  daysInput.value = String(rule?.days ?? 2)
+
+  const syncInputs = () => {
+    weekdaySel.style.display = freqSel.value === 'weekly' ? '' : 'none'
+    dayInput.style.display = freqSel.value === 'monthly' ? '' : 'none'
+    daysInput.style.display = freqSel.value === 'interval' ? '' : 'none'
+  }
+  syncInputs()
+  freqSel.onchange = syncInputs
+
+  // Where the chain went: a finished instance points at its successor.
+  if (card.recurrence_spawned_id) {
+    const next = kanbanCards.find((c) => c.id === card.recurrence_spawned_id)
+    const ref2 = next && next.seq != null ? `#${next.seq}` : card.recurrence_spawned_id
+    hint.textContent = t('kanban.recur.spawned', { ref: ref2 })
+  } else {
+    hint.textContent = rule ? t('kanban.recur.hint_active') : ''
+  }
+
+  document.getElementById('cardRecurSaveBtn').onclick = async () => {
+    const freq = freqSel.value
+    let next = null
+    if (freq === 'daily') next = { freq }
+    else if (freq === 'weekly') next = { freq, weekday: Number(weekdaySel.value) }
+    else if (freq === 'monthly') next = { freq, day: Number(dayInput.value) }
+    else if (freq === 'interval') next = { freq, days: Number(daysInput.value) }
+    try {
+      const r = await fetch(`/api/kanban/${encodeURIComponent(card.id)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recurrence: next }),
+      })
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}))
+        showToast(t('kanban.toast.save_error_msg', { msg: e.error || r.status }), 'error')
+        return
+      }
+      // Same key order as the server's canonical text (freq first).
+      card.recurrence = next ? JSON.stringify(next) : null
+      showToast(t('kanban.recur.saved'))
+      renderCardRecurrenceSection(card)
+      loadKanban()
+    } catch { showToast(t('kanban.toast.save_error'), 'error') }
+  }
+}
+
+// Checklist inside the card (card #453): add, tick, delete. Every change
+// reloads the board so the "3/5" badge follows.
+async function renderCardChecklistSection(card) {
+  const section = document.getElementById('cardChecklistSection')
+  if (!kanbanFeatureOn('checklist')) { section.style.display = 'none'; return }
+  section.style.display = ''
+  const listEl = document.getElementById('cardChecklistList')
+  const progressEl = document.getElementById('cardChecklistProgress')
+  const input = document.getElementById('cardChecklistNew')
+  const base = `/api/kanban/${encodeURIComponent(card.id)}/checklist`
+
+  let items = []
+  try {
+    const r = await fetch(base)
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    items = await r.json()
+  } catch {
+    listEl.innerHTML = `<div class="kanban-detail-hint" style="color:var(--danger)">${escapeHtml(t('kanban.checklist.load_error'))}</div>`
+    return
+  }
+  const done = items.filter((i) => i.done).length
+  progressEl.textContent = items.length ? `${done}/${items.length}` : ''
+  listEl.innerHTML = ''
+  if (!items.length) {
+    listEl.innerHTML = `<div class="kanban-detail-hint">${escapeHtml(t('kanban.checklist.empty'))}</div>`
+  }
+  const refresh = () => { renderCardChecklistSection(card); loadKanban() }
+  for (const item of items) {
+    const row = document.createElement('div')
+    row.className = 'kanban-checklist-item' + (item.done ? ' done' : '')
+    row.innerHTML = `
+      <label class="kanban-checklist-label"><input type="checkbox" ${item.done ? 'checked' : ''}><span>${escapeHtml(item.text)}</span></label>
+      <button type="button" class="label-pill-remove" title="${escapeHtml(t('kanban.checklist.delete'))}" aria-label="${escapeHtml(t('kanban.checklist.delete'))}">&times;</button>`
+    row.querySelector('input').addEventListener('change', async (e) => {
+      try {
+        const r = await fetch(`${base}/${item.id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ done: e.target.checked }),
+        })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+      } catch { showToast(t('kanban.toast.save_error'), 'error') }
+      refresh()
+    })
+    row.querySelector('button').addEventListener('click', async () => {
+      try {
+        const r = await fetch(`${base}/${item.id}`, { method: 'DELETE' })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+      } catch { showToast(t('common.error_delete'), 'error') }
+      refresh()
+    })
+    listEl.appendChild(row)
+  }
+
+  input.value = ''
+  const add = async () => {
+    const text = input.value.trim()
+    if (!text) { input.focus(); return }
+    try {
+      const r = await fetch(base, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}))
+        throw new Error(e.error || r.status)
+      }
+      refresh()
+      input.focus()
+    } catch (err) { showToast(t('kanban.toast.save_error_msg', { msg: err.message }), 'error') }
+  }
+  document.getElementById('cardChecklistAddBtn').onclick = add
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }
+}
+
+// Attachments (card #454): image thumbnails, download links, delete, upload.
+// The file URL comes from the server response; the client never builds a path.
+const KANBAN_ATTACHMENT_MAX_MB = 15
+let kanbanAttachmentCardId = null
+
+async function renderCardAttachmentsSection(card) {
+  const section = document.getElementById('cardAttachmentsSection')
+  if (!kanbanFeatureOn('attachments')) { section.style.display = 'none'; kanbanAttachmentCardId = null; return }
+  section.style.display = ''
+  kanbanAttachmentCardId = card.id
+  const grid = document.getElementById('cardAttachmentGrid')
+  let rows = []
+  try {
+    const r = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/attachments`)
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    rows = await r.json()
+  } catch {
+    grid.innerHTML = `<div class="kanban-detail-hint" style="color:var(--danger)">${escapeHtml(t('kanban.attach.load_error'))}</div>`
+    return
+  }
+  if (kanbanAttachmentCardId !== card.id) return // the modal moved on meanwhile
+  if (!rows.length) {
+    grid.innerHTML = `<div class="kanban-detail-hint">${escapeHtml(t('kanban.attach.empty'))}</div>`
+    return
+  }
+  grid.innerHTML = rows.map((a) => {
+    const isImage = String(a.mime).startsWith('image/')
+    const preview = isImage
+      ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener"><img class="kanban-attachment-thumb" src="${escapeHtml(a.url)}" alt="${escapeHtml(a.filename)}" loading="lazy"></a>`
+      : `<div class="kanban-attachment-icon">${escapeHtml((a.filename.split('.').pop() || 'file').toUpperCase().slice(0, 4))}</div>`
+    return `
+      <div class="kanban-attachment" data-att-id="${escapeHtml(a.id)}">
+        ${preview}
+        <div class="kanban-attachment-name" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</div>
+        <div class="kanban-attachment-meta">${formatIdeaAttachmentSize(a.size)}${a.uploaded_by ? ' · ' + escapeHtml(a.uploaded_by) : ''}</div>
+        <div class="kanban-attachment-actions">
+          <a class="btn-secondary btn-compact" href="${escapeHtml(a.url)}?download=1">${escapeHtml(t('kanban.attach.download'))}</a>
+          <button type="button" class="btn-secondary btn-compact kanban-attachment-del" style="color:var(--danger)">${escapeHtml(t('kanban.attach.delete'))}</button>
+        </div>
+      </div>`
+  }).join('')
+  grid.querySelectorAll('.kanban-attachment-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const attId = btn.closest('.kanban-attachment').dataset.attId
+      if (!confirm(t('kanban.attach.confirm_delete'))) return
+      try {
+        const r = await fetch(`/api/kanban/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attId)}`, { method: 'DELETE' })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+      } catch { showToast(t('common.error_delete'), 'error') }
+      renderCardAttachmentsSection(card)
+      loadKanban()
+    })
+  })
+}
+
+document.getElementById('cardAttachmentInput')?.addEventListener('change', async (event) => {
+  const cardId = kanbanAttachmentCardId
+  if (!cardId) return
+  const input = event.target
+  const files = Array.from(input.files || [])
+  const label = document.getElementById('cardAttachmentUploadLabel')
+  const status = document.getElementById('cardAttachmentStatus')
+  input.disabled = true
+  label.style.opacity = '0.6'
+  status.style.display = ''
+  let uploaded = 0
+  try {
+    for (const file of files) {
+      // Checked here too so a too-big photo fails before its upload, not after.
+      if (file.size > KANBAN_ATTACHMENT_MAX_MB * 1024 * 1024) {
+        throw new Error(t('kanban.attach.too_large', { name: file.name, mb: KANBAN_ATTACHMENT_MAX_MB }))
+      }
+      status.textContent = t('kanban.attach.uploading', { name: file.name })
+      const form = new FormData()
+      form.append('file', file)
+      const r = await fetch(`/api/kanban/${encodeURIComponent(cardId)}/attachments`, { method: 'POST', body: form })
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        throw new Error(data.error || t('kanban.attach.upload_error'))
+      }
+      uploaded++
+    }
+    if (uploaded) showToast(t('kanban.attach.uploaded'))
+  } catch (err) {
+    showToast(err.message || t('kanban.attach.upload_error'), 'error')
+  } finally {
+    input.value = ''
+    input.disabled = false
+    label.style.opacity = ''
+    status.style.display = 'none'
+    const card = kanbanCards.find((c) => c.id === cardId) || { id: cardId }
+    if (kanbanAttachmentCardId === cardId) renderCardAttachmentsSection(card)
+    if (uploaded) loadKanban()
+  }
+})
+
 // === Card detail ===
 
 // Card.active_seconds -> human text. Two forms: `long` for the detail panel,
@@ -3013,6 +3300,9 @@ async function showCardDetail(card) {
 
   renderCardLabelsSection(card)
   renderCardBlockersSection(card)
+  renderCardRecurrenceSection(card)
+  renderCardChecklistSection(card)
+  renderCardAttachmentsSection(card)
 
   // #115: Parent meta row — dropdown replaces the old read-only display; shown only when editable
   const parentMetaItem = document.getElementById('parentMetaItem')

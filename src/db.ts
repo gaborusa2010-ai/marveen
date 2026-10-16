@@ -8,6 +8,7 @@ import { logger } from './logger.js'
 import { TOOL_TIMEOUTS } from './tool-timeouts.js'
 import { triggerLikeClause } from './homoglyph.js'
 import type { LiveKanban } from './web/heartbeat-kanban-verify.js'
+import { parseKanbanRecurrence, serializeKanbanRecurrence, nextKanbanDueDate, formatKanbanDue } from './kanban-recurrence.js'
 
 let db: Database.Database
 // The path the CURRENT handle was opened on (null for ':memory:'). Kept so
@@ -256,6 +257,21 @@ export function initDatabase(dbPathOverride?: string): void {
   }
   try {
     db.exec('ALTER TABLE kanban_cards ADD COLUMN stale_kept_at INTEGER')
+  } catch {
+    // column already exists
+  }
+  // Recurring cards (card #452): the rule as canonical JSON text (see
+  // src/kanban-recurrence.ts), and the id of the instance spawned when this
+  // card reached done -- the once-only guard, so a card moved to done twice
+  // never yields two successors. Both nullable: every existing card is simply
+  // not recurring.
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN recurrence TEXT')
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN recurrence_spawned_id TEXT')
   } catch {
     // column already exists
   }
@@ -900,6 +916,39 @@ export function initDatabase(dbPathOverride?: string): void {
     )
   `)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_card_blockers_blocker ON kanban_card_blockers(blocker_id)`)
+
+  // Checklist items inside a card (card #453). Its own table rather than a JSON
+  // column: an agent ticks one item without rewriting (and racing) the rest.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kanban_checklist_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      sort_order REAL NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      done_at INTEGER
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_kanban_checklist_card ON kanban_checklist_items(card_id, sort_order)`)
+
+  // File attachments on a card (card #454). The bytes live on disk under
+  // store/kanban-attachments/<card dir>/<stored_name>; this row is the index.
+  // stored_name is server-generated, never the caller's filename, so the path
+  // cannot be steered by an upload.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kanban_attachments (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      uploaded_by TEXT
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_kanban_attachments_card ON kanban_attachments(card_id)`)
 
   // --- Agent Messages ---
   db.exec(`
@@ -2576,6 +2625,10 @@ export interface KanbanCard {
   last_status_at?: number
   stale_kept_at: number | null
   archived_at: number | null
+  // Recurrence rule as canonical JSON text (src/kanban-recurrence.ts); NULL = one-off.
+  recurrence?: string | null
+  // The next instance created when this card reached done (once-only guard).
+  recurrence_spawned_id?: string | null
   // Set the first time the card is moved to in_progress and the assigned agent
   // is woken (kanban -> agent dispatch). NULL = never dispatched; the once-only
   // guard so re-dragging a card does not re-prompt the agent.
@@ -2946,7 +2999,7 @@ export function parentWouldCycle(cardId: string, parentId: string): boolean {
 // returned 200, stored `archived_at=null` and `sort_order=0`, logged nothing).
 export const KANBAN_CREATE_FIELDS = [
   'title', 'description', 'status', 'assignee', 'priority', 'project', 'parent_id', 'due_date',
-  'start_date',
+  'start_date', 'recurrence',
 ] as const
 
 export function createKanbanCard(card: {
@@ -2960,6 +3013,9 @@ export function createKanbanCard(card: {
   parent_id?: string
   due_date?: number
   start_date?: number
+  // Canonical rule text; the HTTP boundary validates and serialises it
+  // (parseKanbanRecurrence) before it gets here.
+  recurrence?: string | null
 }): void {
   const now = Math.floor(Date.now() / 1000)
   const status = card.status ?? 'planned'
@@ -2969,12 +3025,13 @@ export function createKanbanCard(card: {
   const sortOrder = (maxRow?.m ?? -1) + 1
 
   db.prepare(
-    `INSERT INTO kanban_cards (id, title, description, status, assignee, priority, project, parent_id, due_date, start_date, sort_order, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO kanban_cards (id, title, description, status, assignee, priority, project, parent_id, due_date, start_date, recurrence, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     card.id, card.title, card.description ?? null, status,
     card.assignee ?? null, card.priority ?? 'normal',
-    card.project ?? null, card.parent_id ?? null, normaliseDueDate(card.due_date), normaliseDueDate(card.start_date), sortOrder, now, now
+    card.project ?? null, card.parent_id ?? null, normaliseDueDate(card.due_date), normaliseDueDate(card.start_date),
+    card.recurrence ?? null, sortOrder, now, now
   )
   // A card BORN in a status other than 'planned' gets its opening event row
   // here, because nothing else will ever write one for it: kanban_card_events
@@ -3006,7 +3063,7 @@ export function createKanbanCard(card: {
 // was writing one (e.g. `description_append`).
 export const KANBAN_WRITABLE_FIELDS = [
   'title', 'description', 'status', 'assignee', 'priority', 'project',
-  'parent_id', 'due_date', 'start_date', 'sort_order', 'archived_at',
+  'parent_id', 'due_date', 'start_date', 'sort_order', 'archived_at', 'recurrence',
 ] as const
 
 // The columns whose changes updateKanbanCard records in kanban_card_field_events
@@ -3058,9 +3115,9 @@ export function updateKanbanCard(
   // left the card changed with no row saying who changed it.
   return db.transaction((): boolean => {
     const changed = db.prepare(
-      `UPDATE kanban_cards SET title=?, description=?, status=?, assignee=?, priority=?, project=?, parent_id=?, due_date=?, start_date=?, sort_order=?, updated_at=?, archived_at=?
+      `UPDATE kanban_cards SET title=?, description=?, status=?, assignee=?, priority=?, project=?, parent_id=?, due_date=?, start_date=?, sort_order=?, updated_at=?, archived_at=?, recurrence=?
        WHERE id=?`
-    ).run(f.title, f.description, f.status, f.assignee, f.priority, f.project, f.parent_id, f.due_date, f.start_date ?? null, f.sort_order, f.updated_at, f.archived_at, id).changes > 0
+    ).run(f.title, f.description, f.status, f.assignee, f.priority, f.project, f.parent_id, f.due_date, f.start_date ?? null, f.sort_order, f.updated_at, f.archived_at, f.recurrence ?? null, id).changes > 0
     // Same dispatched_at rule as moveKanbanCard (kanbanWriteClearsDispatch). Before,
     // a card the PUT took out of in_progress kept its stamp, and the next /move to
     // in_progress woke nobody. The PUT only clears: it never dispatches.
@@ -3285,6 +3342,11 @@ export function deleteKanbanCard(id: string): boolean {
     // someone else. Dropping only the first would leave another card marked
     // "blocked by" a card that no longer exists -- a block nobody can clear.
     db.prepare('DELETE FROM kanban_card_blockers WHERE card_id = ? OR blocker_id = ?').run(cardId, cardId)
+    // Checklist items and attachment ROWS go with the card. The attachment
+    // FILES are removed by the HTTP route (it owns the storage root); a card
+    // deleted any other way leaves an orphan directory, never a dangling row.
+    db.prepare('DELETE FROM kanban_checklist_items WHERE card_id = ?').run(cardId)
+    db.prepare('DELETE FROM kanban_attachments WHERE card_id = ?').run(cardId)
     db.prepare('UPDATE kanban_cards SET parent_id = NULL WHERE parent_id = ?').run(cardId)
     return db.prepare('DELETE FROM kanban_cards WHERE id = ?').run(cardId).changes > 0
   })(id) as boolean
@@ -3370,6 +3432,196 @@ export function addKanbanComment(cardId: string, author: string, content: string
     { parent_id: string | null } | undefined)?.parent_id
   touchAncestorChain(parentId, now, cardId)
   return { id: Number(info.lastInsertRowid), card_id: cardId, author, content, created_at: now, automated }
+}
+
+// --- Kanban checklist (card #453) ---
+
+export interface KanbanChecklistItem {
+  id: number
+  card_id: string
+  text: string
+  done: number
+  sort_order: number
+  created_at: number
+  done_at: number | null
+}
+
+// A checklist or attachment write is work on the card, exactly like a comment:
+// it moves updated_at and stamps the parent thread (see addKanbanComment).
+function touchKanbanCardActivity(cardId: string, now: number): void {
+  db.prepare('UPDATE kanban_cards SET updated_at = ? WHERE id = ?').run(now, cardId)
+  const parentId = (db.prepare('SELECT parent_id FROM kanban_cards WHERE id = ?').get(cardId) as
+    { parent_id: string | null } | undefined)?.parent_id
+  touchAncestorChain(parentId, now, cardId)
+}
+
+export function listKanbanChecklist(cardId: string): KanbanChecklistItem[] {
+  return db.prepare('SELECT * FROM kanban_checklist_items WHERE card_id = ? ORDER BY sort_order ASC, id ASC')
+    .all(cardId) as KanbanChecklistItem[]
+}
+
+export function getKanbanChecklistItem(cardId: string, itemId: number): KanbanChecklistItem | undefined {
+  return db.prepare('SELECT * FROM kanban_checklist_items WHERE card_id = ? AND id = ?')
+    .get(cardId, itemId) as KanbanChecklistItem | undefined
+}
+
+export function addKanbanChecklistItem(cardId: string, text: string): KanbanChecklistItem {
+  const now = Math.floor(Date.now() / 1000)
+  const max = db.prepare('SELECT MAX(sort_order) AS m FROM kanban_checklist_items WHERE card_id = ?')
+    .get(cardId) as { m: number | null }
+  const info = db.prepare(
+    'INSERT INTO kanban_checklist_items (card_id, text, done, sort_order, created_at) VALUES (?, ?, 0, ?, ?)'
+  ).run(cardId, text, (max?.m ?? -1) + 1, now)
+  touchKanbanCardActivity(cardId, now)
+  return getKanbanChecklistItem(cardId, Number(info.lastInsertRowid))!
+}
+
+export function updateKanbanChecklistItem(
+  cardId: string, itemId: number, fields: { text?: string; done?: boolean; sort_order?: number },
+): KanbanChecklistItem | undefined {
+  const item = getKanbanChecklistItem(cardId, itemId)
+  if (!item) return undefined
+  const now = Math.floor(Date.now() / 1000)
+  const text = fields.text ?? item.text
+  const done = fields.done === undefined ? item.done : (fields.done ? 1 : 0)
+  // done_at follows the tick: set when it becomes done, cleared when unticked,
+  // kept as-is when the tick does not change (a text edit on a done item).
+  const doneAt = done === item.done ? item.done_at : (done ? now : null)
+  const sortOrder = fields.sort_order ?? item.sort_order
+  if (text === item.text && done === item.done && sortOrder === item.sort_order) return item
+  db.prepare('UPDATE kanban_checklist_items SET text = ?, done = ?, done_at = ?, sort_order = ? WHERE id = ? AND card_id = ?')
+    .run(text, done, doneAt, sortOrder, itemId, cardId)
+  touchKanbanCardActivity(cardId, now)
+  return getKanbanChecklistItem(cardId, itemId)
+}
+
+export function deleteKanbanChecklistItem(cardId: string, itemId: number): boolean {
+  const ok = db.prepare('DELETE FROM kanban_checklist_items WHERE id = ? AND card_id = ?').run(itemId, cardId).changes > 0
+  if (ok) touchKanbanCardActivity(cardId, Math.floor(Date.now() / 1000))
+  return ok
+}
+
+// One query for the whole board (the "3/5" badge), like getLabelsForAllCards.
+export function getKanbanChecklistCountsForAllCards(): Map<string, { total: number; done: number }> {
+  const rows = db.prepare(
+    'SELECT card_id, COUNT(*) AS total, COALESCE(SUM(done), 0) AS done FROM kanban_checklist_items GROUP BY card_id'
+  ).all() as Array<{ card_id: string; total: number; done: number }>
+  return new Map(rows.map((r) => [r.card_id, { total: r.total, done: r.done }]))
+}
+
+// --- Kanban attachments (card #454) ---
+
+export interface KanbanAttachmentRow {
+  id: string
+  card_id: string
+  filename: string
+  stored_name: string
+  mime: string
+  size: number
+  created_at: number
+  uploaded_by: string | null
+}
+
+export function listKanbanAttachments(cardId: string): KanbanAttachmentRow[] {
+  return db.prepare('SELECT * FROM kanban_attachments WHERE card_id = ? ORDER BY created_at ASC, rowid ASC')
+    .all(cardId) as KanbanAttachmentRow[]
+}
+
+export function getKanbanAttachment(cardId: string, id: string): KanbanAttachmentRow | undefined {
+  return db.prepare('SELECT * FROM kanban_attachments WHERE card_id = ? AND id = ?').get(cardId, id) as KanbanAttachmentRow | undefined
+}
+
+export function addKanbanAttachment(row: KanbanAttachmentRow): void {
+  db.prepare(
+    `INSERT INTO kanban_attachments (id, card_id, filename, stored_name, mime, size, created_at, uploaded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(row.id, row.card_id, row.filename, row.stored_name, row.mime, row.size, row.created_at, row.uploaded_by)
+  touchKanbanCardActivity(row.card_id, row.created_at)
+}
+
+export function deleteKanbanAttachment(cardId: string, id: string): boolean {
+  return db.prepare('DELETE FROM kanban_attachments WHERE card_id = ? AND id = ?').run(cardId, id).changes > 0
+}
+
+export function getKanbanAttachmentCountsForAllCards(): Map<string, number> {
+  const rows = db.prepare('SELECT card_id, COUNT(*) AS n FROM kanban_attachments GROUP BY card_id')
+    .all() as Array<{ card_id: string; n: number }>
+  return new Map(rows.map((r) => [r.card_id, r.n]))
+}
+
+// --- Kanban recurrence (card #452) ---
+
+export type KanbanRecurrenceSpawnResult =
+  | { spawned: true; id: string; due_date: number }
+  | { spawned: false; reason: 'not_found' | 'not_done' | 'not_recurring' | 'already_spawned' | 'invalid_rule'; id?: string }
+
+/**
+ * Create the next instance of a recurring card that has reached `done`.
+ *
+ * Once-only: the successor's id is stamped on the finished card
+ * (recurrence_spawned_id) in the same transaction that creates it, so moving
+ * the card to done a second time (done -> in_progress -> done, or a repeated
+ * PUT) finds the stamp and creates nothing. The rule MOVES to the successor;
+ * the finished card keeps the stamp as the link forward.
+ *
+ * `priority` is the card's priority from BEFORE the move: moveKanbanCard
+ * rewrites priority by column (high in progress, low on done), so the row read
+ * here would hand every successor 'low'. 'high' itself is not carried either:
+ * by the owner's definition (msg 3427/3430) it means "being worked on now",
+ * and the successor starts in planned.
+ */
+export function spawnKanbanRecurrence(
+  id: string,
+  opts: { priority?: KanbanCard['priority']; now?: number; tz?: string; actor?: string } = {},
+): KanbanRecurrenceSpawnResult {
+  const now = opts.now ?? Math.floor(Date.now() / 1000)
+  const tz = opts.tz ?? APP_TZ
+  return db.transaction((): KanbanRecurrenceSpawnResult => {
+    const card = getKanbanCard(id)
+    if (!card) return { spawned: false, reason: 'not_found' }
+    if (card.recurrence_spawned_id) return { spawned: false, reason: 'already_spawned', id: card.recurrence_spawned_id }
+    if (card.status !== 'done') return { spawned: false, reason: 'not_done' }
+    if (!card.recurrence) return { spawned: false, reason: 'not_recurring' }
+    const parsed = parseKanbanRecurrence(card.recurrence)
+    if (!parsed.ok || !parsed.rule) return { spawned: false, reason: 'invalid_rule' }
+    const dueDate = nextKanbanDueDate(parsed.rule, card.due_date, now, tz)
+    const basePriority = opts.priority ?? card.priority
+    const priority: KanbanCard['priority'] = basePriority === 'high' ? 'normal' : basePriority
+    let newId = randomUUID().slice(0, 8)
+    while (getKanbanCard(newId)) newId = randomUUID().slice(0, 8)
+    createKanbanCard({
+      id: newId,
+      title: card.title,
+      description: card.description ?? undefined,
+      status: 'planned',
+      assignee: card.assignee ?? undefined,
+      priority,
+      project: card.project ?? undefined,
+      parent_id: card.parent_id ?? undefined,
+      due_date: dueDate,
+      recurrence: serializeKanbanRecurrence(parsed.rule),
+    })
+    // Guarded UPDATE: the stamp is the idempotency key, so it is only taken if
+    // nobody took it first (a throw rolls the successor back with it).
+    const stamped = db.prepare(
+      'UPDATE kanban_cards SET recurrence_spawned_id = ?, recurrence = NULL WHERE id = ? AND recurrence_spawned_id IS NULL'
+    ).run(newId, id).changes > 0
+    if (!stamped) throw new Error(`recurrence stamp lost on ${id}`)
+    db.prepare(
+      'INSERT OR IGNORE INTO kanban_card_labels (card_id, label_id, created_at) SELECT ?, label_id, ? FROM kanban_card_labels WHERE card_id = ?'
+    ).run(newId, now, id)
+    db.prepare(
+      `INSERT INTO kanban_checklist_items (card_id, text, done, sort_order, created_at, done_at)
+       SELECT ?, text, 0, sort_order, ?, NULL FROM kanban_checklist_items WHERE card_id = ? ORDER BY sort_order ASC, id ASC`
+    ).run(newId, now, id)
+    const next = getKanbanCard(newId)!
+    const prevRef = `#${card.seq ?? '?'} (${card.id})`
+    const nextRef = `#${next.seq ?? '?'} (${newId})`
+    const dueText = formatKanbanDue(dueDate, tz)
+    addKanbanComment(id, 'system', `Ismétlődő kártya: a következő példány ${nextRef}, határidő ${dueText}.`, { automated: true })
+    addKanbanComment(newId, 'system', `Ismétlődő kártya: az előző példány ${prevRef} lezárult${opts.actor ? ` (${opts.actor})` : ''}; ez a következő, határidő ${dueText}.`, { automated: true })
+    return { spawned: true, id: newId, due_date: dueDate }
+  })()
 }
 
 // --- Kanban labels (tags) ---

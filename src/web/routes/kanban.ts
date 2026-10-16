@@ -22,7 +22,21 @@ import {
   getStuckKanbanCards,
   listStaleKanbanCards, decideStaleKanbanCard, StaleKanbanDecisionError,
   type TokenPruneLag,
+  listKanbanChecklist, addKanbanChecklistItem, updateKanbanChecklistItem, deleteKanbanChecklistItem,
+  getKanbanChecklistCountsForAllCards,
+  listKanbanAttachments, getKanbanAttachment, addKanbanAttachment, deleteKanbanAttachment,
+  getKanbanAttachmentCountsForAllCards, type KanbanAttachmentRow,
+  spawnKanbanRecurrence,
 } from '../../db.js'
+import { parseKanbanRecurrence, serializeKanbanRecurrence } from '../../kanban-recurrence.js'
+import { kanbanFeatureEnabled, KANBAN_FEATURE_DISABLED_BODY, type KanbanFeature } from '../kanban-features.js'
+import {
+  KANBAN_ATTACHMENT_MAX_BYTES, kanbanAttachmentType, kanbanAttachmentInline, displayAttachmentName,
+  safeStoredLeaf, kanbanAttachmentFilePath, writeKanbanAttachmentFile, removeKanbanAttachmentFile,
+  removeKanbanAttachmentDir, KANBAN_ATTACHMENT_EXTENSIONS,
+} from '../kanban-attachments.js'
+import { parseMultipart } from '../multipart.js'
+import { createReadStream, existsSync, statSync } from 'node:fs'
 import { normalizeKanbanRefs } from '../kanban-ref-normalize.js'
 import { OWNER_NAME, BOT_NAME, MAIN_AGENT_ID, STORE_DIR, WEB_HOST, WEB_PORT, KANBAN_LABEL_COLORS, DB_FILENAME } from '../../config.js'
 import { listAgentNames, readAgentDisplayName } from '../agent-config.js'
@@ -46,7 +60,57 @@ const KANBAN_READONLY_FIELDS = new Set<string>([
   // never by a PUT, but getKanbanCard's SELECT * returns it so the dashboard's
   // whole-card send carries it back. Accept-and-ignore, do not 400.
   'dispatched_at', 'wait_kind', 'wait_note', 'wait_until', 'stale_kept_at',
+  // Recurrence link and the GET-embedded board counts (cards #452-#454): echoed
+  // back by the whole-card send, never written by a PUT.
+  'recurrence_spawned_id', 'checklist_total', 'checklist_done', 'attachment_count',
 ])
+
+// A write to a switched-off feature answers 403 (owner msg 6475). Reads stay
+// open: switching a feature off hides it, it does not make the data vanish.
+function refuseDisabledFeature(res: RouteContext['res'], feature: KanbanFeature): boolean {
+  if (kanbanFeatureEnabled(feature)) return false
+  json(res, KANBAN_FEATURE_DISABLED_BODY, 403)
+  return true
+}
+
+// The recurrence half of a card write (POST create / PUT update): validates the
+// rule and rewrites it to its canonical text in place. Returns an HTTP error to
+// send, or null when the body may proceed. `current` is the stored rule: an
+// UNCHANGED rule echoed back by the dashboard's whole-card PUT is not a write,
+// so it passes even while the feature is off.
+function normaliseRecurrenceField(data: Record<string, unknown>, current: string | null | undefined):
+  { status: number; body: unknown } | null {
+  if (!('recurrence' in data)) return null
+  const parsed = parseKanbanRecurrence(data.recurrence)
+  if (!parsed.ok) return { status: 400, body: { error: parsed.error } }
+  const text = serializeKanbanRecurrence(parsed.rule)
+  if (text !== (current ?? null) && !kanbanFeatureEnabled('recurring')) {
+    return { status: 403, body: KANBAN_FEATURE_DISABLED_BODY }
+  }
+  data.recurrence = text
+  return null
+}
+
+// After a card reached done: create the next instance of a recurring card.
+// Never fails the write that triggered it -- the move already happened, and a
+// throw here would turn a completed move into a 500 (same contract as the
+// in_progress dispatch). spawnKanbanRecurrence is once-only by itself.
+function maybeSpawnRecurrence(id: string, priorityBefore: string | undefined, actor: string | undefined): void {
+  if (!kanbanFeatureEnabled('recurring')) return
+  try {
+    const result = spawnKanbanRecurrence(id, { priority: priorityBefore as any, actor })
+    if (result.spawned) logger.info({ id, next: result.id, due: result.due_date }, 'Kanban recurrence: next instance created')
+  } catch (err) {
+    logger.warn({ err, id }, 'Kanban recurrence spawn failed (the move itself succeeded)')
+  }
+}
+
+// Attachments in a client response: everything but the on-disk name, plus the
+// URL the file is served from (the client never builds a path).
+function publicKanbanAttachment(row: KanbanAttachmentRow) {
+  const { stored_name: _stored, ...rest } = row
+  return { ...rest, url: `/api/kanban/${encodeURIComponent(row.card_id)}/attachments/${encodeURIComponent(row.id)}` }
+}
 
 // Every key POST /api/kanban/:id/move accepts; anything else is a 400 (#437).
 const KANBAN_MOVE_FIELDS = ['status', 'sort_order', 'actor', 'wait'] as const
@@ -442,10 +506,17 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // them to mark a blocked card, and a per-card fetch would be an N+1 on
     // every poll.
     const blockersByCard = getBlockersForAllCards()
+    // The board badges ("3/5", paperclip count) ride along the same way: one
+    // grouped query each, never a per-card fetch.
+    const checklistByCard = getKanbanChecklistCountsForAllCards()
+    const attachmentsByCard = getKanbanAttachmentCountsForAllCards()
     const cards = listKanbanCards({ includeArchived, agent }).map((card) => ({
       ...card,
       labels: labelsByCard.get(card.id) ?? [],
       blockers: blockersByCard.get(card.id) ?? [],
+      checklist_total: checklistByCard.get(card.id)?.total ?? 0,
+      checklist_done: checklistByCard.get(card.id)?.done ?? 0,
+      attachment_count: attachmentsByCard.get(card.id) ?? 0,
     }))
     jsonMaybeGzip(req, res, cards)
     return true
@@ -747,6 +818,10 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // them with no warning (Szotasz's review on #1501, measured on that head: POST
     // {title, archived_at: 12345, sort_order: 99} returned 200, stored archived_at=null and
     // sort_order=0, logged nothing).
+    // A recurrence rule is validated here, not warned about: a malformed rule
+    // that slipped through would make every later done-move a silent no-op.
+    const recurrenceError = normaliseRecurrenceField(data, null)
+    if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
     const knownPostFields = new Set<string>([...KANBAN_CREATE_FIELDS, 'id'])
     const unknownKeys = Object.keys(data).filter((key) => !knownPostFields.has(key))
     if (unknownKeys.length > 0) {
@@ -815,7 +890,15 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // PUT to in_progress clears but does not dispatch; /move remains the only
     // dispatch path (KARTYADISPATCH1010). updateKanbanCard applies the shared
     // dispatched_at clear; no fireKanbanDispatch call belongs here.
-    if (updateKanbanCard(id, data, who.actor)) { json(res, { ok: true }); return true }
+    const before = getKanbanCard(id)
+    const recurrenceError = normaliseRecurrenceField(data, before?.recurrence)
+    if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
+    if (updateKanbanCard(id, data, who.actor)) {
+      // A PUT is the other way a card reaches done (agents use it as much as /move).
+      if (data.status === 'done' && before && before.status !== 'done') maybeSpawnRecurrence(id, before.priority, who.actor)
+      json(res, { ok: true })
+      return true
+    }
     json(res, { error: 'Kártya nem található' }, 404)
     return true
   }
@@ -823,7 +906,13 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   if (kanbanCardMatch && method === 'DELETE') {
     const id = decodeURIComponent(kanbanCardMatch[1])
     revertIdeaFromKanban(id)
-    if (deleteKanbanCard(id)) { json(res, { ok: true }); return true }
+    if (deleteKanbanCard(id)) {
+      // The rows went with the card (deleteKanbanCard); the files go here,
+      // where the storage root is known. Best effort: the card is gone either way.
+      try { removeKanbanAttachmentDir(id) } catch (err) { logger.warn({ err, id }, 'Kanban attachment dir cleanup failed') }
+      json(res, { ok: true })
+      return true
+    }
     json(res, { error: 'Kártya nem található' }, 404)
     return true
   }
@@ -872,8 +961,11 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
       json(res, { error: who.error }, 400)
       return true
     }
+    const beforeMove = getKanbanCard(id)
     if (moveKanbanCard(id, status, sort_order ?? 0, who.actor)) {
       if (reason) setKanbanWaitReason(id, reason)
+      // The priority from BEFORE the move: moveKanbanCard rewrites it by column.
+      if (status === 'done' && beforeMove && beforeMove.status !== 'done') maybeSpawnRecurrence(id, beforeMove.priority, who.actor)
       // Wake the assigned agent once when the card enters in_progress -- unless
       // that agent is the one who moved it (self-pickup needs no wake-up).
       if (status === 'in_progress') fireKanbanDispatch(id, who.actor)
@@ -1061,6 +1153,168 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
   if (childrenMatch && method === 'GET') {
     const parentId = decodeURIComponent(childrenMatch[1])
     json(res, getChildCards(parentId))
+    return true
+  }
+
+  // --- Checklist inside a card (card #453) ---
+  // GET is always served (the data stays readable while the feature is off);
+  // the writes answer 403 when it is switched off. Unknown body keys are a 400
+  // that names the accepted ones, the PUT /api/kanban/:id rule (#1023).
+  const checklistMatch = path.match(/^\/api\/kanban\/([^/]+)\/checklist$/)
+  const checklistItemMatch = path.match(/^\/api\/kanban\/([^/]+)\/checklist\/([^/]+)$/)
+  if (checklistMatch || checklistItemMatch) {
+    const cardId = decodeURIComponent((checklistMatch ?? checklistItemMatch)![1])
+    if (checklistMatch && method !== 'GET' && method !== 'POST') { methodNotAllowed(res, method, ['GET', 'POST']); return true }
+    if (checklistItemMatch && method !== 'PUT' && method !== 'DELETE') { methodNotAllowed(res, method, ['PUT', 'DELETE']); return true }
+    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
+    if (checklistMatch && method === 'GET') { json(res, listKanbanChecklist(cardId)); return true }
+    if (refuseDisabledFeature(res, 'checklist')) return true
+
+    if (checklistMatch) {
+      let body: unknown
+      try { body = JSON.parse((await readBody(req, { maxBytes: 64 * 1024 })).toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) { json(res, { error: 'Body must be a JSON object: {"text": "..."}' }, 400); return true }
+      const unknown = Object.keys(body).filter((k) => k !== 'text')
+      if (unknown.length) { json(res, { error: `Unknown field(s): ${unknown.join(', ')}. Accepted: text` }, 400); return true }
+      const text = typeof (body as { text?: unknown }).text === 'string' ? (body as { text: string }).text.trim() : ''
+      if (!text || text.length > 500) { json(res, { error: 'text is required (1-500 characters)' }, 400); return true }
+      json(res, addKanbanChecklistItem(cardId, text))
+      return true
+    }
+
+    const itemId = Number(decodeURIComponent(checklistItemMatch![2]))
+    if (!Number.isInteger(itemId) || itemId <= 0) { json(res, { error: 'Invalid checklist item id' }, 400); return true }
+    if (method === 'DELETE') {
+      if (deleteKanbanChecklistItem(cardId, itemId)) { json(res, { ok: true }); return true }
+      json(res, { error: 'Checklist item not found' }, 404)
+      return true
+    }
+    let body: unknown
+    try { body = JSON.parse((await readBody(req, { maxBytes: 64 * 1024 })).toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) { json(res, { error: 'Body must be a JSON object' }, 400); return true }
+    const accepted = ['text', 'done', 'sort_order']
+    const unknown = Object.keys(body).filter((k) => !accepted.includes(k))
+    if (unknown.length) { json(res, { error: `Unknown field(s): ${unknown.join(', ')}. Accepted: ${accepted.join(', ')}` }, 400); return true }
+    const { text, done, sort_order: sortOrder } = body as { text?: unknown; done?: unknown; sort_order?: unknown }
+    const fields: { text?: string; done?: boolean; sort_order?: number } = {}
+    if (text !== undefined) {
+      const trimmed = typeof text === 'string' ? text.trim() : ''
+      if (!trimmed || trimmed.length > 500) { json(res, { error: 'text must be 1-500 characters' }, 400); return true }
+      fields.text = trimmed
+    }
+    if (done !== undefined) {
+      if (typeof done !== 'boolean') { json(res, { error: 'done must be true or false' }, 400); return true }
+      fields.done = done
+    }
+    if (sortOrder !== undefined) {
+      if (typeof sortOrder !== 'number' || !Number.isFinite(sortOrder)) { json(res, { error: 'sort_order must be a number' }, 400); return true }
+      fields.sort_order = sortOrder
+    }
+    const item = updateKanbanChecklistItem(cardId, itemId, fields)
+    if (!item) { json(res, { error: 'Checklist item not found' }, 404); return true }
+    json(res, item)
+    return true
+  }
+
+  // --- Attachments (card #454) ---
+  // Upload is multipart/form-data with one `file` part (the same parser and
+  // shape as the idea attachments), optionally an `uploaded_by` field. An
+  // agent attaching an owner's Telegram photo:
+  //   curl -F "file=@/path/photo.jpg" -F "uploaded_by=marveen" .../api/kanban/<id>/attachments
+  const attachmentsMatch = path.match(/^\/api\/kanban\/([^/]+)\/attachments$/)
+  const attachmentMatch = path.match(/^\/api\/kanban\/([^/]+)\/attachments\/([^/]+)$/)
+  if (attachmentsMatch || attachmentMatch) {
+    const cardId = decodeURIComponent((attachmentsMatch ?? attachmentMatch)![1])
+    if (attachmentsMatch && method !== 'GET' && method !== 'POST') { methodNotAllowed(res, method, ['GET', 'POST']); return true }
+    if (attachmentMatch && method !== 'GET' && method !== 'DELETE') { methodNotAllowed(res, method, ['GET', 'DELETE']); return true }
+    if (!getKanbanCard(cardId)) { json(res, { error: 'Kártya nem található' }, 404); return true }
+
+    if (attachmentsMatch && method === 'GET') {
+      json(res, listKanbanAttachments(cardId).map(publicKanbanAttachment))
+      return true
+    }
+
+    if (attachmentMatch && method === 'GET') {
+      if (rejectUnknownQueryParams(res, url, ['download'])) return true
+      const row = getKanbanAttachment(cardId, decodeURIComponent(attachmentMatch[2]))
+      if (!row) { json(res, { error: 'Csatolmány nem található' }, 404); return true }
+      const filePath = kanbanAttachmentFilePath(cardId, row.stored_name)
+      if (!filePath) { json(res, { error: 'Érvénytelen csatolmány útvonal' }, 400); return true }
+      if (!existsSync(filePath)) { json(res, { error: 'A csatolmány fájlja nem található' }, 404); return true }
+      const asDownload = url.searchParams.has('download') || !kanbanAttachmentInline(row.mime)
+      const asciiName = safeStoredLeaf(row.filename).replace(/"/g, '_')
+      res.writeHead(200, {
+        'Content-Type': row.mime,
+        'Content-Length': String(statSync(filePath).size),
+        'Content-Disposition': `${asDownload ? 'attachment' : 'inline'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(row.filename)}`,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; img-src 'self'; sandbox",
+        'Cache-Control': 'private, no-store',
+      })
+      createReadStream(filePath).pipe(res)
+      return true
+    }
+
+    if (refuseDisabledFeature(res, 'attachments')) return true
+
+    if (attachmentMatch && method === 'DELETE') {
+      const attId = decodeURIComponent(attachmentMatch[2])
+      const row = getKanbanAttachment(cardId, attId)
+      if (!row) { json(res, { error: 'Csatolmány nem található' }, 404); return true }
+      try { removeKanbanAttachmentFile(cardId, row.stored_name) } catch (err) {
+        logger.warn({ err, cardId, attId }, 'Kanban attachment file delete failed')
+      }
+      deleteKanbanAttachment(cardId, attId)
+      json(res, { ok: true })
+      return true
+    }
+
+    // POST upload
+    const tooLarge = () => json(res, { error: `A fájl legfeljebb ${KANBAN_ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB lehet` }, 413)
+    const contentType = String(req.headers['content-type'] || '')
+    if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
+      json(res, { error: 'multipart/form-data body with a "file" part is required' }, 415)
+      return true
+    }
+    // Multipart framing on top of the file itself; the file's own size is checked after parsing.
+    const bodyCap = KANBAN_ATTACHMENT_MAX_BYTES + 256 * 1024
+    if (Number(req.headers['content-length'] || 0) > bodyCap) { tooLarge(); return true }
+    let body: Buffer
+    try { body = await readBody(req, { maxBytes: bodyCap }) } catch { tooLarge(); return true }
+    const { file, fields } = parseMultipart(body, contentType)
+    if (!file) { json(res, { error: 'Nincs feltöltött fájl (a "file" mező hiányzik)' }, 400); return true }
+    if (file.data.length === 0) { json(res, { error: 'Üres fájl' }, 400); return true }
+    if (file.data.length > KANBAN_ATTACHMENT_MAX_BYTES) { tooLarge(); return true }
+    const filename = displayAttachmentName(file.name)
+    const type = kanbanAttachmentType(filename, file.mime)
+    if (!type) {
+      json(res, { error: `Ez a fájltípus nem tölthető fel. Engedélyezett: ${KANBAN_ATTACHMENT_EXTENSIONS.join(', ')}` }, 415)
+      return true
+    }
+    const uploadedByRaw = (fields.uploaded_by ?? (typeof req.headers['x-agent-id'] === 'string' ? req.headers['x-agent-id'] : '')
+      ?? '').trim() || (ctx.auth?.kind === 'session' && ctx.auth.user ? ctx.auth.user : '')
+    const uploadedBy = uploadedByRaw ? uploadedByRaw.slice(0, 64) : null
+    let attId = randomUUID().slice(0, 8)
+    while (getKanbanAttachment(cardId, attId)) attId = randomUUID().slice(0, 8)
+    const storedName = `${attId}-${safeStoredLeaf(filename)}`
+    const row: KanbanAttachmentRow = {
+      id: attId, card_id: cardId, filename, stored_name: storedName, mime: type.mime,
+      size: file.data.length, created_at: Math.floor(Date.now() / 1000), uploaded_by: uploadedBy,
+    }
+    try {
+      writeKanbanAttachmentFile(cardId, storedName, file.data)
+    } catch (err) {
+      logger.error({ err, cardId }, 'Kanban attachment write failed')
+      json(res, { error: 'A fájl mentése nem sikerült' }, 500)
+      return true
+    }
+    try {
+      addKanbanAttachment(row)
+    } catch (err) {
+      try { removeKanbanAttachmentFile(cardId, storedName) } catch { /* best effort */ }
+      throw err
+    }
+    json(res, publicKanbanAttachment(row))
     return true
   }
 

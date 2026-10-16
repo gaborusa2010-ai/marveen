@@ -2231,6 +2231,37 @@
             <div class="blocker-list" id="cardBlockingList"></div>
           </div>
         </div>
+        <!-- Kanban features (cards #452-#454), each hidden while its Settings switch is off -->
+        <div class="card-detail-extra" id="cardRecurrenceSection" style="display:none">
+          <h4 data-i18n="kanban.recur.title">Ismétlődés</h4>
+          <div class="form-row kanban-recur-row">
+            <select id="cardRecurFreq" class="kanban-detail-input"></select>
+            <select id="cardRecurWeekday" class="kanban-detail-input" style="display:none"></select>
+            <input type="number" id="cardRecurDay" class="kanban-detail-input kanban-recur-num" min="1" max="31" style="display:none">
+            <input type="number" id="cardRecurDays" class="kanban-detail-input kanban-recur-num" min="1" max="365" style="display:none">
+            <button class="btn-primary btn-compact" id="cardRecurSaveBtn" data-i18n="common.btn.save">Mentés</button>
+          </div>
+          <div class="kanban-detail-hint" id="cardRecurHint"></div>
+        </div>
+        <div class="card-detail-extra" id="cardChecklistSection" style="display:none">
+          <h4><span data-i18n="kanban.checklist.title">Ellenőrzőlista</span> <span class="kanban-checklist-progress" id="cardChecklistProgress"></span></h4>
+          <div class="kanban-checklist-list" id="cardChecklistList"></div>
+          <div class="form-row" style="gap:8px; align-items:center; margin-top:6px">
+            <input type="text" id="cardChecklistNew" class="kanban-detail-input" style="flex:1" maxlength="500" placeholder="Új tétel..." data-i18n-placeholder="kanban.checklist.new_ph">
+            <button class="btn-primary btn-compact" id="cardChecklistAddBtn" data-i18n="common.btn.add">Hozzáadás</button>
+          </div>
+        </div>
+        <div class="card-detail-extra" id="cardAttachmentsSection" style="display:none">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px">
+            <h4 data-i18n="kanban.attach.title">Csatolmányok</h4>
+            <label class="btn-secondary btn-compact" id="cardAttachmentUploadLabel" style="cursor:pointer">
+              <span data-i18n="kanban.attach.add">+ Fájl feltöltése</span>
+              <input type="file" id="cardAttachmentInput" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.docx,.xlsx,.pptx,.odt,.ods" style="display:none">
+            </label>
+          </div>
+          <div class="kanban-detail-hint" id="cardAttachmentStatus" style="display:none"></div>
+          <div class="kanban-attachment-grid" id="cardAttachmentGrid"></div>
+        </div>
         <div class="card-detail-comments">
           <h4 data-i18n="kanban.modal.comments_title">Megjegyzések</h4>
           <div class="comments-list" id="commentsList"></div>
