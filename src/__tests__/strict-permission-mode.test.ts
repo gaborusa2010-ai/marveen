@@ -78,8 +78,9 @@ function render(profile: ProfileTemplate): Record<string, unknown> {
 
 describe('the project settings a strict sub-agent gets', () => {
   it('carry permissions.defaultMode = dontAsk next to the allow-list', () => {
-    const strict: ProfileTemplate = { ...loadProfileTemplate('developer-junior') }
-    expect(strict.permissionMode).toBe('strict')
+    // No shipped profile is strict any more (owner decision, 2026-10-16), so the
+    // strict case is built from a shipped one with the mode switched on.
+    const strict: ProfileTemplate = { ...loadProfileTemplate('developer-junior'), permissionMode: 'strict' }
     const perms = render(strict).permissions as Record<string, unknown>
     expect(perms.defaultMode).toBe('dontAsk')
     expect(Array.isArray(perms.allow)).toBe(true)
