@@ -323,6 +323,21 @@ export function startWebServer(port = 3420): http.Server {
     }
   })
 
+  // #114: a raw non-ASCII char in the URL (e.g. ?q=funkcionális) is rejected by
+  // Node's HTTP parser (HPE_INVALID_URL) before any route runs. The default
+  // reply is a 400 with an EMPTY body, which lenient callers read as "no hits".
+  // Answer with a body and a hint, like the routes' own 400s.
+  server.on('clientError', (err: NodeJS.ErrnoException, socket) => {
+    if (err.code === 'ECONNRESET' || !socket.writable) {
+      socket.destroy()
+      return
+    }
+    const body = JSON.stringify(err.code === 'HPE_INVALID_URL'
+      ? { error: 'invalid character in URL', hint: 'percent-encode non-ASCII query values (curl -G --data-urlencode "q=...")' }
+      : { error: 'bad request', code: err.code ?? null })
+    socket.end(`HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`)
+  })
+
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       // Try to reclaim the port only if the listener is another node/dashboard
