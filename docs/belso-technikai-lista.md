@@ -26,10 +26,10 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 102 | bb1f2697 | low | planned | Elveszett bejovo: a sweep csak a foagenst fedi -- kell-e a sub-agenseknek is? |
 | 107 | 60847e57 | low | reszben (10-17: timer fut; a respawn utani alapvonal nem mert) | Channel-watchdog timer telepitese + respawn utani eletjel-alapvonal |
 | 112 | f91d8de6 | low | planned | Vak folt: a napi naplo nem latja azt, aki uzeneteken keresztul dolgozik |
-| 113 | c2e6d9e9 | low | planned | A marveen shared emlekei elnyomjak a tobbiek sajat memoria-nezetet |
+| 113 | c2e6d9e9 | low | lezarva (10-17: category=hot/warm/cold adja a sajat nezetet, doksiban) | A marveen shared emlekei elnyomjak a tobbiek sajat memoria-nezetet |
 | 114 | 89fd8d00 | low | kesz (10-17: 612c4307 hibatorzs+hint; a kapu-resz nem reprodukalhato) | Ekezetes q= 400-at ad URES torzzsel + egress-kapu hamis riasztasa localhost hivasra |
 | 117 | 0a8bb430 | low | lezarva (10-17: a skill eszkoz nelkul igaz, kimondja) | A doc-audit.py es host-audit.py NEM letezik -- egy skill-javaslat rajuk epult |
-| 121 | 8a8ec601 | low | planned | Kozos auto-memoria: a nevesitetlen E/1 emlek mindenki masnal hamis allitas |
+| 121 | 8a8ec601 | low | nem all fenn (10-17: sub-agenseknel autoMemoryEnabled=false) | Kozos auto-memoria: a nevesitetlen E/1 emlek mindenki masnal hamis allitas |
 | 123 | 5f04bffd | low | planned | A Drive-szabaly ket mondata ellentmond egymasnak szemelyi Google-fiokon |
 | 126 | 4f046b90 | low | planned | global-skill-write-gate: mindket iranyba teved (a parancs szoveget iteli, nem a hatasat) |
 | 133 | b75cdee9 | low | planned | bash-egress-gate: hamis riasztas forraskodra, ami CSAK LEIRJA a halozati hivast |

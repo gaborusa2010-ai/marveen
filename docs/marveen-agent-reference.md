@@ -105,13 +105,17 @@ for r in shared: print('  [' + str(r.get('agent_id')) + '] ' + str(r.get('conten
 #    szűrő tényleg szűr: q nélkül 200 sor, q=xyzzyfoobar123 -> 0 sor. Vagyis NEM kell
 #    találgatni, hogy az adat ékezettel van-e eltárolva (vegyes: a saját emlékeim 34
 #    százaléka ékezetes) -- a szerver mindkét irányban összeejti. A gond KIZÁRÓLAG az
-#    átvitel: nyers ékezet az URL-ben nálam 400 üres törzzsel, Margónál a python urllib
+#    átvitel: nyers ékezet az URL-ben nálam 400 (10-17 óta hint-es JSON törzzsel, #114), Margónál a python urllib
 #    UnicodeEncodeError-ral áll meg még küldés előtt. Ezért a quote(), és semmi más.
 
 # Miért kell a szétválasztás: a szűrő szerződése (agent_id = ? OR category = 'shared'),
 # tehát mások megosztott sorai azonos súllyal állnak a sajátjaid mellett. Margó mérése
 # szerint ez témafüggően elnyom: a q=meres keresésénél 25 sorból 20 volt idegen, és az
 # első öt MIND másé. FIGYELEM: az alapértelmezett limit 50, némán vág (Margó mérése).
+# CSAK A SAJAT sorok: add meg a category-t (hot|warm|cold). Mas agens sora csak
+# 'shared' kategoriaban lathato, tehat category=warm stb. eleve csak a tiedet adja.
+# Merve 2026-10-17 (#113): agent=margo&limit=100 -> 63 idegen sor a 100-bol; ugyanez
+# category=warm/cold/hot -> 33/38/4 sor, mind margo. A sajat shared sorodat ez NEM adja.
 
 # LISTAZAS KATEGORIA SZERINT (nem keresés) -- ES A KET NEV, AMI 404-ET AD.
 # Merve 2026-09-16: `GET /api/memory?tier=hot` -> HTTP 404. KET hiba egyszerre, és
