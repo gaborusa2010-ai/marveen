@@ -39,6 +39,7 @@ Usage
 """
 import argparse
 import json
+import fnmatch
 import os
 import subprocess
 import sys
@@ -127,6 +128,15 @@ SKIP_HOME_FILES = {
 #           is permanently red stops being read -- which is the failure this
 #           whole tool exists to prevent.
 SKIP_SUFFIXES_ANYWHERE = (".pid",)
+
+# Directories skipped by PATH (fnmatch against the path relative to the walk
+# base), for runtime dirs whose bare name is too generic for SKIP_ANYWHERE.
+#   .claude/channels/worksource/*/done -- added 2026-10-16 (note #703aa2). The
+#       worksource bridge moves each acknowledged message file here; the same
+#       content is already in the agent_messages table, which IS backed up. It
+#       was a permanent red row (modproba/done, 208 files, grows forever).
+#       pending/ and active/ stay measured: a file stuck there is a real event.
+SKIP_PATHS = (".claude/channels/worksource/*/done",)
 
 # Suffixes skipped ONLY under the repo's store/ -- the checker's half of a rule
 # backup.sh already states out loud in its store block:
@@ -259,7 +269,9 @@ def walk_files(base, top, skip_names, newer_than=None):
     root_dir = os.path.join(base, top)
     for dirpath, dirnames, filenames in os.walk(root_dir):
         dirnames[:] = [d for d in dirnames
-                       if d not in skip_names and d not in SKIP_ANYWHERE and not is_backup_copy(d)]
+                       if d not in skip_names and d not in SKIP_ANYWHERE and not is_backup_copy(d)
+                       and not any(fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, d), base), pat)
+                                   for pat in SKIP_PATHS)]
         for f in filenames:
             if is_backup_copy(f):
                 continue
