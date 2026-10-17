@@ -17,25 +17,25 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 349 | 0eda731e | normal | lezarva (10-17: nem kotjuk be, a premisszaja itt nem all; upstream kod, marad) | memory-index-gate.sh: nincs eles hivoja -- bekotni vagy kivezetni |
 | 353 | 7045306c | normal | kesz (10-17: binaris c1e83c0, 15 katalogus betoltve, kontroll OK) | Bumblebee binaris frissitese: az upstream katalogus schema 0.2.0, a v0.1.1 csak 0.1.0-t olvas |
 | 87 | 1c6dd326 | low | planned | Anorak ejszakai muszakja: nincs allando feladat ebredeskor |
-| 88 | e184b0e9 | low | planned | upstream-sync + a tobbi uj script bekerulese a repoba |
-| 90 | 585755d4 | low | planned | A skill_usage tabla gyakorlatilag ures -- nem tudjuk ki hasznal egy skillt |
+| 88 | e184b0e9 | low | kesz (10-17: minden script es unit a repoban vagy installerbol) | upstream-sync + a tobbi uj script bekerulese a repoba |
+| 90 | 585755d4 | low | nem all fenn (10-17: 224 sor, 50 skill, 7 agens) | A skill_usage tabla gyakorlatilag ures -- nem tudjuk ki hasznal egy skillt |
 | 94 | 89bb0126 | low | planned | Hang-canary: tesztmondat csere + rendszeres futtatas |
 | 95 | 44f54620 | low | done (10-03) | egress-blocked.log: nincs benne agens-azonosito |
 | 98 | 767acdd3 | low | planned | Beragadt mellekletek az inboxban + album-sejtes |
-| 101 | 9b022646 | low | planned | Memoria-API: a biztonsagi szuro a sajat tanulsagainkat is elutasitja |
+| 101 | 9b022646 | low | nem all fenn (10-17: a szuro csak injekcio-idiomakat nez, probe 200) | Memoria-API: a biztonsagi szuro a sajat tanulsagainkat is elutasitja |
 | 102 | bb1f2697 | low | planned | Elveszett bejovo: a sweep csak a foagenst fedi -- kell-e a sub-agenseknek is? |
-| 107 | 60847e57 | low | planned | Channel-watchdog timer telepitese + respawn utani eletjel-alapvonal |
+| 107 | 60847e57 | low | reszben (10-17: timer fut; a respawn utani alapvonal nem mert) | Channel-watchdog timer telepitese + respawn utani eletjel-alapvonal |
 | 112 | f91d8de6 | low | planned | Vak folt: a napi naplo nem latja azt, aki uzeneteken keresztul dolgozik |
 | 113 | c2e6d9e9 | low | planned | A marveen shared emlekei elnyomjak a tobbiek sajat memoria-nezetet |
-| 114 | 89fd8d00 | low | planned | Ekezetes q= 400-at ad URES torzzsel + egress-kapu hamis riasztasa localhost hivasra |
-| 117 | 0a8bb430 | low | planned | A doc-audit.py es host-audit.py NEM letezik -- egy skill-javaslat rajuk epult |
+| 114 | 89fd8d00 | low | kesz (10-17: 612c4307 hibatorzs+hint; a kapu-resz nem reprodukalhato) | Ekezetes q= 400-at ad URES torzzsel + egress-kapu hamis riasztasa localhost hivasra |
+| 117 | 0a8bb430 | low | lezarva (10-17: a skill eszkoz nelkul igaz, kimondja) | A doc-audit.py es host-audit.py NEM letezik -- egy skill-javaslat rajuk epult |
 | 121 | 8a8ec601 | low | planned | Kozos auto-memoria: a nevesitetlen E/1 emlek mindenki masnal hamis allitas |
 | 123 | 5f04bffd | low | planned | A Drive-szabaly ket mondata ellentmond egymasnak szemelyi Google-fiokon |
 | 126 | 4f046b90 | low | planned | global-skill-write-gate: mindket iranyba teved (a parancs szoveget iteli, nem a hatasat) |
 | 133 | b75cdee9 | low | planned | bash-egress-gate: hamis riasztas forraskodra, ami CSAK LEIRJA a halozati hivast |
 | 138 | 7e6d6dc0 | low | planned | BIZTONSAG: a global-skill-write-gate ATENGEDI a fajlbol futtatott szkriptet -- naplosor sincs rola |
 | 149 | 424811d0 | low | planned | Trigger-audit: a skillek 'Mikor hasznald' listaja fedi-e a valos szabalyszegeseket |
-| 154 | 35b01b18 | low | planned | A teszt-worktree-ben egy rossz helyre masolt fajl 4 hamis tsc-hibat ad minden futasnal |
+| 154 | 35b01b18 | low | kesz (10-17: atnevezve .bak-ra, tsc 0 hiba) | A teszt-worktree-ben egy rossz helyre masolt fajl 4 hamis tsc-hibat ad minden futasnal |
 | 156 | 5988e05b | low | planned | A skill-management skill EGY SZOT SEM ir a grant-korrol, pedig a kapuba mindenki beleutkozik |
 | 163 | a7f786cf | low | planned | Anorak javaslatai: legyen kartyajuk, ne csak jelentesuk |
 | 174 | f01a5ec0 | low | planned | Nincs eval: 344 unit-teszt a kodra, nulla meres az agensek valaszaira |
