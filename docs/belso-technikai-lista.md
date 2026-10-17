@@ -32,7 +32,7 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 121 | 8a8ec601 | low | nem all fenn (10-17: sub-agenseknel autoMemoryEnabled=false) | Kozos auto-memoria: a nevesitetlen E/1 emlek mindenki masnal hamis allitas |
 | 123 | 5f04bffd | low | planned | A Drive-szabaly ket mondata ellentmond egymasnak szemelyi Google-fiokon |
 | 126 | 4f046b90 | low | planned | global-skill-write-gate: mindket iranyba teved (a parancs szoveget iteli, nem a hatasat) |
-| 133 | b75cdee9 | low | planned | bash-egress-gate: hamis riasztas forraskodra, ami CSAK LEIRJA a halozati hivast |
+| 133 | b75cdee9 | low | nem all fenn (10-17: leiro forraskod atmegy, a valodi curl tiltva) | bash-egress-gate: hamis riasztas forraskodra, ami CSAK LEIRJA a halozati hivast |
 | 138 | 7e6d6dc0 | low | enyhitve (10-17: hatas-alapu audit naploz, TREE_CHANGE sorok; megelozni nem tud) | BIZTONSAG: a global-skill-write-gate ATENGEDI a fajlbol futtatott szkriptet -- naplosor sincs rola |
 | 149 | 424811d0 | low | planned | Trigger-audit: a skillek 'Mikor hasznald' listaja fedi-e a valos szabalyszegeseket |
 | 154 | 35b01b18 | low | kesz (10-17: atnevezve .bak-ra, tsc 0 hiba) | A teszt-worktree-ben egy rossz helyre masolt fajl 4 hamis tsc-hibat ad minden futasnal |
@@ -43,7 +43,7 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 177 | 3433a075 | low | planned | store/: a fedetlen 68 fajlbol nehany VALODI tartalom, egyetlen peldanyban (a tobbi naplo) |
 | 178 | bbf225e7 | low | planned | A mentesek KOZOTTI ablak: az ejszakai riportok most 21 oran at egyetlen peldanyban allnak |
 | 179 | 26a1eba2 | low | done (10-03) | agent-night-shift.sh 23:00-kor hamisan riaszt, ha a muszak KORABBAN indult kezzel |
-| 186 | aa5cb27b | low | planned | A memoria-API biztonsagi szuroje elutasitja az 'eval(' alakot -- es a curl 0-val ter vissza ra |
+| 186 | aa5cb27b | low | nem all fenn (10-17: eval( tartalom HTTP 200, a szuro mar nem utasitja el) | A memoria-API biztonsagi szuroje elutasitja az 'eval(' alakot -- es a curl 0-val ter vissza ra |
 | 187 | adbe868f | low | planned | A provenance-kapu a HATTERTASK-ertesitest csatorna-inputnak veszi -- egy ejszaka ot hamis riasztas |
 | 188 | fa752dcb | low | planned | A sub-agensek skill-indexe elavul: a heartbeat csak ANNAK frissiti, aki futtatja -- es 23-bol 22 feladat marveene |
 | 192 | 8a2651da | low | planned | A nyugtak elrejtik az erdemi uzeneteket: a mai forgalom 50-60%-a [Eredmeny] sor |
