@@ -312,6 +312,7 @@
         <button class="view-btn active" id="kanbanViewBoard" style="width:auto;padding:0 12px;" data-i18n="kanban.view.board">Tábla</button>
         <button class="view-btn" id="kanbanViewGantt" style="width:auto;padding:0 12px;" data-i18n="kanban.view.gantt">Idővonal</button>
         <button class="view-btn" id="kanbanViewTeam" style="width:auto;padding:0 12px;" data-i18n="kanban.view.team">Csapat</button>
+        <button class="view-btn" id="kanbanIntakeBtn" style="width:auto;padding:0 12px;" data-i18n="kanban.intake.button" hidden>Ügyfél-kérés</button>
         <span id="kanbanTotals" style="margin-left:auto;font-size:13px;color:var(--muted);white-space:nowrap;"></span>
         <button class="view-btn" id="kanbanViewArchived" style="width:auto;padding:0 12px;margin-left:12px;" data-i18n="kanban.view.archived">Archiváltak</button>
       </div>
@@ -2191,6 +2192,31 @@
           <span class="btn-loading" hidden><span class="spinner"></span> <span data-i18n="common.saving">Mentés...</span></span>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: client request intake -->
+  <div class="modal-overlay" id="kanbanIntakeOverlay">
+    <div class="modal kanban-intake-modal" role="dialog" aria-modal="true" aria-labelledby="kanbanIntakeTitle">
+      <div class="modal-header">
+        <h2 id="kanbanIntakeTitle" data-i18n="kanban.intake.title">Ügyfél-kérés</h2>
+        <button type="button" class="modal-close" id="kanbanIntakeClose" data-i18n-title="kanban.intake.close" data-i18n-aria-label="kanban.intake.close">&times;</button>
+      </div>
+      <form id="kanbanIntakeForm">
+        <div class="modal-body">
+          <div class="form-group"><label for="intakeClientName" data-i18n="kanban.intake.client_name">Ügyfél neve *</label><input id="intakeClientName" name="client_name" type="text" maxlength="120" required></div>
+          <div class="form-group"><label for="intakeRequest" data-i18n="kanban.intake.request">Kérés *</label><textarea id="intakeRequest" name="request" rows="5" maxlength="4000" required></textarea></div>
+          <div class="form-group"><label for="intakeContact" data-i18n="kanban.intake.contact">Elérhetőség</label><input id="intakeContact" name="contact" type="text" maxlength="200"></div>
+          <div class="form-group"><label for="intakeAddress" data-i18n="kanban.intake.address">Helyszín</label><input id="intakeAddress" name="address" type="text" maxlength="300"></div>
+          <div class="form-group"><label for="intakeWantedBy" data-i18n="kanban.intake.wanted_by">Mikorra</label><input id="intakeWantedBy" name="wanted_by" type="date"></div>
+          <div class="form-group"><label for="intakeProject" data-i18n="kanban.intake.project">Projekt</label><input id="intakeProject" name="project" type="text" maxlength="80" list="intakeProjectSuggestions" autocomplete="off"><datalist id="intakeProjectSuggestions"></datalist></div>
+          <div class="kanban-intake-error" id="kanbanIntakeError" role="alert" hidden></div>
+        </div>
+        <div class="modal-footer kanban-intake-actions">
+          <button type="button" class="btn-secondary" id="kanbanIntakeCancel" data-i18n="kanban.intake.cancel">Mégse</button>
+          <button type="submit" class="btn-primary btn-compact" id="kanbanIntakeSubmit" data-i18n="kanban.intake.submit">Beküldés</button>
+        </div>
+      </form>
     </div>
   </div>
 

@@ -2940,7 +2940,7 @@ function touchAncestorChain(parentId: string | null | undefined, now: number, st
 // the dashboard plus the timeline, and a tolerant reader would have to be
 // remembered at each new one. A single coercion at the boundary cannot be
 // forgotten.
-function normaliseDueDate(v: unknown): number | null {
+export function normaliseDueDate(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null
   if (typeof v === 'number') return Number.isFinite(v) ? Math.floor(v) : null
   if (typeof v === 'string') {

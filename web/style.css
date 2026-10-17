@@ -1700,6 +1700,23 @@ main {
 }
 .form-half { flex: 1; }
 
+#kanbanIntakeBtn[hidden] { display: none; }
+.kanban-intake-modal { max-width: 560px; }
+.kanban-intake-modal form { min-width: 0; }
+.kanban-intake-error {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 420px) {
+  .kanban-intake-modal { width: calc(100% - 20px); }
+  .kanban-intake-modal .modal-header,
+  .kanban-intake-modal .modal-body,
+  .kanban-intake-modal .modal-footer { padding-left: 14px; padding-right: 14px; }
+}
+
 /* === Page switching === */
 .page[hidden] { display: none; }
 /* The board keeps its tighter side padding -- it needs every pixel for the

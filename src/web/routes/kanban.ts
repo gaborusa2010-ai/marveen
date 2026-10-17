@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
   listKanbanCards, kanbanAssigneeExists, createKanbanCard, updateKanbanCard, KANBAN_WRITABLE_FIELDS, KANBAN_CREATE_FIELDS,
+  normaliseDueDate,
   deleteKanbanCard, moveKanbanCard, archiveKanbanCard, unarchiveKanbanCard,
   getKanbanComments, addKanbanComment, getKanbanCardEvents, getKanbanCardFieldEvents, listKanbanProjects,
   getKanbanCard, getChildCards, getDb,
@@ -611,6 +612,78 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const id = randomUUID().slice(0, 8)
     const label = createLabel({ id, name: name.trim(), color: resolvedColor })
     json(res, label)
+    return true
+  }
+
+  // Client intake (#456): a request typed in from the dashboard form becomes an
+  // unassigned planned card for a human to triage -- no assignee, so it is never
+  // dispatched to an agent on its own. Behind the normal /api auth like every
+  // other route; there is no public, unauthenticated form. Keep this literal
+  // route above /api/kanban/:id so "intake" is never read as a card id.
+  if (path === '/api/kanban/intake' && method === 'POST') {
+    if (refuseDisabledFeature(res, 'intakeForm')) return true
+    let body: unknown
+    try { body = JSON.parse((await readBody(req, { maxBytes: 16 * 1024 })).toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+    const accepted = ['client_name', 'request', 'contact', 'address', 'wanted_by', 'project']
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      json(res, { error: `Body must be a JSON object. Accepted fields: ${accepted.join(', ')}` }, 400); return true
+    }
+    const data = body as Record<string, unknown>
+    const unknown = Object.keys(data).filter((key) => !accepted.includes(key))
+    if (unknown.length) { json(res, { error: `Unknown field(s): ${unknown.join(', ')}. Accepted: ${accepted.join(', ')}` }, 400); return true }
+
+    const required = (name: string, max: number): string | null => {
+      const value = data[name]
+      return typeof value === 'string' && value.trim().length >= 1 && value.trim().length <= max ? value.trim() : null
+    }
+    const optional = (name: string, max: number): string | null | undefined => {
+      const value = data[name]
+      if (value === undefined) return undefined
+      if (typeof value !== 'string' || value.trim().length > max) return null
+      return value.trim() || undefined
+    }
+    const clientName = required('client_name', 120)
+    if (clientName === null) { json(res, { error: 'client_name is required (1-120 characters)' }, 400); return true }
+    const request = required('request', 4000)
+    if (request === null) { json(res, { error: 'request is required (1-4000 characters)' }, 400); return true }
+    const contact = optional('contact', 200)
+    if (contact === null) { json(res, { error: 'contact must be a string of at most 200 characters' }, 400); return true }
+    const address = optional('address', 300)
+    if (address === null) { json(res, { error: 'address must be a string of at most 300 characters' }, 400); return true }
+    const project = optional('project', 80)
+    if (project === null) { json(res, { error: 'project must be a string of at most 80 characters' }, 400); return true }
+    const wantedRaw = optional('wanted_by', 10)
+    if (wantedRaw === null) { json(res, { error: 'wanted_by must be a valid YYYY-MM-DD date' }, 400); return true }
+    let wantedBy: string | undefined
+    if (wantedRaw !== undefined) {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(wantedRaw)
+      const date = match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))) : null
+      if (!match || date!.getUTCFullYear() !== Number(match[1]) || date!.getUTCMonth() !== Number(match[2]) - 1 || date!.getUTCDate() !== Number(match[3])) {
+        json(res, { error: 'wanted_by must be a valid YYYY-MM-DD date' }, 400); return true
+      }
+      wantedBy = wantedRaw
+    }
+
+    const firstLine = request.split(/\r?\n/).find((line) => line.trim())!.trim()
+    const rawTitle = `Ügyfél: ${clientName}: ${firstLine}`
+    const title = rawTitle.length > 120 ? rawTitle.slice(0, 119) + '…' : rawTitle
+    const lines = ['Ügyfél-kérés (űrlap)', `Név: ${clientName}`]
+    if (contact) lines.push(`Elérhetőség: ${contact}`)
+    if (address) lines.push(`Helyszín: ${address}`)
+    if (wantedBy) lines.push(`Mikorra: ${wantedBy}`)
+    if (project) lines.push(`Projekt: ${project}`)
+    lines.push('', 'Kérés:', request)
+
+    const id = randomUUID().slice(0, 8)
+    const fold = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+    const card = getDb().transaction(() => {
+      createKanbanCard({ id, title, description: lines.join('\n'), status: 'planned', priority: 'normal', project, due_date: normaliseDueDate(wantedBy) ?? undefined })
+      let label = listLabels().find((item) => fold(item.name) === fold('Ügyfél-kérés'))
+      if (!label) label = createLabel({ id: randomUUID().slice(0, 8), name: 'Ügyfél-kérés', color: KANBAN_LABEL_COLORS[0] })
+      addLabelToCard(id, label.id)
+      return getKanbanCard(id)!
+    })()
+    json(res, { ok: true, id, seq: card.seq })
     return true
   }
 

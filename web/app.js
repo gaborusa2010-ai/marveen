@@ -805,6 +805,7 @@ let kanbanHiddenColumns = new Set()
 
 const cardModalOverlay = document.getElementById('cardModalOverlay')
 const cardDetailOverlay = document.getElementById('cardDetailOverlay')
+const kanbanIntakeOverlay = document.getElementById('kanbanIntakeOverlay')
 const breakdownOverlay = document.getElementById('breakdownOverlay')
 let breakdownCardId = null
 let breakdownSubtasks = []
@@ -818,6 +819,68 @@ document.getElementById('cardModalClose').addEventListener('click', () => closeM
 document.getElementById('cardDetailClose').addEventListener('click', () => closeModal(cardDetailOverlay))
 attachOverlayCloseGuard(cardModalOverlay)
 attachOverlayCloseGuard(cardDetailOverlay)
+attachOverlayCloseGuard(kanbanIntakeOverlay)
+
+function syncKanbanIntakeFlag() {
+  const button = document.getElementById('kanbanIntakeBtn')
+  const on = kanbanFeatureOn('intakeForm')
+  if (button) button.hidden = !on
+  if (!on && kanbanIntakeOverlay?.classList.contains('active')) closeModal(kanbanIntakeOverlay)
+}
+
+function openKanbanIntake() {
+  const form = document.getElementById('kanbanIntakeForm')
+  form.reset()
+  const error = document.getElementById('kanbanIntakeError')
+  error.hidden = true
+  error.textContent = ''
+  const projects = [...new Set(kanbanCards.map((card) => card.project).filter(Boolean))].sort()
+  const datalist = document.getElementById('intakeProjectSuggestions')
+  datalist.replaceChildren(...projects.map((project) => {
+    const option = document.createElement('option')
+    option.value = project
+    return option
+  }))
+  openModal(kanbanIntakeOverlay)
+  setTimeout(() => document.getElementById('intakeClientName').focus(), 200)
+}
+
+document.getElementById('kanbanIntakeBtn').addEventListener('click', openKanbanIntake)
+document.getElementById('kanbanIntakeClose').addEventListener('click', () => closeModal(kanbanIntakeOverlay))
+document.getElementById('kanbanIntakeCancel').addEventListener('click', () => closeModal(kanbanIntakeOverlay))
+document.getElementById('kanbanIntakeForm').addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = event.currentTarget
+  if (!form.reportValidity()) return
+  const error = document.getElementById('kanbanIntakeError')
+  const submit = document.getElementById('kanbanIntakeSubmit')
+  const payload = {}
+  for (const name of ['client_name', 'request', 'contact', 'address', 'wanted_by', 'project']) {
+    const value = form.elements[name].value
+    if (value || name === 'client_name' || name === 'request') payload[name] = value
+  }
+  error.hidden = true
+  submit.disabled = true
+  try {
+    const response = await fetch('/api/kanban/intake', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      error.textContent = result.error || String(response.status)
+      error.hidden = false
+      return
+    }
+    closeModal(kanbanIntakeOverlay)
+    showToast(t('kanban.intake.created', { seq: result.seq }))
+    loadKanban()
+  } catch {
+    error.textContent = t('kanban.intake.network_error')
+    error.hidden = false
+  } finally {
+    submit.disabled = false
+  }
+})
 
 // Add card buttons per column
 document.querySelectorAll('.kanban-add-btn').forEach((btn) => {
@@ -1643,6 +1706,7 @@ function renderKanbanOngoing(cards) {
 }
 
 function renderKanban() {
+  syncKanbanIntakeFlag()
   const cardById = new Map(kanbanCards.map(c => [c.id, c]))
 
   renderKanbanColumnChips()
