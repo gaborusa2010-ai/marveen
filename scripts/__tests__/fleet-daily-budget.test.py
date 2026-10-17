@@ -31,13 +31,14 @@ class FakeGuard:
     """Stands in for agent-budget-guard: fixed spends, recorded stops."""
     def __init__(self, spends):
         self.spends = spends
+        self.lasts = {}
         self.stopped = []
         self.sent = []
 
     def window_tokens(self, agent, hours, weight, daily_from=None):
         if agent not in self.spends:
             return 0, 0, 0.0, True
-        return self.spends[agent], 1, 0.0, False
+        return self.spends[agent], 1, self.lasts.get(agent, 0.0), False
 
     def stop_agent(self, agent):
         self.stopped.append(agent)
@@ -56,7 +57,7 @@ SEMLEGES = {"window": "seven_day", "used_pct": 80.0, "elapsed_pct": 50.0,
 _ALAP = object()
 
 
-def run(spends, argv, allapot, weekly=_ALAP):
+def run(spends, argv, allapot, weekly=_ALAP, lasts=None):
     """Egy futas, rogzitett heti ablakkal.
 
     A heti ablakot MINDIG rogzitjuk: kulonben a teszt a GEP valodi pillanatkepet
@@ -65,6 +66,7 @@ def run(spends, argv, allapot, weekly=_ALAP):
     if weekly is _ALAP:
         weekly = SEMLEGES
     g = FakeGuard(spends)
+    g.lasts = dict(lasts or {})
     mod._load_guard = lambda: g
     mod.load = lambda: dict(allapot)
     def ment(d):
@@ -123,6 +125,26 @@ def main():
                    "bands": [85], "stopped": ["forgacs"]}
         rc, g = run(dict(MIND, marveen=280_000_000, forgacs=110_000_000, cody=90_000_000),
                     ["--notify", "--budget", "520000000"], allapot)
+        check("forgacs nincs ujra leallitva", "forgacs" not in g.stopped, f"{g.stopped}")
+        check("cody viszont igen", "cody" in g.stopped, f"{g.stopped}")
+
+        print("5b. #305: a leallitott, de UJRAINDULT es azota kolto agens ujra leall")
+        ma_ = mod.window_day(6)
+        allapot = {"day": ma_, "bands": [85], "stopped": ["forgacs"],
+                   "stop_activity": {"forgacs": 1000.0}}
+        rc, g = run(dict(MIND, marveen=280_000_000, forgacs=110_000_000, cody=90_000_000),
+                    ["--notify", "--budget", "520000000"], allapot,
+                    lasts={"forgacs": 2000.0, "cody": 1500.0})
+        check("forgacs (aktiv a leallitas utan) ujra leall", "forgacs" in g.stopped, f"{g.stopped}")
+        check("az uj aktivitas-jel elmentve", allapot.get("stop_activity", {}).get("forgacs") == 2000.0,
+              f"{allapot.get('stop_activity')}")
+
+        print("5c. #305: leallitva es azota CSENDES -> nem allitja le megegyszer")
+        allapot = {"day": ma_, "bands": [85], "stopped": ["forgacs"],
+                   "stop_activity": {"forgacs": 1000.0}}
+        rc, g = run(dict(MIND, marveen=280_000_000, forgacs=110_000_000, cody=90_000_000),
+                    ["--notify", "--budget", "520000000"], allapot,
+                    lasts={"forgacs": 1000.0, "cody": 1500.0})
         check("forgacs nincs ujra leallitva", "forgacs" not in g.stopped, f"{g.stopped}")
         check("cody viszont igen", "cody" in g.stopped, f"{g.stopped}")
 

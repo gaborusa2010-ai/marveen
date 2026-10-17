@@ -315,12 +315,14 @@ def main(argv=None):
 
     g = _load_guard()
     per_agent, total, missing = {}, 0, []
+    last_seen = {}   # name -> newest transcript mtime in the window (activity marker)
     for name in (MAIN,) + SUBS:
-        tok, _files, _last, miss = g.window_tokens(name, 24, 1.0, a.daily_from)
+        tok, _files, last, miss = g.window_tokens(name, 24, 1.0, a.daily_from)
         if miss:
             missing.append(name)
             continue
         per_agent[name] = tok
+        last_seen[name] = last or 0.0
         total += tok
 
     pct = total / a.budget * 100 if a.budget else 0
@@ -344,6 +346,17 @@ def main(argv=None):
     st = load()
     kuldott = set(st.get("bands") or []) if st.get("day") == ma else set()
     allitott = set(st.get("stopped") or []) if st.get("day") == ma else set()
+    # #305 (759434e9): a stopped agent used to be immune for the rest of the day,
+    # so one that was restarted after the stop spent freely. Same rule as the
+    # sibling agent-budget-guard.py: a stop is "still in force" only while the
+    # agent has written NOTHING since it. Activity after the stop re-arms it.
+    # A stop recorded before this field existed has no marker: kept as before.
+    stop_activity = dict(st.get("stop_activity") or {}) if st.get("day") == ma else {}
+    ujra_aktiv = {n for n in allitott
+                  if n in stop_activity and last_seen.get(n, 0.0) > stop_activity[n]}
+    allitott -= ujra_aktiv
+    for n in ujra_aktiv:
+        stop_activity.pop(n, None)
 
     # STOP first: the stop band implies the warn band, and a day that is already
     # over the stop line should not spend a round announcing the smaller number.
@@ -379,7 +392,8 @@ def main(argv=None):
                         "frissen lemerni, es meres nelkul nem allitok le. Errol ma "
                         "tobbet nem szolok."):
                 st = dict(st, day=ma, unknown_noted=ma,
-                          bands=sorted(kuldott), stopped=sorted(allitott))
+                          bands=sorted(kuldott), stopped=sorted(allitott),
+                          stop_activity=stop_activity)
                 save(st)
         return 0
     if kell_leallitani:
@@ -387,6 +401,8 @@ def main(argv=None):
                         if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott)
         sikeres = [n for n in koltok if g.stop_agent(n)]
         allitott |= set(sikeres)
+        for n in sikeres:
+            stop_activity[n] = last_seen.get(n, 0.0)
         # Ujraprobalas: akit egy korabbi korben leallitottunk, de a hir nem ment ki.
         hirlista = sorted(set(sikeres) | set(fuggoben))
         if hirlista:
@@ -441,6 +457,7 @@ def main(argv=None):
             st = {"day": ma,
                   "bands": sorted(kuldott | {a.stop_at}) if kiment else sorted(kuldott),
                   "stopped": sorted(allitott),
+                  "stop_activity": stop_activity,
                   "stop_notify_pending": [] if kiment else hirlista}
             save(st)
         return 0
@@ -473,7 +490,7 @@ def main(argv=None):
                f"{zaras}")
         if g.notify(msg):
             st = {"day": ma, "bands": sorted(kuldott | {a.warn_at}),
-                  "stopped": sorted(allitott)}
+                  "stopped": sorted(allitott), "stop_activity": stop_activity}
             save(st)
     return 0
 
