@@ -83,6 +83,6 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 282 | 2c567585 | low | planned | A gazda SZERKESZTETT Telegram-uzenete egyikunkhoz sem jut el: a pluginban nincs edited_message kezelo |
 | 289 | 6c10c1c2 | low | planned | Anorak ejszakai muszakja 27 perc utan meghal (harom megfigyelt alkalom) |
 | 290 | b2443661 | low | planned | Reszsztring-alapu hook-szuro: ma stilus-kockazat, nem elo hiba (egy utkozes volt, javitva) |
-| 294 | 82966364 | low | planned | A self-pace kapu a DELETE-et is tiltja, es az uzenete csak POST-ot emlit |
+| 294 | 82966364 | low | done | A self-pace kapu a DELETE-et is tiltja, es az uzenete csak POST-ot emlit (2026-10-17: uzenet javitva, DELETE-tiltas marad) |
 | 315 | a705a9a5 | low | planned | outgoing-copy-gate: a nevszabaly a nyers szovegen fut (kulso eszrevetel, visszamerve) |
 | 350 | eabaa0b3 | low | planned | Index-plafon: a guard bajtot ES karaktert szamoljon, a rosszabbat mutassa |

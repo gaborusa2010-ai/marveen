@@ -566,7 +566,7 @@ export function gateDecision(toolName, toolInput, opts = {}) {
 const GATE_MSG =
   'Self-pace TILTOTT (governance hard-gate). Sub-agentkent NEM utemezhetsz sajat ' +
   'jovobeli turn-t: se ScheduleWakeup/Cron*/RemoteTrigger, se tmux send-keys, se ' +
-  'scheduled_tasks.json iras, se /api/schedules POST, se /loop self-pace. Input-vezerelt ' +
+  'scheduled_tasks.json iras, se /api/schedules iras (POST/PUT/PATCH/DELETE; a GET szabad), se /loop self-pace. Input-vezerelt ' +
   'vagy: csak az operator (channel) vagy egy peer (inter-agent) uzenete inditson. Ha varakozol, ' +
   'maradj idle a prompt-on -- a beerkezo uzenet majd ujrainditja a turn-t. SOHA ne valaszolj ' +
   'magadnak es SOHA ne dontsd el az operator helyett egy hozza intezett kerdest.'
