@@ -33,7 +33,7 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 123 | 5f04bffd | low | planned | A Drive-szabaly ket mondata ellentmond egymasnak szemelyi Google-fiokon |
 | 126 | 4f046b90 | low | planned | global-skill-write-gate: mindket iranyba teved (a parancs szoveget iteli, nem a hatasat) |
 | 133 | b75cdee9 | low | planned | bash-egress-gate: hamis riasztas forraskodra, ami CSAK LEIRJA a halozati hivast |
-| 138 | 7e6d6dc0 | low | planned | BIZTONSAG: a global-skill-write-gate ATENGEDI a fajlbol futtatott szkriptet -- naplosor sincs rola |
+| 138 | 7e6d6dc0 | low | enyhitve (10-17: hatas-alapu audit naploz, TREE_CHANGE sorok; megelozni nem tud) | BIZTONSAG: a global-skill-write-gate ATENGEDI a fajlbol futtatott szkriptet -- naplosor sincs rola |
 | 149 | 424811d0 | low | planned | Trigger-audit: a skillek 'Mikor hasznald' listaja fedi-e a valos szabalyszegeseket |
 | 154 | 35b01b18 | low | kesz (10-17: atnevezve .bak-ra, tsc 0 hiba) | A teszt-worktree-ben egy rossz helyre masolt fajl 4 hamis tsc-hibat ad minden futasnal |
 | 156 | 5988e05b | low | planned | A skill-management skill EGY SZOT SEM ir a grant-korrol, pedig a kapuba mindenki beleutkozik |
@@ -52,19 +52,19 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 198 | 3999304a | low | planned | Kontextus-fogyokura: CLAUDE.md-k es a kozos MEMORY.md |
 | 199 | 94883820 | low | planned | Az agens-lapok (CLAUDE.md, SOUL.md) nincsenek verziokezelve |
 | 201 | 1d02f6f0 | low | planned | A wrapUntrustedFetch-nek nincs elo hivoja -- leirt lepes vegrehajthato alak nelkul |
-| 202 | 9638f59e | low | planned | Orszem a kozos MEMORY.md ala: a betoltesi hatar ES a csonkulas |
+| 202 | 9638f59e | low | done | Orszem a kozos MEMORY.md ala: a betoltesi hatar ES a csonkulas -- premissza megszunt: a kozos MEMORY.md-t senki nem tolti be (#121), 10-17 |
 | 204 | 4d9a01de | low | planned | Bridge skill (A) ag: elavult menufeliratok, a gazda verzioja kell hozza |
 | 212 | f6247e86 | low | planned | Penz-kerekites iranya a szamlan: half-to-even vagy half-up (lappango, ma nulla hatas) |
 | 215 | cb85b16d | low | planned | Kereso-wrapper: ekezet + sortores + rekurzio, es irja ki MIT szamol |
 | 218 | efa15d04 | low | planned | A nincs-allitas-merese skill 1154 soros: szetvalasztas SKILL.md + references/ |
 | 229 | ecbd713d | low | planned | Helyes tartalom, rossz kornyezet: negy eset egy estén -- ket szabaly, nem egy |
-| 231 | a57b92ba | low | planned | CLAUDE.md a napindito formatumat a marveen-agent-reference.md-be utalja, de az nem all ott |
+| 231 | a57b92ba | low | done | CLAUDE.md a napindito formatumat a marveen-agent-reference.md-be utalja, de az nem all ott -- HAMIS premissza: ott all (623. sor), a grep az ekezet miatt nem talalta, 10-17 |
 | 234 | 16d64fbd | low | planned | Roxy: 21 perce kezbesitetlen inter-agent uzenet, es a ket ismert ok NINCS jelen |
 | 235 | f5f56f21 | low | planned | Egy ot napos SHARED emlek ma ketszer nem jutott el ahhoz, aki epp azt a problemat oldotta meg |
 | 236 | 2c1f7a40 | low | planned | Egy lezart sor result-javitasa UJABB nyugtat kuld -- a kod maga nevezi meg a mintat, a PUT-ag nem hasznalja |
 | 241 | 48b7fab7 | low | planned | Kiehezes-orszem: egy HETI feladat sosem tudja elerni a 10-es kuszobot (es a `missed` sikeres futasnak szamit) |
 | 242 | 6a6eabe8 | low | planned | munkanaplo-zaras-orzo es munkanap-kerdes-forgacs: 1-5 cron, de a gazda szombaton is dolgozik |
-| 253 | b039684a | low | planned | channel-image-resize.sh nema no-op ezen a gepen (jq es sips hianyzik) |
+| 253 | b039684a | low | done | channel-image-resize.sh nema no-op ezen a gepen (jq es sips hianyzik) -- javitva (python3 + ffmpeg), elo proba 5,4 MB -> 221 KB, 10-17 |
 | 254 | cdec6ea7 | low | planned | Telepitett hook-peldanyok regebbiek a repo-belieknel (telegram_progress*) |
 | 255 | eb3b4a28 | low | planned | Kozos skill-patch (nevesitett engedely kell): a teszt HAMIS OKBOL is atmehet |
 | 261 | 86848ea4 | low | planned | Harom skill-mappa van, nem ketto: a repo-gyokeri sajat mappa mindenkibe betoltodik, de a kapu nem vedi |
@@ -72,7 +72,7 @@ es EGY gyujtokartya kepviseli a tablan. Visszahozas: POST /api/kanban/<hex>/unar
 | 263 | d5643b2a | low | planned | Orszem-halal: 9 feladatnal elerhetetlen a starvation-kuszob, es a kvota-kapu nemán dob napokat |
 | 264 | ea53b3f9 | low | planned | Flotta-keret: a kapu a 18%-ot osztja ujra, a naptari nap ketszer allit le, es a stop-ertesites bukasa nyomtalan |
 | 268 | ea0e650f | low | planned | A kapu ket hete riaszt a sajat index-regenunkre: 10 sor 09-04 ota, 8 engedely nelkul |
-| 269 | 0cbc5ea7 | low | planned | Kozos MEMORY.md: eloszor MERD MEG, tortent-e valodi felulirás |
+| 269 | 0cbc5ea7 | low | done | Kozos MEMORY.md: eloszor MERD MEG, tortent-e valodi felulirás -- premissza megszunt, mint #202, 10-17 |
 | 271 | fe92ab64 | low | planned | 11 memoria-lap ELERHETETLEN: bemeno wikilink kell rajuk |
 | 272 | 2bf74fa8 | low | planned | A bukott kuldesrol a KULDO soha nem ertesul (handoff-failure) |
 | 274 | 31d81bac | low | planned | A kihagyott orszem-kor lyukat hagy: fix 1h ablak kontra eldobott tickek |
