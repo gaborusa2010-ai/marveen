@@ -50,7 +50,6 @@
       "Bash(git push:*)",
       "Read(${HOME}/.finstack/**)",
       "Edit(${HOME}/.finstack/**)",
-      "Write(${HOME}/.finstack/**)",
       "Bash(cat ${HOME}/.finstack/*)"
     ]
   },

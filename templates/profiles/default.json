@@ -9,7 +9,6 @@
       "mcp__claude_ai_Supabase__*",
       "Read(${HOME}/.finstack/**)",
       "Edit(${HOME}/.finstack/**)",
-      "Write(${HOME}/.finstack/**)",
       "Bash(cat ${HOME}/.finstack/*)"
     ]
   }
