@@ -40,6 +40,7 @@ import { startReauthHealer } from './web/reauth-healer.js'
 import { startAutoRestartRunner } from './web/auto-restart-runner.js'
 import { startModelFallbackRunner } from './web/model-fallback-runner.js'
 import { startKanbanArchiveRunner } from './web/kanban-archive-runner.js'
+import { startKanbanWaitExpiryRunner } from './web/kanban-wait-notify.js'
 import { startContextGuardRunner } from './web/context-guard-runner.js'
 import { startContextRestartGateRunner, setMainSweepHook } from './web/context-restart-gate-runner.js'
 import { collectTokenUsage } from './web/token-usage.js'
@@ -541,6 +542,10 @@ export function startWebServer(port = 3420): http.Server {
   const kanbanArchiveInterval = webOnly ? undefined : startKanbanArchiveRunner()
   if (!webOnly) logger.info('Kanban archive runner started (60min poll, 70s offset)')
 
+  // #574: a waiting card whose date wait ran out wakes its assignee agent once.
+  const kanbanWaitExpiryInterval = webOnly ? undefined : startKanbanWaitExpiryRunner()
+  if (!webOnly) logger.info('Kanban wait-expiry runner started (60s poll, 75s offset)')
+
   const contextGuardInterval = webOnly ? undefined : startContextGuardRunner()
   if (!webOnly) logger.info('Context-guard runner started (5min poll, 4.5min initial delay)')
 
@@ -780,6 +785,7 @@ setInterval(() => { try { sweepExpiredDesktopLock() } catch { /* never kill the 
     clearInterval(autoRestartInterval)
     clearInterval(modelFallbackInterval)
     clearInterval(kanbanArchiveInterval)
+    clearInterval(kanbanWaitExpiryInterval)
     clearInterval(contextGuardInterval)
     clearInterval(approvalTimeoutInterval)
     clearInterval(authSessionSweepInterval)

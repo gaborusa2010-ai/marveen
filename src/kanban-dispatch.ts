@@ -36,7 +36,7 @@ export interface DispatchResolveOpts {
 // the id the dispatcher works with, or null when it names nobody dispatchable.
 // Deliberately ignores isRunning: this answers "who is this", not "can we reach
 // them" -- a self-move must be recognised as such whether or not the session is up.
-function canonicalAgentId(
+export function canonicalAgentId(
   ref: string | null | undefined,
   opts: DispatchResolveOpts,
 ): string | null {

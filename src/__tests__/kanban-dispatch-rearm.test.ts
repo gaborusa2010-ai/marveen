@@ -113,6 +113,7 @@ describe('kanban dispatch re-arm', () => {
     expect(getKanbanCard('card-4')?.dispatched_at).toBeNull()
 
     await move('card-4', 'in_progress', 'orin')
-    expect(mockCreateAgentMessage).toHaveBeenCalledTimes(2)
+    // The waiting move also sends a 'system' next-card notice (#574); count only the dispatches.
+    expect(mockCreateAgentMessage.mock.calls.filter((c) => c[0] !== 'system')).toHaveLength(2)
   })
 })

@@ -256,6 +256,13 @@ export function initDatabase(dbPathOverride?: string): void {
     // column already exists
   }
   try {
+    // #574: once-only guard for the date-expiry wake-up of a waiting card. Cleared
+    // whenever the wait reason is rewritten or the card leaves waiting.
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN wait_notified_at INTEGER')
+  } catch {
+    // column already exists
+  }
+  try {
     db.exec('ALTER TABLE kanban_cards ADD COLUMN stale_kept_at INTEGER')
   } catch {
     // column already exists
@@ -2616,6 +2623,8 @@ export interface KanbanCard {
   wait_kind?: 'owner' | 'external' | 'card' | 'date' | null
   wait_note?: string | null
   wait_until?: number | null
+  // #574: when the date-expiry wake-up went out (once-only guard); NULL = not yet.
+  wait_notified_at?: number | null
   sort_order: number
   created_at: number
   updated_at: number
@@ -3189,8 +3198,8 @@ export function moveKanbanCard(id: string, status: KanbanCard['status'], sortOrd
     const leavesWaiting = prev === 'waiting' && status !== 'waiting'
     const changed = db.prepare(
       kanbanWriteClearsDispatch(status)
-        ? `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?, dispatched_at=NULL${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL' : ''} WHERE id=?`
-        : `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL' : ''} WHERE id=?`
+        ? `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?, dispatched_at=NULL${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL, wait_notified_at=NULL' : ''} WHERE id=?`
+        : `UPDATE kanban_cards SET status=?, sort_order=?, updated_at=?${leavesWaiting ? ', wait_kind=NULL, wait_note=NULL, wait_until=NULL, wait_notified_at=NULL' : ''} WHERE id=?`
     ).run(status, sortOrder, now, id).changes > 0
     if (changed && leavesWaiting && row?.wait_kind === 'owner') {
       const ownerLabel = listLabels().find((label) => normalizeKanbanLabelName(label.name) === normalizeKanbanLabelName('Rád vár'))
@@ -3762,7 +3771,7 @@ export function setKanbanWaitReason(id: string, reason: KanbanWaitReason | null)
   if (reason?.kind === 'owner' && !ownerLabel) throw new Error('A „Rád vár” címke nem létezik')
 
   db.transaction(() => {
-    db.prepare('UPDATE kanban_cards SET wait_kind=?, wait_note=?, wait_until=? WHERE id=?').run(
+    db.prepare('UPDATE kanban_cards SET wait_kind=?, wait_note=?, wait_until=?, wait_notified_at=NULL WHERE id=?').run(
       reason?.kind ?? null,
       reason?.note ?? null,
       reason?.kind === 'date' ? reason.until ?? null : null,
@@ -3772,6 +3781,75 @@ export function setKanbanWaitReason(id: string, reason: KanbanWaitReason | null)
     if (reason?.kind === 'owner' && ownerLabel) addLabelToCard(id, ownerLabel.id)
     if (reason?.kind === 'card' && reason.blockerId) addCardBlocker(id, reason.blockerId)
   })()
+}
+
+// === #574: next card on wait, wake on unblock ===
+
+export interface KanbanWaitNotifyCard {
+  id: string
+  seq: number
+  title: string
+  status: KanbanCard['status']
+  priority: KanbanCard['priority']
+  assignee: string | null
+  sort_order: number
+  created_at: number
+  wait_kind: KanbanCard['wait_kind']
+  wait_note: string | null
+  wait_until: number | null
+}
+
+const WAIT_NOTIFY_COLUMNS = `k.id, k.rowid AS seq, k.title, k.status, k.priority, k.assignee, k.sort_order,
+  k.created_at, k.wait_kind, k.wait_note, k.wait_until`
+
+// The open work an agent could switch to: in_progress or planned, not archived,
+// with an assignee, and not itself blocked by an unfinished card (a blocked
+// planned card is no "next" card). Ordering and assignee matching are the
+// caller's job (the assignee needs canonical-name folding).
+export function listKanbanNextCardCandidates(excludeId: string): KanbanWaitNotifyCard[] {
+  return db.prepare(`
+    SELECT ${WAIT_NOTIFY_COLUMNS}
+    FROM kanban_cards k
+    WHERE k.status IN ('in_progress', 'planned') AND k.archived_at IS NULL
+      AND k.id != ? AND k.assignee IS NOT NULL AND trim(k.assignee) != ''
+      AND NOT EXISTS (
+        SELECT 1 FROM kanban_card_blockers b JOIN kanban_cards c ON c.id = b.blocker_id
+        WHERE b.card_id = k.id AND c.status != 'done'
+      )
+  `).all(excludeId) as KanbanWaitNotifyCard[]
+}
+
+// Waiting cards that had `blockerId` among their blockers and now have NO
+// unfinished blocker left (the card_blockers table is where a kind='card' wait
+// stores its blockerId, see setKanbanWaitReason).
+export function listKanbanCardsUnblockedBy(blockerId: string): KanbanWaitNotifyCard[] {
+  return db.prepare(`
+    SELECT ${WAIT_NOTIFY_COLUMNS}
+    FROM kanban_card_blockers b0
+    JOIN kanban_cards k ON k.id = b0.card_id
+    WHERE b0.blocker_id = ? AND k.status = 'waiting' AND k.archived_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM kanban_card_blockers b JOIN kanban_cards c ON c.id = b.blocker_id
+        WHERE b.card_id = k.id AND c.status != 'done'
+      )
+    ORDER BY b0.created_at ASC
+  `).all(blockerId) as KanbanWaitNotifyCard[]
+}
+
+// Waiting cards whose date wait has run out and whose assignee was not told yet.
+export function listExpiredDateWaitCards(nowSec: number): KanbanWaitNotifyCard[] {
+  return db.prepare(`
+    SELECT ${WAIT_NOTIFY_COLUMNS}
+    FROM kanban_cards k
+    WHERE k.status = 'waiting' AND k.archived_at IS NULL AND k.wait_kind = 'date'
+      AND k.wait_until IS NOT NULL AND k.wait_until <= ? AND k.wait_notified_at IS NULL
+    ORDER BY k.wait_until ASC
+  `).all(nowSec) as KanbanWaitNotifyCard[]
+}
+
+export function markKanbanWaitNotified(id: string): boolean {
+  const now = Math.floor(Date.now() / 1000)
+  return db.prepare('UPDATE kanban_cards SET wait_notified_at=? WHERE id=?').run(now, id).changes > 0
 }
 
 // === Card blockers ===
