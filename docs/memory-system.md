@@ -61,6 +61,8 @@ Append-only, ágensenként: automatikus bejegyzések napközben + 23:00-kor napi
 
 Mielőtt a Claude Code kontextusablaka tömörítődik, a `PreCompact` hook átnézi a beszélgetést, kiemeli a fontos döntéseket/preferenciákat/tanulságokat, elmenti a megfelelő tierbe, és napi napló bejegyzést ír — így a tömörítéskor semmi fontos nem vész el.
 
+**A gyakorlatban ritkán fut (mérve 2026-10-17):** a context-guard a sessiont jellemzően a tömörítés ELŐTT újraindítja, és újraindításkor a `PreCompact` nem sül el. Az utolsó 7 nap 276 session-naplójában egyetlen automatikus tömörítés volt (Cody, 10-17 05:55 UTC). A folyamatban lévő munka állapotát tehát valójában a `HANDOFF.md` és a kézi emlék-mentés viszi; a hook tartalék arra az esetre, ha a guard küszöbe változik. Ne számíts rá védelemként.
+
 ### Gráf nézet + embedding backfill
 
 A dashboard memória-oldalán force-directed (HTML5 Canvas) gráf: zoom/pan, keresés-highlight, kattintásra kibontható panel, a kulcsszó-kapcsolatokat mutatja ágensek közt. A régi, embedding nélküli emlékek automatikusan (és `POST /api/memories/backfill`-lel manuálisan) kapnak vektort.
