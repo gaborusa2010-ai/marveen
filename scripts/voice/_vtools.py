@@ -414,7 +414,12 @@ def canary(voice_onnx, expected_text):
     fd_wav, wav = tempfile.mkstemp(suffix=".wav")
     os.close(fd_wav)
     try:
-        subprocess.run([VENV_PY, "-m", "piper", "-m", voice_onnx, "-f", wav],
+        # Noise 0: Piper samples random noise per run, so the same sentence
+        # scored 0.33-1.0 across five runs (#94, measured 2026-10-17). With
+        # both scales at 0 the wav is byte-identical run to run, so a ratio
+        # change means the stack changed, not the dice.
+        subprocess.run([VENV_PY, "-m", "piper", "-m", voice_onnx, "-f", wav,
+                        "--noise-scale", "0", "--noise-w-scale", "0"],
                        input=expected_text.encode(), check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         from faster_whisper import WhisperModel
