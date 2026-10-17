@@ -1,0 +1,12 @@
+# NOTE: replace /path/to/marveen (install dir) and /home/USER (home) with your values.
+[Unit]
+Description=Marveen voice canary (#94): silent on pass, inter-agent alert on fail
+After=marveen-dashboard.service
+
+[Service]
+Type=oneshot
+ExecStart=/path/to/marveen/scripts/voice/canary-weekly.sh
+Environment=PATH=/home/USER/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/USER
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Marveen voice canary (Piper TTS -> Whisper round trip)
+
+[Timer]
+OnCalendar=Sun *-*-* 10:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
