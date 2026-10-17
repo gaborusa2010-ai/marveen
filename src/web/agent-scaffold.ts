@@ -3313,7 +3313,7 @@ export function buildMemorySearchLabelBody(name: string): string {
     'Ha a kérdés az, hogy VAN-E EGYÁLTALÁN emlékünk valamiről (hiány-állítás), tedd hozzá a',
     '`&strict=1`-et: ott az üres válasz pontosan azt jelenti, aminek látszik.',
     '',
-    'NYERS ÉKEZET A `q`-BAN = HTTP 400, ÜRES TÖRZZSEL. A `q=funkcionális` alak 400-at ad, a',
+    'NYERS ÉKEZET A `q`-BAN = HTTP 400 (10-17 óta JSON-hibatörzs hinttel, #114). A `q=funkcionális` alak 400-at ad, a',
     '`q=funkcion%C3%A1lis` és a `-G --data-urlencode "q=..."` alak 200-at. A 400-on NINCS',
     '`X-Memory-Search` fejléc, tehát a fenti `grep` némán semmit nem ír, és a nulla sor pontosan',
     'úgy néz ki, mint egy üres találat, holott a keresés EL SEM INDULT. Ezért: a magyar keresőszót',
