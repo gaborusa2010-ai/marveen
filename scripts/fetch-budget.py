@@ -220,9 +220,10 @@ def main(argv=None):
     totals = collections.Counter(h for _, _, h, _ in rows)
 
     print(f"LETOLTESEK, utolso {a.days} nap")
-    print("  [hatokor] CSAK a WebFetch hivasok. Az egress-kapu 'WebFetch' matcherre")
-    print("  fut, tehat a Bash/curl es az MCP forgalom NEM latszik itt. Amelyik")
-    print("  agensen van Bash(curl:*), annak a hivasai ebbol a szambol hianyoznak.")
+    print("  [hatokor] Minden ALLOWED* naplosor: WebFetch, a browser-fetch")
+    print("  (ALLOWED_BROWSER), a kep- es PDF-letoltes is -- ezek mind TERHELIK a")
+    print("  keretet. NEM latszik: a nyers Bash/curl es az MCP forgalom, ami nem")
+    print("  megy at a kapun; az ilyen hivasok ebbol a szambol hianyoznak.")
     print(f"{'HOST':<30}{'OSSZ':>6}  {'CSUCSNAP':>10}  {'/NAP':>5}  {'CSUCS/PERC':>10}  {'AKTIV PERC':>10}")
     print("-" * 88)
     over = []
