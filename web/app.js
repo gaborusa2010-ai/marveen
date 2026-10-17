@@ -2824,6 +2824,71 @@ async function renderCardBlockersSection(card) {
   }
 }
 
+// === Kanban calendar helpers (pure) ===
+// Month grid and day buckets for the calendar view (#451 part B). No DOM, no
+// globals: the view below renders what these return, and
+// src/__tests__/kanban-calendar.test.ts runs them in a vm. Dates are local
+// (the browser runs in Europe/London), so a card due 23:30 BST lands on its
+// London day, not on the UTC one.
+
+// 'YYYY-MM-DD' of a local Date.
+function kanbanCalDayKey(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+// Local day key of a unix-seconds deadline, or null when it is not a usable
+// number (the column is INTEGER, but a stray string must not throw).
+function kanbanCalDueKey(dueDate) {
+  if (dueDate === null || dueDate === undefined || dueDate === '') return null
+  const sec = Number(dueDate)
+  if (!Number.isFinite(sec) || sec <= 0) return null
+  return kanbanCalDayKey(new Date(sec * 1000))
+}
+
+// Whole weeks covering the month, Monday first. Each cell:
+// { key: 'YYYY-MM-DD', day: <1..31>, inMonth: bool }. 4 to 6 rows of 7.
+function kanbanCalMonthGrid(year, month) {
+  const first = new Date(year, month, 1)
+  const lead = (first.getDay() + 6) % 7 // Mon = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const total = Math.ceil((lead + daysInMonth) / 7) * 7
+  const weeks = []
+  for (let i = 0; i < total; i++) {
+    // new Date(y, m, n) normalises overflow and stays on local midnight across
+    // DST changes, unlike adding 86400000 ms.
+    const d = new Date(year, month, 1 - lead + i)
+    if (i % 7 === 0) weeks.push([])
+    weeks[weeks.length - 1].push({ key: kanbanCalDayKey(d), day: d.getDate(), inMonth: d.getMonth() === month })
+  }
+  return weeks
+}
+
+// Cards grouped by deadline day: Map<'YYYY-MM-DD', card[]>. Cards without a
+// deadline are skipped; done cards only when showDone. Within a day: open
+// before done, then urgent > high > normal > low, then by seq.
+const KANBAN_CAL_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
+function kanbanCalBucket(cards, showDone) {
+  const byDay = new Map()
+  for (const c of Array.isArray(cards) ? cards : []) {
+    if (!c) continue
+    if (c.status === 'done' && !showDone) continue
+    const key = kanbanCalDueKey(c.due_date)
+    if (!key) continue
+    if (!byDay.has(key)) byDay.set(key, [])
+    byDay.get(key).push(c)
+  }
+  const rank = (p) => (p in KANBAN_CAL_PRIORITY_RANK ? KANBAN_CAL_PRIORITY_RANK[p] : 2)
+  for (const list of byDay.values()) {
+    list.sort((a, b) =>
+      ((a.status === 'done') - (b.status === 'done')) ||
+      (rank(a.priority) - rank(b.priority)) ||
+      ((a.seq || 0) - (b.seq || 0)))
+  }
+  return byDay
+}
+// === end kanban calendar helpers ===
+
 // === Kanban feature switches (owner msg 6475) ===
 // Each ClickUp-like addition is switchable on its own in Settings; /api/marveen
 // carries the resolved flags (re-fetched on every loadKanban, so a toggle shows
@@ -19989,6 +20054,137 @@ async function openResearchDoc(agent, name) {
     container.appendChild(nav)
   }
 
+  // === Calendar view (#451 part B, behind the 'calendar' feature flag) ===
+  // A month grid of cards by deadline. Reuses kanbanCards (GET /api/kanban),
+  // no endpoint of its own. Every card string goes in through textContent.
+  let calYear = null
+  let calMonth = null
+  // Done cards are hidden by default; the toolbar checkbox shows them, and the
+  // choice is remembered per browser.
+  let calShowDone = false
+  try { calShowDone = localStorage.getItem('marveen.kanbanCalShowDone') === '1' } catch { /* storage blocked: default off */ }
+
+  function calLocale() {
+    return typeof _lang !== 'undefined' && _lang === 'en' ? 'en-GB' : 'hu-HU'
+  }
+
+  function calGoToday() {
+    const now = new Date()
+    calYear = now.getFullYear()
+    calMonth = now.getMonth()
+  }
+
+  function calStep(delta) {
+    if (calYear === null) calGoToday()
+    const d = new Date(calYear, calMonth + delta, 1)
+    calYear = d.getFullYear()
+    calMonth = d.getMonth()
+    renderKanbanCalendar()
+  }
+
+  function renderKanbanCalendar() {
+    const container = document.getElementById('kanbanCalendarView')
+    if (!container) return
+    if (calYear === null) calGoToday()
+    container.innerHTML = ''
+
+    // Toolbar: prev / today / next, month title, show-done toggle
+    const bar = document.createElement('div')
+    bar.className = 'kanban-cal-toolbar'
+    const mkBtn = (label, fn) => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'view-btn'
+      b.style.cssText = 'width:auto;padding:0 10px;'
+      b.textContent = label
+      b.addEventListener('click', fn)
+      return b
+    }
+    bar.appendChild(mkBtn('‹ ' + t('kanban.gantt.nav_prev'), () => calStep(-1)))
+    bar.appendChild(mkBtn(t('kanban.cal.today'), () => { calGoToday(); renderKanbanCalendar() }))
+    bar.appendChild(mkBtn(t('kanban.gantt.nav_next') + ' ›', () => calStep(1)))
+    const title = document.createElement('span')
+    title.className = 'kanban-cal-title'
+    title.textContent = new Date(calYear, calMonth, 1).toLocaleDateString(calLocale(), { year: 'numeric', month: 'long' })
+    bar.appendChild(title)
+    const doneLabel = document.createElement('label')
+    doneLabel.className = 'kanban-cal-done-toggle'
+    const doneChk = document.createElement('input')
+    doneChk.type = 'checkbox'
+    doneChk.id = 'kanbanCalShowDone'
+    doneChk.checked = calShowDone
+    doneChk.addEventListener('change', () => {
+      calShowDone = doneChk.checked
+      try { localStorage.setItem('marveen.kanbanCalShowDone', calShowDone ? '1' : '0') } catch { /* per-viewer convenience only */ }
+      renderKanbanCalendar()
+    })
+    const doneText = document.createElement('span')
+    doneText.textContent = t('kanban.cal.show_done')
+    doneLabel.appendChild(doneChk)
+    doneLabel.appendChild(doneText)
+    bar.appendChild(doneLabel)
+    container.appendChild(bar)
+
+    const byDay = kanbanCalBucket(typeof kanbanCards !== 'undefined' ? kanbanCards : [], calShowDone)
+    const weeks = kanbanCalMonthGrid(calYear, calMonth)
+    const todayKey = kanbanCalDayKey(new Date())
+
+    const grid = document.createElement('div')
+    grid.className = 'kanban-cal-grid'
+    // Weekday header from a known Monday (2024-01-01), so the names follow the locale.
+    for (let i = 0; i < 7; i++) {
+      const h = document.createElement('div')
+      h.className = 'kanban-cal-weekday'
+      h.textContent = new Date(2024, 0, 1 + i).toLocaleDateString(calLocale(), { weekday: 'short' })
+      grid.appendChild(h)
+    }
+    let shownInMonth = 0
+    for (const week of weeks) {
+      for (const cell of week) {
+        const dayEl = document.createElement('div')
+        dayEl.className = 'kanban-cal-day'
+        if (!cell.inMonth) dayEl.classList.add('kanban-cal-out')
+        if (cell.key === todayKey) dayEl.classList.add('kanban-cal-today')
+        dayEl.dataset.day = cell.key
+        const num = document.createElement('div')
+        num.className = 'kanban-cal-daynum'
+        num.textContent = String(cell.day)
+        dayEl.appendChild(num)
+        for (const card of byDay.get(cell.key) || []) {
+          if (cell.inMonth) shownInMonth++
+          const item = document.createElement('button')
+          item.type = 'button'
+          item.className = 'kanban-card kanban-cal-card'
+          item.dataset.id = card.id
+          item.dataset.priority = card.priority || 'normal'
+          if (card.status === 'done') item.classList.add('kanban-cal-done')
+          const seq = document.createElement('span')
+          seq.className = 'kanban-cal-seq'
+          seq.textContent = card.seq ? '#' + card.seq : ''
+          item.appendChild(seq)
+          // Title in its own span so a phone-width grid can drop it and keep
+          // the #seq chip (the full text stays in the tooltip and the modal).
+          const ttl = document.createElement('span')
+          ttl.className = 'kanban-cal-card-title'
+          ttl.textContent = ' ' + (card.title || '')
+          item.appendChild(ttl)
+          item.title = (card.seq ? '#' + card.seq + ' ' : '') + (card.title || '')
+          item.addEventListener('click', () => showCardDetail(card))
+          dayEl.appendChild(item)
+        }
+        grid.appendChild(dayEl)
+      }
+    }
+    container.appendChild(grid)
+
+    if (shownInMonth === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'kanban-cal-empty'
+      empty.textContent = t('kanban.cal.empty_month')
+      container.appendChild(empty)
+    }
+  }
+
   // --- View switcher init (called once after DOM ready) ---
   function initGanttViewSwitcher() {
     if (_initialized) return
@@ -20002,8 +20198,16 @@ async function openResearchDoc(agent, name) {
     const ganttFilters = document.getElementById('kanbanGanttFilters')
     const boardEls  = [document.getElementById('kanbanBoard'), document.getElementById('kanbanSwimlaneBoard')]
     const ganttEl   = document.getElementById('kanbanGanttView')
+    const calBtn    = document.getElementById('kanbanViewCalendar')
+    const calEl     = document.getElementById('kanbanCalendarView')
+
+    function hideCalendar() {
+      calBtn?.classList.remove('active')
+      if (calEl) calEl.style.display = 'none'
+    }
 
     function activateBoard() {
+      hideCalendar()
       boardBtn.classList.add('active')
       ganttBtn.classList.remove('active')
       teamBtn?.classList.remove('active')
@@ -20015,6 +20219,7 @@ async function openResearchDoc(agent, name) {
     }
 
     function activateGantt() {
+      hideCalendar()
       ganttBtn.classList.add('active')
       boardBtn.classList.remove('active')
       teamBtn?.classList.remove('active')
@@ -20030,6 +20235,7 @@ async function openResearchDoc(agent, name) {
     // own: it always shows the whole team. A filtered "who is working on what"
     // would answer a question nobody asks.
     function activateTeam() {
+      hideCalendar()
       teamBtn?.classList.add('active')
       boardBtn.classList.remove('active')
       ganttBtn.classList.remove('active')
@@ -20044,6 +20250,34 @@ async function openResearchDoc(agent, name) {
     boardBtn.addEventListener('click', activateBoard)
     ganttBtn.addEventListener('click', activateGantt)
     if (teamBtn) teamBtn.addEventListener('click', activateTeam)
+
+    // Calendar: like the team view it has no board filter row; it keeps its
+    // own toolbar (month nav, show-done) inside the container.
+    function activateCalendar() {
+      if (!calEl) return
+      calBtn?.classList.add('active')
+      boardBtn.classList.remove('active')
+      ganttBtn.classList.remove('active')
+      teamBtn?.classList.remove('active')
+      boardFilters.style.display = 'none'
+      ganttFilters.style.display = 'none'
+      boardEls.forEach(el => { if (el) el.style.display = 'none' })
+      ganttEl.style.display = 'none'
+      if (teamEl) teamEl.style.display = 'none'
+      calEl.style.display = 'block'
+      renderKanbanCalendar()
+    }
+    if (calBtn) calBtn.addEventListener('click', activateCalendar)
+
+    // The flag arrives with /api/marveen on every loadKanban, so it is applied
+    // on every render: off hides the button, and an open calendar falls back
+    // to the board.
+    function syncCalendarFlag() {
+      const on = kanbanFeatureOn('calendar')
+      if (calBtn) calBtn.hidden = !on
+      if (!on && calEl && calEl.style.display !== 'none') activateBoard()
+    }
+    syncCalendarFlag()
 
     // Archived button: navigates AWAY to the archived page (its sidebar entry
     // was removed -- this button is now the entry point). It never takes the
@@ -20077,12 +20311,15 @@ async function openResearchDoc(agent, name) {
       window.renderKanban = function () {
         _origRenderKanban.apply(this, arguments)
         if (ganttEl.style.display !== 'none') renderGantt()
+        syncCalendarFlag()
+        if (calEl && calEl.style.display !== 'none') renderKanbanCalendar()
       }
     }
   }
 
   window._initGanttViewSwitcher = initGanttViewSwitcher
   window.renderGantt = renderGantt
+  window.renderKanbanCalendar = renderKanbanCalendar
   // A direct #kanban load routes (switchPage) earlier in this file, before the
   // initializer above exists, so that first call skipped it and the Board /
   // Timeline / Archived buttons stayed dead. Catch up if the board is showing.

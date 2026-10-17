@@ -8347,3 +8347,40 @@ body {
   white-space: nowrap;
 }
 .kanban-card-checklist.complete { color: var(--success, #16a34a); border-color: color-mix(in srgb, var(--success, #16a34a) 45%, transparent); }
+
+/* === Kanban calendar view (#451 part B) === */
+/* .view-btn is display:flex, which wins over the UA [hidden] rule. */
+#kanbanViewCalendar[hidden] { display: none; }
+.kanban-cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+.kanban-cal-title { font-weight: 600; font-size: 15px; margin-left: 8px; text-transform: capitalize; }
+.kanban-cal-done-toggle { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.kanban-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.kanban-cal-weekday { font-size: 12px; color: var(--muted); text-align: center; padding: 2px 0; text-transform: capitalize; }
+.kanban-cal-day {
+  min-height: 96px; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 4px; display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.kanban-cal-out { opacity: 0.45; }
+.kanban-cal-today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.kanban-cal-daynum { font-size: 12px; color: var(--muted); text-align: right; }
+.kanban-cal-today .kanban-cal-daynum { color: var(--accent); font-weight: 600; }
+.kanban-card.kanban-cal-card {
+  padding: 3px 6px; font-size: 12px; line-height: 1.3; text-align: left; cursor: pointer;
+  color: var(--text); font-family: inherit; width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left-width: 3px;
+}
+.kanban-cal-seq { color: var(--muted); font-variant-numeric: tabular-nums; }
+.kanban-cal-done { opacity: 0.5; text-decoration: line-through; }
+.kanban-cal-empty { color: var(--muted); padding: 16px 0; text-align: center; }
+@media (max-width: 700px) {
+  .kanban-cal-day { min-height: 64px; padding: 2px; }
+  .kanban-card.kanban-cal-card { font-size: 11px; padding: 2px 4px; }
+}
+@media (max-width: 520px) {
+  .kanban-cal-grid { gap: 2px; }
+  .kanban-cal-day { min-height: 52px; border-radius: 4px; }
+  .kanban-cal-card-title { display: none; }
+  .kanban-card.kanban-cal-card { text-align: center; padding: 2px 1px; text-overflow: clip; }
+  .kanban-cal-done-toggle { margin-left: 0; }
+}
