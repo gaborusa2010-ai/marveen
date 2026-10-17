@@ -323,9 +323,14 @@
       <!-- Board-specific filter row (hidden when gantt active) -->
       <div id="kanbanBoardFilters" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <label for="kanbanSearch" style="font-size:13px;color:var(--muted);white-space:nowrap;" data-i18n="kanban.filter.search_label">Keresés:</label>
+        <!-- Its own form: the page's form-less password inputs (vault, fleet, connectors)
+             make the browser treat every form-less input as one login form, and this
+             box, the first text input, as its username. A separate form takes it out. -->
+        <form id="kanbanSearchForm" role="search" autocomplete="off" style="display:contents">
         <input id="kanbanSearch" type="search" name="kanban-q" autocomplete="off" spellcheck="false" readonly
                data-i18n-placeholder="kanban.filter.search_placeholder" placeholder="#295 vagy cím..."
                style="font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg);min-width:170px;">
+        </form>
         <span id="kanbanSearchHint" style="font-size:12px;color:var(--muted);white-space:nowrap;margin-right:8px;"></span>
         <label for="kanbanProjectFilter" style="font-size:13px;color:var(--muted);white-space:nowrap;">Projekt:</label>
         <select id="kanbanProjectFilter" style="font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg);min-width:140px;">

@@ -909,6 +909,8 @@ document.getElementById('kanbanSortBy')?.addEventListener('change', (e) => {
 // dashboard login name into the first text box on the page, which is this one.
 // It never fills a readonly field, so the box stays readonly until the user
 // reaches for it.
+// Enter must not submit the search box's own form (see index.html) and reload the page.
+document.getElementById('kanbanSearchForm')?.addEventListener('submit', (e) => e.preventDefault())
 for (const ev of ['pointerdown', 'focus']) {
   document.getElementById('kanbanSearch')?.addEventListener(ev, (e) => e.target.removeAttribute('readonly'))
 }
