@@ -1,7 +1,7 @@
 """MIDTURN901 regressziós teszt: a Stop-hook back-fill viselkedese, izolalt DB-n."""
 import importlib.util, json, os, subprocess, sqlite3, tempfile, sys
 
-HOOKS = "/home/gabor/marveen/scripts/hooks"
+HOOKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
 ok = True
 def check(label, cond):
     global ok
@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as d:
     with open(tp, "w", encoding="utf-8") as fh:
         for l in lines: fh.write(json.dumps(l) + "\n")
 
-    payload = json.dumps({"transcript_path": tp, "cwd": "/home/gabor/marveen"})
+    payload = json.dumps({"transcript_path": tp, "cwd": os.path.dirname(os.path.dirname(HOOKS))})
     r = subprocess.run([sys.executable, os.path.join(HOOKS, "ledger-midturn-capture.py")],
                        input=payload, capture_output=True, text=True, env=env)
     check("a hook exit 0 (fail-open)", r.returncode == 0)

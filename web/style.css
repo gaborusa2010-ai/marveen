@@ -3688,6 +3688,7 @@ main.kanban-active { padding-left: 16px; padding-right: 16px; }
 }
 .view-btn:hover { color: var(--text); border-color: var(--accent); }
 .view-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.view-btn[hidden] { display: none; }
 
 .schedule-view[hidden] { display: none; }
 

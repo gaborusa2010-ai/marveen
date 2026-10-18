@@ -16,6 +16,8 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { diffTrees, hasChange, skillOfRelPath, skillsInDiff, grantCovers, agentFromCwd, isTreeShaped, readTree, GLOBAL_SKILL_DIR } from '../../scripts/hooks/global-skill-write-audit.mjs'
 
@@ -159,7 +161,11 @@ describe('skill audit: the instrument checks itself', () => {
     expect(missing.rootOk).toBe(false)
     expect(missing.files).toEqual({})
 
-    const real = readTree()
+    // A fixture tree, not the live shared folder: CI has no skills installed.
+    const root = mkdtempSync(join(tmpdir(), 'skill-audit-root-'))
+    mkdirSync(join(root, 'demo'))
+    writeFileSync(join(root, 'demo', 'SKILL.md'), '# demo\n')
+    const real = readTree(root)
     expect(real.rootOk).toBe(true)
     // Positive control, Forgacs's point applied to the test itself: asserting
     // "no error" would pass just as happily against a broken reader.

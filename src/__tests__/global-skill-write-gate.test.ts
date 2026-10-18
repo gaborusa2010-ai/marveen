@@ -16,6 +16,8 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { skillWriteDecision, isGlobalSkillPath, bashTouchesGlobalSkills, readGrant, skillOfPath, skillsInCommand, agentFromCwd, GLOBAL_SKILL_DIR } from '../../scripts/hooks/global-skill-write-gate.mjs'
 
@@ -217,7 +219,12 @@ describe('global skill gate: the symlink actually resolves (SYMLINKMISS901, foun
   // path check used resolve(), which normalises `..` but does not follow a
   // symlink. The Bash branch caught the same path only because it matches TEXT,
   // which is why the gap was invisible from the Bash tests.
-  const VIA_LINK = '/home/gabor/marveen/agents/roxy/.claude-config/skills/handoff/SKILL.md'
+  // Built per run, so the test holds on a machine without the fleet layout (CI).
+  mkdirSync(GLOBAL, { recursive: true })
+  const ROXY = mkdtempSync(join(tmpdir(), 'symlinkmiss901-'))
+  mkdirSync(join(ROXY, '.claude-config'), { recursive: true })
+  symlinkSync(GLOBAL, join(ROXY, '.claude-config', 'skills'))
+  const VIA_LINK = join(ROXY, '.claude-config', 'skills', 'handoff', 'SKILL.md')
 
   it('recognises the symlinked path as the shared folder', () => {
     expect(isGlobalSkillPath(VIA_LINK)).toBe(true)
@@ -232,7 +239,7 @@ describe('global skill gate: the symlink actually resolves (SYMLINKMISS901, foun
   })
 
   it('still allows a Write to the agent OWN skills folder next to it', () => {
-    const own = '/home/gabor/marveen/agents/roxy/.claude/skills/sajat/SKILL.md'
+    const own = join(ROXY, '.claude', 'skills', 'sajat', 'SKILL.md')
     expect(skillWriteDecision('Write', { file_path: own }, null).blocked).toBe(false)
   })
 
