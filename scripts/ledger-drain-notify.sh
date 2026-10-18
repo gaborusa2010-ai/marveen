@@ -25,38 +25,62 @@
 # Exit 0 always unless the environment is broken (2).
 set -uo pipefail
 
-# SCOPE, stated rather than left to be discovered (Cody, 2026-09-01): this timer
-# covers the MAIN agent ONLY. It cd's to the install root, so the drain resolves
-# agent_id=marveen, and it sends to marveen. Sub-agents with their own channel
-# (Margo has one) get no such sweep -- a lost inbound of theirs is not picked up
-# by anything. That is a decision waiting to be made, not an oversight to be
-# assumed: waking five agents on a timer has its own cost, and it needs the
-# owner's call. Until then the limit is written here so nobody reads this timer
-# as fleet-wide coverage.
+# SCOPE: the main agent AND every sub-agent with its own Telegram bot (#102,
+# owner tg 8305 "Igen, mind a 9-nél", 2026-10-18). Until then this timer covered
+# the main agent only (Cody's note, 2026-09-01), and a sub-agent's lost inbound
+# was picked up by nothing. The drain derives agent_id from the cwd, so each
+# agent is drained from its own agents/<name> dir and the notice goes to THAT
+# agent. Still zero model cost when nothing is open: one SQLite read per agent.
+# A sub-agent that is not running is skipped WITHOUT commit -- a message to it
+# would sit undelivered and fail after an hour -- so its question is raised on
+# the first tick after it starts (ledger-replay also shows it at SessionStart).
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$BASE" || exit 2   # the drain derives its agent_id from the cwd
+cd "$BASE" || exit 2
 
-OUT="$(/usr/bin/python3 "$BASE/scripts/hooks/ledger-live-drain.py" --peek 2>/dev/null)"
-[ -z "$OUT" ] && exit 0   # nothing open -- the normal case, zero cost
+# drain_one <dir> <agent>: peek in <dir> (cwd -> agent_id), deliver to <agent>,
+# commit only after the router returned an id.
+drain_one() {
+  local dir="$1" agent="$2" out msg_id result
+  out="$(cd "$dir" && /usr/bin/python3 "$BASE/scripts/hooks/ledger-live-drain.py" --peek 2>/dev/null)"
+  [ -z "$out" ] && return 0   # nothing open -- the normal case, zero cost
+  msg_id="$(printf '%s' "$out" | head -n1 | sed -n 's/.*message_id=\([^ ]*\).*/\1/p')"
+  [ -z "$msg_id" ] && return 0
+  result="$(printf '%s\n' \
+    "[ELVESZETT BEJÖVŐ] Ez egy korábban elveszett, még megválaszolatlan üzenet a csatornából." \
+    "Olvasd el és válaszolj rá MOST a csatorna-válasz eszközzel, a lenti chat_id-ra," \
+    "ugyanúgy mintha most érkezett volna." \
+    "" \
+    "$out" | bash "$BASE/scripts/agent-msg.sh" marveen "$agent" -)"
+  case "$result" in
+    OK\ id=*)
+      (cd "$dir" && /usr/bin/python3 "$BASE/scripts/hooks/ledger-live-drain.py" --commit "$msg_id")
+      echo "$(date '+%Y-%m-%d %H:%M:%S') $agent delivered message_id=$msg_id ($result)"
+      ;;
+    *)
+      # NOT committed on purpose: the next tick retries.
+      echo "$(date '+%Y-%m-%d %H:%M:%S') $agent FAIL message_id=$msg_id ($result) -- nem commitolva, kovetkezo korben ujra" >&2
+      ;;
+  esac
+}
 
-MSG_ID="$(printf '%s' "$OUT" | head -n1 | sed -n 's/.*message_id=\([^ ]*\).*/\1/p')"
-[ -z "$MSG_ID" ] && exit 0
+drain_one "$BASE" marveen
 
-RESULT="$(printf '%s\n' \
-  "[ELVESZETT BEJÖVŐ] Ez egy korábban elveszett, még megválaszolatlan üzenet a csatornából." \
-  "Olvasd el és válaszolj rá MOST a csatorna-válasz eszközzel, a lenti chat_id-ra," \
-  "ugyanúgy mintha most érkezett volna." \
-  "" \
-  "$OUT" | bash "$BASE/scripts/agent-msg.sh" marveen marveen -)"
-
-case "$RESULT" in
-  OK\ id=*)
-    /usr/bin/python3 "$BASE/scripts/hooks/ledger-live-drain.py" --commit "$MSG_ID"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') delivered message_id=$MSG_ID ($RESULT)"
-    ;;
-  *)
-    # NOT committed on purpose: the next tick retries.
-    echo "$(date '+%Y-%m-%d %H:%M:%S') FAIL message_id=$MSG_ID ($RESULT) -- nem commitolva, kovetkezo korben ujra" >&2
-    ;;
-esac
+# Sub-agents with a bot of their own, and only the running ones. If the agent
+# list cannot be read, no sub-agent is drained this tick (and nothing committed).
+RUNNING="$(curl -s -m 10 -H "Authorization: Bearer $(cat "$BASE/store/.dashboard-token" 2>/dev/null)" \
+  http://localhost:3420/api/agents 2>/dev/null | /usr/bin/python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    d = d.get("agents", d) if isinstance(d, dict) else d
+    print(" ".join(a["name"] for a in d if a.get("running")))
+except Exception:
+    pass
+' 2>/dev/null)"
+for envf in "$BASE"/agents/*/.claude/channels/telegram/.env; do
+  [ -f "$envf" ] || continue
+  dir="${envf%/.claude/channels/telegram/.env}"
+  agent="${dir##*/}"
+  case " $RUNNING " in *" $agent "*) drain_one "$dir" "$agent" ;; esac
+done
 exit 0

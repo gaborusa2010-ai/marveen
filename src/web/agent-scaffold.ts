@@ -738,6 +738,53 @@ export function ensureAgentProvenanceHook(name: string): boolean {
   return true
 }
 
+// Idempotent migration: wire the conversation-ledger hooks into a sub-agent with
+// its own channel bot (#102, owner tg 8305 "Igen, mind a 9-nél"). Until this, the
+// ledger only ever saw the main agent's INBOUND: measured 2026-10-18, every
+// direction='in' row in conversation_log was marveen's, the sub-agents had 'out'
+// rows only (from tg-valasztas / voice). Without the inbound row the lost-inbound
+// drain has nothing to find, so a sub-agent's lost Telegram message was invisible.
+// Same four hooks, same matchers as the main agent's repo .claude/settings.json;
+// fail-open wrapper as the staleness guard. Each event is keyed on its own script
+// path, so a partially wired agent gets only what it is missing.
+const LEDGER_HOOKS: { event: string; matcher?: string; script: string; timeout: number }[] = [
+  { event: 'UserPromptSubmit', script: 'ledger-capture.py', timeout: 15 },
+  { event: 'PostToolUse', matcher: 'mcp__plugin_[^_]+_[^_]+__reply', script: 'ledger-outbound.py', timeout: 15 },
+  { event: 'Stop', script: 'ledger-midturn-capture.py', timeout: 15 },
+  { event: 'SessionStart', matcher: 'startup|resume|clear', script: 'ledger-replay.py', timeout: 15 },
+]
+
+export function ensureAgentLedgerHooks(name: string): boolean {
+  if (refuseMainAgentHookWrite(name, 'ensureAgentLedgerHooks')) return false
+  // Only an agent with a channel of its own has inbound to capture.
+  if (!existsSync(join(agentDir(name), '.claude', 'channels', 'telegram', '.env'))) return false
+  const settingsPath = agentSettingsPath(name)
+  let settings: Record<string, unknown> = {}
+  if (existsSync(settingsPath)) {
+    try { settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) } catch { return false }
+  }
+  const hooks = (settings.hooks && typeof settings.hooks === 'object')
+    ? settings.hooks as Record<string, unknown>
+    : {}
+  let changed = false
+  for (const h of LEDGER_HOOKS) {
+    const script = join(PROJECT_ROOT, 'scripts', 'hooks', h.script)
+    const cmd = `bash -c '[ -f ${script} ] && exec python3 ${script}; exit 0'`
+    const arr = Array.isArray(hooks[h.event]) ? hooks[h.event] as unknown[] : []
+    if (JSON.stringify(arr).includes(h.script)) continue
+    if (isUnsafeHookCommand(cmd)) continue
+    const entry: Record<string, unknown> = { hooks: [{ type: 'command', command: cmd, timeout: h.timeout }] }
+    if (h.matcher) entry.matcher = h.matcher
+    arr.push(entry)
+    hooks[h.event] = arr
+    changed = true
+  }
+  if (!changed) return false
+  settings.hooks = hooks
+  atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  return true
+}
+
 // A file-tool permission rule whose path starts with a SINGLE slash is read as
 // relative to the project root, not as an absolute filesystem path -- so
 // `Edit(/home/.../agents/x/**)` silently matched nothing and EVERY file write
