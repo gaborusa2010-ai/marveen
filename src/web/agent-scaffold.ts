@@ -2752,10 +2752,11 @@ function buildSkillsPathTrapBody(): string {
     '-- akkor is, ha a skill-futtatás base directory-ja ezt az utat mutatja.',
     // Two shared surfaces, not one (#261): the main agent's workdir is the repo
     // root, and every sub-agent workdir sits under it, so its .claude/skills
-    // loads fleet-wide while the global-skill gate does not cover it.
+    // loads fleet-wide. Since cade06d9 the skill write gate covers it too.
     'Sub-ágensnél a saját skill a munkakönyvtár `.claude/skills/` mappája. A FŐ-ÁGENSNÉL ez',
-    'a repo gyökerében van, és minden sub-ágensbe betöltődik, a kapu mégsem védi: második közös',
-    'felület (#261, gazda-döntésre vár). A globálisba írás tudatos, flotta-szintű döntés legyen.',
+    'a repo gyökerében van, és minden sub-ágensbe betöltődik: második közös felület, 2026-10-18',
+    'óta a kapu ezt is védi (#261), sub-ágens csak engedéllyel ír ide. A globálisba írás',
+    'tudatos, flotta-szintű döntés legyen.',
     '',
     // The limits of the gates, in the SAME generated block as the trap they
     // belong to. Written here rather than by hand in seven CLAUDE.md files
