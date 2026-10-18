@@ -1266,6 +1266,20 @@ export function initDatabase(dbPathOverride?: string): void {
   `)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_team_notes_active ON team_notes(deleted_at, due_date)`)
 
+  // --- Owner to-dos ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owner_todos (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      due_date TEXT,
+      created_at INTEGER NOT NULL,
+      created_by TEXT NOT NULL,
+      done_at INTEGER,
+      deleted_at INTEGER
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_owner_todos_active ON owner_todos(deleted_at, done_at, due_date)`)
+
   // --- Idea Comments ---
   db.exec(`
     CREATE TABLE IF NOT EXISTS idea_comments (
@@ -5570,6 +5584,61 @@ export function softDeleteTeamNote(id: string, by: string, reason: string | null
   return db.prepare(
     'UPDATE team_notes SET deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL'
   ).run(Math.floor(Date.now() / 1000), by, reason, id).changes > 0
+}
+
+// --- Owner to-dos ---
+
+export interface OwnerTodoRow {
+  id: string
+  content: string
+  due_date: string | null
+  created_at: number
+  created_by: string
+  done_at: number | null
+  deleted_at: number | null
+}
+
+/** Active to-dos: open first by due date, then recently completed newest first. */
+export function listOwnerTodos(doneSince: number): OwnerTodoRow[] {
+  return db.prepare(
+    `SELECT * FROM owner_todos
+     WHERE deleted_at IS NULL AND (done_at IS NULL OR done_at >= ?)
+     ORDER BY (done_at IS NOT NULL) ASC,
+       CASE WHEN done_at IS NULL THEN (due_date IS NULL) ELSE 0 END ASC,
+       CASE WHEN done_at IS NULL THEN due_date END ASC,
+       CASE WHEN done_at IS NULL THEN created_at END ASC,
+       CASE WHEN done_at IS NULL THEN rowid END ASC,
+       done_at DESC, rowid DESC`
+  ).all(doneSince) as OwnerTodoRow[]
+}
+
+export function getOwnerTodo(id: string): OwnerTodoRow | undefined {
+  return db.prepare('SELECT * FROM owner_todos WHERE id = ?').get(id) as OwnerTodoRow | undefined
+}
+
+export function createOwnerTodo(todo: Pick<OwnerTodoRow, 'id' | 'content' | 'due_date' | 'created_by'>): void {
+  db.prepare(
+    `INSERT INTO owner_todos (id, content, due_date, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(todo.id, todo.content, todo.due_date ?? null, Math.floor(Date.now() / 1000), todo.created_by)
+}
+
+/** Updates a non-deleted to-do only. */
+export function updateOwnerTodo(id: string, patch: Partial<Pick<OwnerTodoRow, 'content' | 'due_date' | 'done_at'>>): boolean {
+  const sets: string[] = []
+  const params: unknown[] = []
+  if (patch.content !== undefined) { sets.push('content = ?'); params.push(patch.content) }
+  if (patch.due_date !== undefined) { sets.push('due_date = ?'); params.push(patch.due_date) }
+  if (patch.done_at !== undefined) { sets.push('done_at = ?'); params.push(patch.done_at) }
+  if (sets.length === 0) return getOwnerTodo(id)?.deleted_at === null
+  params.push(id)
+  return db.prepare(`UPDATE owner_todos SET ${sets.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...params).changes > 0
+}
+
+export function softDeleteOwnerTodo(id: string): boolean {
+  return db.prepare(
+    'UPDATE owner_todos SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL'
+  ).run(Math.floor(Date.now() / 1000), id).changes > 0
 }
 
 // --- Idea Comments ---

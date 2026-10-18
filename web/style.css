@@ -8261,6 +8261,33 @@ body {
 .notes-due-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 0.8em; font-weight: 600; background: var(--danger); color: #fff; }
 .notes-row-today .notes-due-tag { background: var(--warning, #d4a52c); }
 .notes-deleted > summary { cursor: pointer; color: var(--text-muted, #888); margin-bottom: 8px; }
+
+/* === Owner To Do === */
+.todo-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; }
+.todo-form .input { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); color: var(--text); font: inherit; }
+.todo-form .input:focus { outline: none; border-color: var(--accent); }
+.todo-form-content { flex: 1 1 280px; }
+.todo-list { display: grid; gap: 8px; min-width: 0; }
+.todo-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.todo-check { margin-top: 3px; accent-color: var(--accent); }
+.todo-copy { min-width: 0; }
+.todo-text { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-meta { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
+.todo-due-label { color: var(--text-muted); white-space: nowrap; font-size: 13px; padding-top: 2px; }
+.todo-due-label.overdue { color: var(--danger); font-weight: 600; }
+.todo-delete { color: var(--danger); }
+.todo-empty { color: var(--text-muted); text-align: center; padding: 16px; }
+.todo-done { margin-top: 20px; }
+.todo-done > summary { cursor: pointer; color: var(--text-muted); margin-bottom: 8px; }
+.todo-done .todo-text { color: var(--text-muted); text-decoration: line-through; }
+.todo-edit { width: 100%; min-width: 0; padding: 5px 7px; border: 1px solid var(--accent); border-radius: 5px; background: var(--bg-card); color: var(--text); font: inherit; }
+@media (max-width: 520px) {
+  .todo-form-content { flex-basis: 100%; }
+  .todo-form .input[type="date"] { flex: 1 1 150px; }
+  .todo-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .todo-due-label { grid-column: 2; }
+  .todo-delete { grid-column: 3; grid-row: 1; }
+}
 @media (max-width: 768px) {
   .notes-table thead { display: none; }
   .notes-table tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--border, #333); }

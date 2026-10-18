@@ -388,6 +388,7 @@ function switchPage(pageId) {
   if (pageId === 'costs') loadCosts()
   if (pageId === 'ideas') loadIdeasPage()
   if (pageId === 'notes') loadNotesPage()
+  if (pageId === 'todo') loadTodoPage()
   if (pageId === 'archived') loadArchivedPage()
   if (pageId === 'naplo') loadNaplo()
   if (pageId === 'federation') loadFederationPage()
@@ -512,7 +513,7 @@ const NAV_I18N = {
   approvals: 'nav.approvals',
   docs: 'nav.docs', research: 'nav.research', status: 'nav.status',
   settings: 'nav.settings', vault: 'nav.vault', tokenUsage: 'nav.tokenUsage',
-  ideas: 'nav.ideas', notes: 'nav.notes', federation: 'nav.federation', updates: 'nav.updates', costs: 'nav.costs',
+  ideas: 'nav.ideas', notes: 'nav.notes', todo: 'nav.todo', federation: 'nav.federation', updates: 'nav.updates', costs: 'nav.costs',
 }
 
 function renderNav() {
@@ -18035,6 +18036,167 @@ function wireNotesPage() {
     } catch (err) {
       btn.disabled = false
       showToast(t('notes.toast.error', { msg: String(err.message || err) }))
+    }
+  })
+}
+
+// ============================================================
+// === Owner To Do ===
+// ============================================================
+let todoPageWired = false
+
+async function todoRequest(path, options) {
+  const response = await fetch(path, options)
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+function makeTodoRow(todo, done) {
+  const row = document.createElement('div')
+  row.className = 'todo-row'
+
+  const checkbox = document.createElement('input')
+  checkbox.type = 'checkbox'
+  checkbox.className = 'todo-check'
+  checkbox.checked = done
+  checkbox.setAttribute('aria-label', done ? t('todo.mark_open') : t('todo.mark_done'))
+  checkbox.addEventListener('change', async () => {
+    checkbox.disabled = true
+    try {
+      await todoRequest(`/api/todos/${encodeURIComponent(todo.id)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: checkbox.checked }),
+      })
+      loadTodoPage()
+    } catch (err) {
+      checkbox.checked = !checkbox.checked
+      checkbox.disabled = false
+      showToast(t('todo.toast.error', { msg: String(err.message || err) }))
+    }
+  })
+  row.appendChild(checkbox)
+
+  const copy = document.createElement('div')
+  copy.className = 'todo-copy'
+  const text = document.createElement('div')
+  text.className = 'todo-text'
+  text.textContent = todo.content
+  text.title = t('common.edit')
+  if (!done) {
+    text.addEventListener('click', () => {
+      if (copy.querySelector('.todo-edit')) return
+      const input = document.createElement('input')
+      input.className = 'todo-edit'
+      input.maxLength = 2000
+      input.value = todo.content
+      const cancel = () => input.replaceWith(text)
+      input.addEventListener('keydown', async (event) => {
+        if (event.key === 'Escape') { cancel(); return }
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        const content = input.value.trim()
+        if (!content) return
+        input.disabled = true
+        try {
+          await todoRequest(`/api/todos/${encodeURIComponent(todo.id)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
+          })
+          showToast(t('todo.toast.updated'))
+          loadTodoPage()
+        } catch (err) {
+          input.disabled = false
+          showToast(t('todo.toast.error', { msg: String(err.message || err) }))
+        }
+      })
+      text.replaceWith(input)
+      input.focus()
+      input.select()
+    })
+  }
+  copy.appendChild(text)
+  if (todo.created_by !== 'owner') {
+    const meta = document.createElement('div')
+    meta.className = 'todo-meta'
+    meta.textContent = t('todo.added_by', { name: todo.created_by })
+    copy.appendChild(meta)
+  }
+  row.appendChild(copy)
+
+  const due = document.createElement('span')
+  due.className = 'todo-due-label'
+  if (todo.due_date) {
+    due.textContent = todo.due_date
+    if (!done && todo.due_date < notesLocalToday()) due.classList.add('overdue')
+  }
+  row.appendChild(due)
+
+  const deleteBtn = document.createElement('button')
+  deleteBtn.type = 'button'
+  deleteBtn.className = 'btn-secondary btn-compact todo-delete'
+  deleteBtn.textContent = t('todo.delete')
+  deleteBtn.addEventListener('click', async () => {
+    if (!window.confirm(t('todo.delete_confirm'))) return
+    deleteBtn.disabled = true
+    try {
+      await todoRequest(`/api/todos/${encodeURIComponent(todo.id)}`, { method: 'DELETE' })
+      showToast(t('todo.toast.deleted'))
+      loadTodoPage()
+    } catch (err) {
+      deleteBtn.disabled = false
+      showToast(t('todo.toast.error', { msg: String(err.message || err) }))
+    }
+  })
+  row.appendChild(deleteBtn)
+  return row
+}
+
+async function loadTodoPage() {
+  wireTodoPage()
+  const openList = document.getElementById('todoOpenList')
+  const doneList = document.getElementById('todoDoneList')
+  const empty = document.getElementById('todoEmpty')
+  try {
+    const data = await todoRequest('/api/todos')
+    const todos = Array.isArray(data.todos) ? data.todos : []
+    const open = todos.filter((todo) => todo.done_at == null)
+    const done = todos.filter((todo) => todo.done_at != null)
+    openList?.replaceChildren(...open.map((todo) => makeTodoRow(todo, false)))
+    doneList?.replaceChildren(...done.map((todo) => makeTodoRow(todo, true)))
+    if (empty) { empty.textContent = t('todo.empty'); empty.hidden = open.length > 0 }
+    const summary = document.querySelector('#todoDone > summary')
+    if (summary) summary.textContent = `${t('todo.done.title')} (${done.length})`
+  } catch (err) {
+    openList?.replaceChildren()
+    doneList?.replaceChildren()
+    if (empty) { empty.hidden = false; empty.textContent = t('todo.load_error', { msg: String(err.message || err) }) }
+  }
+}
+
+function wireTodoPage() {
+  if (todoPageWired) return
+  todoPageWired = true
+  document.getElementById('todoForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const contentEl = document.getElementById('todoContent')
+    const dueEl = document.getElementById('todoDue')
+    const content = (contentEl?.value || '').trim()
+    if (!content) { contentEl?.focus(); return }
+    const body = { content, created_by: 'owner' }
+    if (dueEl?.value) body.due_date = dueEl.value
+    const button = document.getElementById('todoAddBtn')
+    if (button) button.disabled = true
+    try {
+      await todoRequest('/api/todos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      if (contentEl) contentEl.value = ''
+      if (dueEl) dueEl.value = ''
+      showToast(t('todo.toast.added'))
+      loadTodoPage()
+    } catch (err) {
+      showToast(t('todo.toast.error', { msg: String(err.message || err) }))
+    } finally {
+      if (button) button.disabled = false
     }
   })
 }
