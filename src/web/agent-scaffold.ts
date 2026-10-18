@@ -2750,9 +2750,12 @@ function buildSkillsPathTrapBody(): string {
     'A `.claude-config/skills` NEM a saját mappád: symlink a globális',
     '`~/.claude/skills`-re, tehát ami oda kerül, az a TELJES flottánál megjelenik',
     '-- akkor is, ha a skill-futtatás base directory-ja ezt az utat mutatja.',
-    'A saját, csak neked szóló vagy kipróbálatlan külső skill a munkakönyvtárad',
-    '`.claude/skills/` mappájába megy. A globálisba írás tudatos, flotta-szintű',
-    'döntés legyen, ne alapértelmezés.',
+    // Two shared surfaces, not one (#261): the main agent's workdir is the repo
+    // root, and every sub-agent workdir sits under it, so its .claude/skills
+    // loads fleet-wide while the global-skill gate does not cover it.
+    'Sub-ágensnél a saját skill a munkakönyvtár `.claude/skills/` mappája. A FŐ-ÁGENSNÉL ez',
+    'a repo gyökerében van, és minden sub-ágensbe betöltődik, a kapu mégsem védi: második közös',
+    'felület (#261, gazda-döntésre vár). A globálisba írás tudatos, flotta-szintű döntés legyen.',
     '',
     // The limits of the gates, in the SAME generated block as the trap they
     // belong to. Written here rather than by hand in seven CLAUDE.md files
