@@ -154,8 +154,13 @@ describe('generateClaudeMd prompt: no hardcoded localhost:3420', () => {
     expect(fnBody).toContain('MINDIG abszolút úttal hivatkozz')
   })
 
-  it('references dashboardOrigin in the schedules API curl example', () => {
+  // #586: the self-pace gate denies every /api/schedules write from a
+  // sub-agent, so a POST recipe here is a command that can never run. The
+  // section names the endpoint (by dashboardOrigin) only to say it is gated.
+  it('names the schedules API by dashboardOrigin and routes writes to the main agent', () => {
     expect(fnBody).toContain('${dashboardOrigin}/api/schedules')
+    expect(fnBody).toContain('A SAJÁT TURN-ÖD ÜTEMEZÉSE TILTOTT')
+    expect(fnBody).not.toContain('-X POST ${dashboardOrigin}/api/schedules')
   })
 
   it('references dashboardOrigin in the inter-agent messages API curl example', () => {

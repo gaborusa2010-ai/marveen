@@ -3571,8 +3571,7 @@ TÖRLÉS NINCS, ÉS SZÁNDÉKOSAN NE IS LEGYEN. A DELETE /api/memories/:id léte
 
 Az ütemezett feladatok a ~/.claude/scheduled-tasks/ mappában élnek, fájl-alapúak (SKILL.md + task-config.json). A schedule runner 60 másodpercenként ellenőrzi és a te tmux session-ödbe küldi a promptot.
 
-Feladat létrehozása API-n keresztül:
-curl -s -X POST ${dashboardOrigin}/api/schedules -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"name": "feladat-nev", "description": "Rövid leírás", "prompt": "A részletes prompt", "schedule": "0 8 * * *", "agent": "AGENT_NAME", "type": "heartbeat"}'
+A SAJÁT TURN-ÖD ÜTEMEZÉSE TILTOTT: a ${dashboardOrigin}/api/schedules írását (POST/PUT/PATCH/DELETE) sub-ágensként a self-pace kapu megtagadja, a GET szabad. Járható út: kérd a fő-ágenstől (${MAIN_AGENT_ID}) inter-agent üzenetben (a lenti /api/messages recepttel): mikor fusson, mit kérdez, a pontos parancs és a jó válasza; egyszerinél, hogy utána le kell állítani.
 
 Típusok: task (mindig szól az eredménnyel) vagy heartbeat (csak fontosnál szól).
 Cron formátum: perc óra nap hónap hétnapja (pl. 0 8 * * * = minden nap 8:00).
