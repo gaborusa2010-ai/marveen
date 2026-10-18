@@ -3224,7 +3224,7 @@ async function showCardDetail(card) {
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.priority')}</span>
-      <span class="meta-value">${priorityLabels[card.priority]}</span>
+      <span class="meta-value meta-value-editable" id="metaPriorityValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${priorityLabels[card.priority]}</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.project')}</span>
@@ -3312,6 +3312,50 @@ async function showCardDetail(card) {
     sel.addEventListener('change', save)
     sel.addEventListener('blur', () => {
       if (statusValueEl.querySelector('select')) restore(card.status)
+    })
+  })
+
+  // Inline edit for priority on detail view. Status and assignee were
+  // tap-to-edit but priority was not, so on the detail sheet it looked
+  // uneditable (owner, Telegram msg 8302).
+  const priorityValueEl = document.getElementById('metaPriorityValue')
+  priorityValueEl.addEventListener('click', () => {
+    if (priorityValueEl.querySelector('select')) return
+    const current = card.priority
+    const sel = document.createElement('select')
+    sel.style.cssText = 'padding:2px 6px; border-radius:4px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); font-size:inherit'
+    for (const p of KANBAN_PRIORITY_ORDER) {
+      const opt = document.createElement('option')
+      opt.value = p
+      opt.textContent = priorityLabels[p] || p
+      if (p === current) opt.selected = true
+      sel.appendChild(opt)
+    }
+    priorityValueEl.innerHTML = ''
+    priorityValueEl.appendChild(sel)
+    sel.focus()
+    const restore = (p) => { priorityValueEl.textContent = priorityLabels[p] || p }
+    sel.addEventListener('change', async () => {
+      const newVal = sel.value
+      if (newVal === current) { restore(current); return }
+      try {
+        const r = await fetch(`/api/kanban/${encodeURIComponent(card.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ priority: newVal }),
+        })
+        if (!r.ok) throw new Error('PUT failed')
+        card.priority = newVal
+        restore(newVal)
+        showToast(t('kanban.toast.card_updated'))
+        loadKanban && loadKanban()
+      } catch {
+        restore(current)
+        showToast(t('kanban.toast.save_error'))
+      }
+    })
+    sel.addEventListener('blur', () => {
+      if (priorityValueEl.querySelector('select')) restore(card.priority)
     })
   })
 
