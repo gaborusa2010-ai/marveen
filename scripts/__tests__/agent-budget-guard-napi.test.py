@@ -53,7 +53,8 @@ def main():
     now = datetime.datetime.now()
     with tempfile.TemporaryDirectory() as td:
         mod.PROJECTS = td
-        agent_dir = os.path.join(td, "-home-gabor-marveen-agents-proba")
+        agent_dir = os.path.join(
+            td, mod.project_slug(os.path.join(mod.REPO, "agents", "proba")))
 
         print("1. day_start a legutobbi 06:00-ra mutat, nem 24 oraval ezelottre")
         ds = datetime.datetime.fromtimestamp(mod.day_start(6))
@@ -113,7 +114,7 @@ def main():
         check("nem allitott le", not leallitva)
 
         print("8. a fo-agens utja mas: nincs -agents- tag")
-        check("marveen utja", mod.project_dir("marveen").endswith("-home-gabor-marveen"),
+        check("marveen utja", mod.project_dir("marveen").endswith(mod.project_slug(mod.REPO)),
               mod.project_dir("marveen"))
         check("sub-agens utja", mod.project_dir("roxy").endswith("-agents-roxy"),
               mod.project_dir("roxy"))

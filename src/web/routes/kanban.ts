@@ -45,6 +45,7 @@ import { nicknameFor } from '../team-nicknames.js'
 import { isAgentRunning } from '../agent-process.js'
 import { resolveKanbanDispatch } from '../../kanban-dispatch.js'
 import { generateBreakdown } from '../llm-breakdown.js'
+import { notifyNextCardOnWait, notifyUnblockedByDone } from '../kanban-wait-notify.js'
 import { logger } from '../../logger.js'
 import { readBody, json, jsonMaybeGzip, rejectUnknownQueryParams, methodNotAllowed } from '../http-helpers.js'
 import { getEffectiveSettingValue } from '../../settings-store.js'
@@ -60,7 +61,7 @@ const KANBAN_READONLY_FIELDS = new Set<string>([
   // dispatched_at is a real column set by the dispatch path (markKanbanCardDispatched),
   // never by a PUT, but getKanbanCard's SELECT * returns it so the dashboard's
   // whole-card send carries it back. Accept-and-ignore, do not 400.
-  'dispatched_at', 'wait_kind', 'wait_note', 'wait_until', 'stale_kept_at',
+  'dispatched_at', 'wait_kind', 'wait_note', 'wait_until', 'wait_notified_at', 'stale_kept_at',
   // Recurrence link and the GET-embedded board counts (cards #452-#454): echoed
   // back by the whole-card send, never written by a PUT.
   'recurrence_spawned_id', 'checklist_total', 'checklist_done', 'attachment_count',
@@ -89,6 +90,14 @@ function normaliseRecurrenceField(data: Record<string, unknown>, current: string
     return { status: 403, body: KANBAN_FEATURE_DISABLED_BODY }
   }
   data.recurrence = text
+  return null
+}
+
+function normaliseLocationField(data: Record<string, unknown>): string | null {
+  if (!('location' in data)) return null
+  if (data.location !== null && typeof data.location !== 'string') return 'location must be a string or null'
+  if (typeof data.location === 'string' && data.location.trim().length > 300) return 'location must be at most 300 characters'
+  data.location = typeof data.location === 'string' ? data.location.trim() || null : null
   return null
 }
 
@@ -677,7 +686,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const id = randomUUID().slice(0, 8)
     const fold = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
     const card = getDb().transaction(() => {
-      createKanbanCard({ id, title, description: lines.join('\n'), status: 'planned', priority: 'normal', project, due_date: normaliseDueDate(wantedBy) ?? undefined })
+      createKanbanCard({ id, title, description: lines.join('\n'), status: 'planned', priority: 'normal', project, location: address, due_date: normaliseDueDate(wantedBy) ?? undefined })
       let label = listLabels().find((item) => fold(item.name) === fold('Ügyfél-kérés'))
       if (!label) label = createLabel({ id: randomUUID().slice(0, 8), name: 'Ügyfél-kérés', color: KANBAN_LABEL_COLORS[0] })
       addLabelToCard(id, label.id)
@@ -895,6 +904,8 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // that slipped through would make every later done-move a silent no-op.
     const recurrenceError = normaliseRecurrenceField(data, null)
     if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
+    const locationError = normaliseLocationField(data)
+    if (locationError) { json(res, { error: locationError }, 400); return true }
     const knownPostFields = new Set<string>([...KANBAN_CREATE_FIELDS, 'id'])
     const unknownKeys = Object.keys(data).filter((key) => !knownPostFields.has(key))
     if (unknownKeys.length > 0) {
@@ -966,9 +977,15 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const before = getKanbanCard(id)
     const recurrenceError = normaliseRecurrenceField(data, before?.recurrence)
     if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
+    const locationError = normaliseLocationField(data)
+    if (locationError) { json(res, { error: locationError }, 400); return true }
     if (updateKanbanCard(id, data, who.actor)) {
       // A PUT is the other way a card reaches done (agents use it as much as /move).
-      if (data.status === 'done' && before && before.status !== 'done') maybeSpawnRecurrence(id, before.priority, who.actor)
+      if (data.status === 'done' && before && before.status !== 'done') {
+        maybeSpawnRecurrence(id, before.priority, who.actor)
+        // #574: the cards that waited on this one are told they are free.
+        notifyUnblockedByDone(id)
+      }
       json(res, { ok: true })
       return true
     }
@@ -1038,7 +1055,19 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     if (moveKanbanCard(id, status, sort_order ?? 0, who.actor)) {
       if (reason) setKanbanWaitReason(id, reason)
       // The priority from BEFORE the move: moveKanbanCard rewrites it by column.
-      if (status === 'done' && beforeMove && beforeMove.status !== 'done') maybeSpawnRecurrence(id, beforeMove.priority, who.actor)
+      if (status === 'done' && beforeMove && beforeMove.status !== 'done') {
+        maybeSpawnRecurrence(id, beforeMove.priority, who.actor)
+        // #574: wake the agents whose waiting cards this one was the last open blocker of.
+        notifyUnblockedByDone(id)
+      }
+      // #574: a card entering waiting hands its assignee agent the next card, so it
+      // switches without asking (owner msg 8090). Owner-kind waits send nothing.
+      if (status === 'waiting' && beforeMove && beforeMove.status !== 'waiting') {
+        const blockerRefs = reason?.kind === 'card'
+          ? getBlockersForCard(id).filter((b) => b.id === reason!.blockerId).map((b) => `#${b.seq}`)
+          : []
+        notifyNextCardOnWait(id, blockerRefs)
+      }
       // Wake the assigned agent once when the card enters in_progress -- unless
       // that agent is the one who moved it (self-pickup needs no wake-up).
       if (status === 'in_progress') fireKanbanDispatch(id, who.actor)

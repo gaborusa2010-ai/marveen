@@ -8,6 +8,12 @@
 #   tetolap ferde hossz  2260.8 -> 2215.6   45.4 too long: W/cos instead of the panel's own span
 #   hatlap befoglalo     1950.0 -> 1934.0   the external height, which a rebated back never reaches
 #
+# And 2026-10-17, on a 29-degree loft example: the 09-13 "first principles" here
+# used the same outline the code used, so both left out the panels a divider
+# stands between. Every divider was t + t/cos too long (1491.7 -> 1458.0 on the
+# practice box). The LIMIT check below is what catches that class: at 0.001
+# degrees a raked box has to give the straight box's figures, and it did not.
+#
 # The expected figures here are computed FROM FIRST PRINCIPLES in this file, not
 # read back out of carcass.py, so the test can disagree with the code it checks.
 set -u
@@ -46,15 +52,24 @@ def near(got, want, tol=0.6):
     return abs(float(got) - want) <= tol
 
 # 1-2. Uprights: measured from the OUTSIDE face of the high end, so the first
-#      divider sits t + bay + t/2 along, not bay + t/2.
+#      divider sits t + bay + t/2 along, not bay + t/2. Its long point is the
+#      face towards the high end, and it stands BETWEEN the bottom panel (t) and
+#      the raked top (t/cos vertically; nothing for top_applied, where H is the
+#      box under the worktop).
+cut = t if construction == "top_applied" else t + t / cos
 x = t
 for i in (1, 2):
     x += bay
-    want = H - (x + t / 2) * tan
+    want = H - x * tan - cut
     got = parts[f"valaszfal {i}."]["h"]
     # openings round DOWN to 0.5, so the tool may sit up to 0.5 under
     out.append((f"valaszfal {i}. = {want:.1f} (kapott {got})", near(got, want, 0.6)))
     x += t
+
+# 2b. The low end's long point is its INSIDE face, W - t along.
+want = H - (W - t) * tan
+got = parts["oldal (alacsony veg)"]["h"]
+out.append((f"alacsony oldal hosszu pont = {want:.1f} (kapott {got})", near(got, want, 0.6)))
 
 # 3. The rake stretches the panel's OWN span.
 flat = W if construction == "top_applied" else inner_w
@@ -93,6 +108,38 @@ for c in sides_full top_applied; do
   python3 scripts/muhely/carcass.py "$TMP/spec.json" --cutlist "$TMP/c.json" >/dev/null 2>&1 \
     || { no "$c: carcass.py elszallt"; continue; }
   check "$TMP/c.json" "$c" || fail=1
+done
+
+# THE LIMIT. A raked box at 0.001 degrees is a straight box, so every upright
+# has to come out as the straight branch gives it. This is the check that does
+# not share a model with the code: it compares the code with ITSELF.
+echo "  -- hatareset: 0.001 fok = egyenes doboz"
+for c in sides_full top_applied topbottom_full; do
+  if python3 - "$c" "$TMP" <<'PY'
+import json, subprocess, sys
+c, tmp = sys.argv[1], sys.argv[2]
+base = {"job": "hatar", "w": 1800, "h": 1950, "d": 550, "t": 18,
+        "back": {"type": "applied", "t": 8}, "construction": c,
+        "dividers": {"count": 2}}
+got = {}
+for tag, extra in (("egyenes", {}), ("ferde", {"slope": {"angle": 0.001, "source": "mert"}})):
+    json.dump({**base, **extra}, open(f"{tmp}/{tag}.json", "w"))
+    subprocess.run(["python3", "scripts/muhely/carcass.py", f"{tmp}/{tag}.json",
+                    "--cutlist", f"{tmp}/{tag}-c.json"], capture_output=True, check=True)
+    got[tag] = json.load(open(f"{tmp}/{tag}-c.json"))["parts"]
+straight = {p["name"]: p["h"] for p in got["egyenes"]}
+bad = []
+for p in got["ferde"]:
+    n = p["name"]
+    key = "valaszfal" if n.startswith("valaszfal") else "oldal" if n.startswith("oldal") else None
+    if key and abs(p["h"] - straight[key]) > 0.2:
+        bad.append(f"{n}: {p['h']} != {straight[key]}")
+print("    " + ("; ".join(bad) if bad else "egyezik"))
+sys.exit(1 if bad else 0)
+PY
+  then ok "$c: a ferde ag a hataresetben az egyenest adja"
+  else no "$c: a ferde ag a hataresetben NEM az egyenest adja"
+  fi
 done
 
 # DRAWERS IN A RAKED BAY. The old check measured a stack against the carcass

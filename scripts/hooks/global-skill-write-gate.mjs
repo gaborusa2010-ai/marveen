@@ -35,7 +35,7 @@
 // of an accident and makes a deliberate act leave a trace. It is not a
 // permission system.
 
-import { readFileSync, appendFileSync, mkdirSync, realpathSync } from 'node:fs'
+import { readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -53,6 +53,20 @@ const STANDING_GRANTS_PATH = join(REPO_ROOT, 'store', 'skill-write-grants.json')
 /** The one folder this gate protects: the fleet-wide skill directory. */
 export const GLOBAL_SKILL_DIR = join(homedir(), '.claude', 'skills')
 
+// #261 (card 86848ea4): the REPO-ROOT skill folder is a second shared surface.
+// It is the main agent's own folder, but Claude Code reads project settings up
+// to the repo root, so every sub-agent session loads these skills too. Owner,
+// tg 8271 (2026-10-18): "A kapu ezt is védje". And tg 8276, for the main
+// agent's own work here: existing skills may be FIXED freely, a NEW skill (or
+// removing one) needs a grant -- the 'main-existing' tier below.
+// The env override exists for the tests only: the folder is not in git, so a
+// worktree has no copy of it.
+export const REPO_SKILL_DIR = process.env.SKILL_GATE_REPO_SKILL_DIR || join(REPO_ROOT, '.claude', 'skills')
+const PROTECTED = [
+  { tree: 'global', dir: GLOBAL_SKILL_DIR },
+  { tree: 'repo', dir: REPO_SKILL_DIR },
+]
+
 // Textual forms of the protected path that can appear in a Bash command.
 // `.claude-config/skills` is included because it is a SYMLINK to the global
 // folder: the trap the project's CLAUDE.md names by hand.
@@ -62,7 +76,57 @@ const PATH_PATTERNS = [
   '$HOME/.claude/skills',
   '${HOME}/.claude/skills',
   '.claude-config/skills',
+  REPO_SKILL_DIR,
 ]
+
+// A RELATIVE `.claude/skills` cannot be judged by its text: from the repo root
+// it is the protected folder, from agents/<name> it is that agent's own, free
+// folder, and `agents/merlin/.claude/skills` from the root is where the main
+// agent installs skills for a sub-agent. So every path-shaped piece that names
+// a skills folder is RESOLVED against the caller's working directory and then
+// compared, instead of being matched as a substring.
+const SKILLS_PATH_RE = /[^\s'"=:>(;|&]*\.claude(?:-config)?\/skills(?:\/[^\s'";|&)]*)?/g
+
+function expandHome(p) {
+  return String(p)
+    .replace(/^~(?=\/|$)/, homedir())
+    .replace(/^\$\{HOME\}(?=\/|$)/, homedir())
+    .replace(/^\$HOME(?=\/|$)/, homedir())
+}
+
+/**
+ * Which protected folder a path falls in, resolved against `cwd`, or null.
+ * `rel` is the path's segments under that folder: [] for the folder itself,
+ * [skill] for a skill's own directory, [skill, ...] for something inside it.
+ */
+export function protectedTarget(p, cwd = process.cwd()) {
+  if (!p) return null
+  try {
+    const plain = resolve(cwd, expandHome(p))
+    const real = realpathish(plain)
+    for (const { tree, dir } of PROTECTED) {
+      for (const [abs, d] of [[real, realpathish(dir)], [plain, dir]]) {
+        if (abs === d || abs.startsWith(d + '/')) {
+          const rel = abs === d ? [] : abs.slice(d.length + 1).split('/').filter(Boolean)
+          return { tree, dir, rel, skill: rel[0] || null }
+        }
+      }
+    }
+  } catch {
+    // fall through: an unreadable path is not a protected one
+  }
+  return null
+}
+
+/** Every protected target a piece of command text names, resolved against cwd. */
+export function targetsInText(text, cwd = process.cwd()) {
+  const out = []
+  for (const m of String(text ?? '').matchAll(SKILLS_PATH_RE)) {
+    const t = protectedTarget(m[0], cwd)
+    if (t) out.push(t)
+  }
+  return out
+}
 
 // GLOBALSKILL901-FP: this gate produced the same false positive TWICE, and the
 // second time is why the command reading now lives in lib/shell-command.mjs.
@@ -85,8 +149,8 @@ const DESTRUCTIVE_VERBS = new Set([
 // any earlier position is a SOURCE, i.e. a read.
 const COPY_VERBS = new Set(['cp', 'mv', 'rsync', 'install', 'ln'])
 
-function mentionsProtected(token) {
-  return PATH_PATTERNS.some((pat) => String(token).includes(pat))
+function mentionsProtected(token, cwd = process.cwd()) {
+  return PATH_PATTERNS.some((pat) => String(token).includes(pat)) || targetsInText(token, cwd).length > 0
 }
 
 // INTERPWRITE901 (Forgacs, 2026-09-01, found on the FIRST use of his new grant).
@@ -171,10 +235,11 @@ function isInlineInterpreter(structuralTokens) {
 }
 
 /** Does a Bash command look like a WRITE aimed at the protected folder? */
-export function bashTouchesGlobalSkills(command) {
+export function bashTouchesGlobalSkills(command, cwd = process.cwd()) {
   const cmd = String(command ?? '')
   if (!cmd) return false
-  if (!PATH_PATTERNS.some((pat) => cmd.includes(pat))) return false
+  const mp = (t) => mentionsProtected(t, cwd)
+  if (!mp(cmd)) return false
 
   // The interpreter check runs on the RAW segments -- before value-flag values
   // are dropped. `node -e "<program>"` would otherwise lose its program to the
@@ -198,7 +263,13 @@ export function bashTouchesGlobalSkills(command) {
     // over-wide whole-command match; it is the only reading that still sees the
     // body. Without a heredoc the segment's own tokens are the honest scope.
     const scope = cmd.includes('<<') ? cmd : rawSeg.map((t) => t.text).join(' ')
-    if (PATH_PATTERNS.some((pat) => scope.includes(pat))) return true
+    // #261, first live false positive (10-18): an inline script whose PROSE said
+    // "the repo .claude/skills is protected" was refused. For the repo folder a
+    // bare folder name is prose; a path INTO it (a skill, a file) still counts.
+    // The global folder keeps the old, deliberately blunt text match.
+    const named = PATH_PATTERNS.some((pat) => pat !== REPO_SKILL_DIR && scope.includes(pat)) ||
+      targetsInText(scope, cwd).some((t) => t.tree === 'global' || t.rel.length > 0)
+    if (named) return true
   }
 
   for (const seg of readCommand(cmd)) {
@@ -209,7 +280,7 @@ export function bashTouchesGlobalSkills(command) {
 
     // QUOTEDDEST901: the early exit used to run on the UNQUOTED view, so a command
     // whose only mention of the folder was quoted never reached the checks below.
-    if (!seg.some((t) => mentionsProtected(t.text))) continue
+    if (!seg.some((t) => mp(t.text))) continue
 
     // A redirect writes to the token that follows it. Only an UNQUOTED token
     // that is a bare `>`/`>>`, or ends with one, is a redirect operator.
@@ -220,11 +291,11 @@ export function bashTouchesGlobalSkills(command) {
     for (let i = 0; i < opTexts.length; i++) {
       const tok = opTexts[i]
       if (tok === '>' || tok === '>>') {
-        if (mentionsProtected(allForRedirect[i + 1] ?? '')) return true
+        if (mp(allForRedirect[i + 1] ?? '')) return true
         continue
       }
       const m = tok.match(/^>>?(.+)$/)
-      if (m && mentionsProtected(m[1])) return true
+      if (m && mp(m[1])) return true
     }
 
     // The verb is the first token that is not an env assignment or a wrapper.
@@ -253,17 +324,19 @@ export function bashTouchesGlobalSkills(command) {
     }
 
     if (DESTRUCTIVE_VERBS.has(verb)) {
-      if (args.some(mentionsProtected)) return true
+      if (args.some(mp)) return true
       continue
     }
     if (COPY_VERBS.has(verb)) {
       const positional = args.filter((a) => !a.startsWith('-'))
       const dest = positional[positional.length - 1] || ''
-      if (mentionsProtected(dest)) return true
+      if (mp(dest)) return true
+      // #261: `mv` REMOVES its sources, so a protected source is a write too.
+      if (verb === 'mv' && positional.some(mp)) return true
       continue
     }
     if (verb === 'sed' && args.some((a) => /^-[a-z]*i$/.test(a) || a === '--in-place')) {
-      if (args.some(mentionsProtected)) return true
+      if (args.some(mp)) return true
       continue
     }
   }
@@ -410,25 +483,57 @@ function standingAllows(grants, agent, skills) {
   return covered ? { agent, skills, reason: mine[0].reason, approvedBy: mine[0].approvedBy } : null
 }
 
-/** Pure decision, no I/O beyond the objects handed to it. */
-export function skillWriteDecision(toolName, toolInput, grant = null, standing = [], agent = 'marveen') {
+// Verbs that remove what they name. For the main agent's 'main-existing' tier a
+// skill's own directory (or the folder itself) under one of these is not a fix.
+const REMOVING_VERB_RE = /(^|[\s;|&(])(rm|rmdir|unlink|mv|shred)\s/
+
+/**
+ * #261, owner tg 8276: the main agent may FIX an existing skill in the repo
+ * folder without a grant. Every target must be in that folder, name a skill
+ * that already exists there, and -- for a removing command -- sit INSIDE the
+ * skill, not be the skill directory or the folder itself.
+ */
+function mainExistingAllows(agent, targets, removing) {
+  if (agent !== 'marveen' || targets.length === 0) return false
+  return targets.every((t) =>
+    t.tree === 'repo' && t.skill && existsSync(join(t.dir, t.skill)) && !(removing && t.rel.length <= 1))
+}
+
+/** Pure decision, no I/O beyond the objects handed to it (and an existsSync). */
+export function skillWriteDecision(toolName, toolInput, grant = null, standing = [], agent = 'marveen', cwd = process.cwd()) {
   const name = String(toolName ?? '')
   let hit = false
   let skills = []
+  let targets = []
+  let removing = false
   if (name === 'Write' || name === 'Edit' || name === 'MultiEdit' || name === 'NotebookEdit') {
     const p = toolInput?.file_path ?? toolInput?.notebook_path
-    hit = isGlobalSkillPath(p)
+    const t = protectedTarget(p, cwd)
+    hit = Boolean(t)
     if (hit) {
-      const s = skillOfPath(p)
-      skills = s ? [s] : []
+      targets = [t]
+      skills = t.skill ? [t.skill] : []
     }
   } else if (name === 'Bash') {
-    hit = bashTouchesGlobalSkills(toolInput?.command)
-    if (hit) skills = skillsInCommand(toolInput?.command)
+    const cmd = toolInput?.command
+    hit = bashTouchesGlobalSkills(cmd, cwd)
+    if (hit) {
+      targets = targetsInText(cmd, cwd)
+      skills = skillsInCommand(cmd)
+      removing = REMOVING_VERB_RE.test(' ' + String(cmd))
+    }
   }
   if (!hit) return { blocked: false, tier: 'not-global-skill' }
 
-  const standingHit = standingAllows(standing, agent, skills)
+  if (mainExistingAllows(agent, targets, removing)) {
+    return { blocked: false, tier: 'main-existing', skills: [...new Set(targets.map((t) => t.skill))] }
+  }
+
+  // Standing grants are written for the GLOBAL folder (STANDING901). A skill of
+  // the same name in the repo folder is a different file, so a command that
+  // touches the repo folder at all is outside every standing grant.
+  const touchesRepo = targets.some((t) => t.tree === 'repo')
+  const standingHit = touchesRepo ? null : standingAllows(standing, agent, skills)
   if (standingHit) return { blocked: false, tier: 'standing', standing: standingHit, skills }
 
   if (grant) return { blocked: false, tier: 'granted', grant, skills }
@@ -443,6 +548,9 @@ const BLOCK_MESSAGE =
   'hook nem olvassa a store/autonomy-config.json-t, mert egy szint egy mondat a promptban, a ' +
   'kozos mappa viszont mindenkire hat (GLOBALSKILL901). Egy magasabb szint NEM nyitja meg ezt ' +
   'az utat. Ugyanez all a <workdir>/.claude-config/skills utra is, mert az SYMLINK ugyanide.\n' +
+  'A REPO GYOKERI .claude/skills mappa (a fo-agense) is vedett (#261, gazda tg 8271): minden ' +
+  'sub-agens sessionje betolti. Sub-agens ide csak engedellyel ir; a fo-agens a MEGLEVO ' +
+  'skilljeit szabadon javithatja, UJ skillhez vagy egy skill torlesehez engedely kell (tg 8276).\n' +
   'HA A SAJAT SKILLED: tedd a munkakonyvtarad .claude/skills/ mappajaba, az szabad.\n' +
   'HA A PARANCSOD NEM IS NYUL A MAPPAHOZ, csak EMLITI: ez akkor is elakad, es ez szandekos. ' +
   'Egy inline script (heredoc, python3 -c, node -e) torzset a kapu nem tudja elolvasni, ezert ' +
@@ -526,7 +634,7 @@ if (isInvokedDirectly()) {
   }
   const agent = agentFromCwd()
   const decision = skillWriteDecision(
-    payload?.tool_name, payload?.tool_input, readGrant(), readStandingGrants(), agent,
+    payload?.tool_name, payload?.tool_input, readGrant(), readStandingGrants(), agent, process.cwd(),
   )
   // One event, one line, with anything credential-shaped removed. See
   // lib/redact.mjs (SECRETLOG901): this log records whole commands so a
@@ -535,8 +643,13 @@ if (isInvokedDirectly()) {
   const target = logSafe(payload?.tool_input?.file_path ?? payload?.tool_input?.command ?? '')
   const agentType = String(payload?.agent_type ?? '')
   if (decision.blocked) {
-    logLine('BLOCKED', `tool="${payload?.tool_name}" agent_type="${agentType}" target="${target}"`)
+    logLine('BLOCKED', `tool="${payload?.tool_name}" agent="${agent}" agent_type="${agentType}" target="${target}"`)
     deny(BLOCK_MESSAGE)
+  }
+  if (decision.tier === 'main-existing') {
+    // Free, but never quiet: the same log as every other write here.
+    logLine('ALLOWED_MAIN_EXISTING',
+      `tool="${payload?.tool_name}" agent="${agent}" skills="${(decision.skills || []).join(',')}" target="${target}"`)
   }
   if (decision.tier === 'standing') {
     // A standing grant is still a write to the shared folder: logged like any
@@ -548,7 +661,7 @@ if (isInvokedDirectly()) {
   if (decision.tier === 'granted') {
     // A grant that leaves no trace is indistinguishable from no gate at all.
     logLine('ALLOWED_BY_GRANT',
-      `tool="${payload?.tool_name}" agent_type="${agentType}" approval_id="${decision.grant.approvalId}" ` +
+      `tool="${payload?.tool_name}" agent="${agent}" agent_type="${agentType}" approval_id="${decision.grant.approvalId}" ` +
       `until=${decision.grant.until} target="${target}"`)
   }
   allow()

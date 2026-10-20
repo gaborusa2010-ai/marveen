@@ -19,7 +19,12 @@ Mindketto a HTML-fejlec NELKUL szamol.
 """
 import re, sys, os, time
 
-P = os.path.expanduser('~/.claude/projects/-home-gabor-marveen/memory/MEMORY.md')
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_SLUG = project_slug(REPO)
+P = os.path.expanduser(os.path.join('~/.claude/projects', PROJECT_SLUG, 'memory/MEMORY.md'))
 SOR_PLAFON, KAR_PLAFON = 200, 25000
 
 def main(p=P):

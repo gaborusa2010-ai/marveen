@@ -213,7 +213,7 @@ describe('isolated-config launcher wiring', () => {
     const ownTeamBranch = SRC.match(/if \(isOwnTeam\) \{[\s\S]*?\n {6}\} else if \(hasFleetOauthToken\(\)\) \{/)?.[0] ?? ''
     expect(ownTeamBranch).not.toBe('')
     expect(ownTeamBranch).not.toMatch(/CLAUDE_CODE_OAUTH_TOKEN/)
-    expect(ownTeamBranch).toMatch(/ensureIsolatedChannelConfigDir\(name, hasChannel \? agentProvider : null, extraLaunch\.pluginIds\)/)
+    expect(ownTeamBranch).toMatch(/ensureIsolatedChannelConfigDir\(name, hasChannel \? agentProvider : null, extraPluginIds\)/)
   })
 
   it('own_team isolation failure falls back LOUDLY (shared root = host credential)', () => {
@@ -221,7 +221,7 @@ describe('isolated-config launcher wiring', () => {
   })
 
   it('passes a null provider for channel-less agents so no plugin gets enabled', () => {
-    expect(SRC).toMatch(/ensureIsolatedChannelConfigDir\(name, hasChannel \? agentProvider : null, extraLaunch\.pluginIds\)/)
+    expect(SRC).toMatch(/ensureIsolatedChannelConfigDir\(name, hasChannel \? agentProvider : null, extraPluginIds\)/)
   })
 
   it('keeps the plugin-slot collision alert scoped to channel agents', () => {

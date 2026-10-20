@@ -131,6 +131,90 @@ def test_everything_fits_is_zero():
     check("minden fer: json mod exit 0", rc, 0)
 
 
+def test_half_mm_survives_print():
+    """A 0.5 mm size must reach the page as written (2026-10-17, Forgacs).
+
+    The text report and the PDF printed sizes with ':.0f'. Python rounds a half
+    to the EVEN neighbour, so 523.5 came out as 524 and 2115.5 as 2116 (0.5 too
+    big), 1856.5 as 1856 (0.5 too small). The delivered Lyford Road nesting PDF
+    (2026-08-27) shows "524x374" and "500x346" for the 523.5 door panel and the
+    499.5 shelf. The input JSON was right; only the print was wrong.
+    """
+    import json
+    import subprocess
+    import tempfile
+    from cutlist import mm
+    check("mm: 523.5", mm(523.5), "523.5")
+    check("mm: 2115.5", mm(2115.5), "2115.5")
+    check("mm: 564.0 egesz marad", mm(564.0), "564")
+    check("mm: 499.75 nem kerekit", mm(499.75), "499.75")
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "ajto", "w": 523.5, "h": 374, "qty": 1},
+                     {"name": "oldal", "w": 569, "h": 1856.5, "qty": 1},
+                     {"name": "nagyajto", "w": 590, "h": 2115.5, "qty": 1}]}
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "job.json")
+        with open(path, "w") as fh:
+            json.dump(job, fh)
+        pdf = os.path.join(d, "out.pdf")
+        r = subprocess.run([sys.executable, os.path.join(here, "cutlist.py"), path, "--pdf", pdf],
+                           capture_output=True, text=True)
+        txt = subprocess.run([sys.executable, os.path.join(here, "pdftext.py"), pdf],
+                             capture_output=True, text=True).stdout
+    for want in ("523.5", "1856.5", "2115.5"):
+        check(f"szoveg: {want} betu szerint", want in r.stdout, True)
+        check(f"pdf: {want} betu szerint", want in txt, True)
+    check("szoveg: nincs 524/1856 /2116", any(b in r.stdout for b in ("524 ", "x 1856 ", "2116")), False)
+    check("pdf: a lab VAGASI meretet mond", "VAGASI meret" in txt and "keszmeret" not in txt, True)
+
+
+def _pdf_text(job):
+    import json
+    import subprocess
+    import tempfile
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "job.json")
+        with open(path, "w") as fh:
+            json.dump(job, fh)
+        pdf = os.path.join(d, "out.pdf")
+        subprocess.run([sys.executable, os.path.join(here, "cutlist.py"), path, "--pdf", pdf],
+                       capture_output=True, text=True)
+        return subprocess.run([sys.executable, os.path.join(here, "pdftext.py"), pdf],
+                              capture_output=True, text=True).stdout
+
+
+def test_pdf_has_grain_and_edging_columns():
+    """The shop PDF carries SZALIRANY and ELSZALAG per part (#611, 2026-10-20).
+
+    The owner's convention: without those two columns the cut list is not
+    finished. The sheet pages only ever printed name and size.
+    """
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "oldal", "w": 450, "h": 800, "qty": 2, "grain": "h",
+                      "edging": "nincs"},
+                     {"name": "polc", "w": 1162, "h": 443, "qty": 2, "grain": "w",
+                      "edging": "2mm sz:0 m:1"}]}
+    txt = _pdf_text(job)
+    check("pdf: SZALIRANY oszlop", "SZALIRANY" in txt, True)
+    check("pdf: ELSZALAG oszlop", "ELSZALAG" in txt, True)
+    check("pdf: allo darab a MAGAS menten", "a MAGAS menten" in txt, True)
+    check("pdf: fekvo darab a SZELES menten", "a SZELES menten" in txt, True)
+    check("pdf: az elszalag erteke latszik", "2mm sz:0 m:1" in txt, True)
+    check("pdf: kitoltott lista nem 'nincs kesz'", "NINCS KESZ" in txt, False)
+
+
+def test_pdf_flags_missing_grain_and_edging():
+    """A missing value prints as missing, never as a blank cell."""
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "ajto", "w": 500, "h": 700, "qty": 1}]}
+    txt = _pdf_text(job)
+    check("pdf: hianyzo elszalag -> a lista nincs kesz", "A LISTA NINCS KESZ" in txt, True)
+    check("pdf: hianyzo szalirany kiirva", "NINCS MEGADVA" in txt, True)
+
+
 if __name__ == "__main__":
     print("cutlist.py stock-kezeles")
     test_single_material_keeps_label()
@@ -141,6 +225,11 @@ if __name__ == "__main__":
     print("cutlist.py kilepesi kod")
     test_unplaced_part_is_not_success()
     test_everything_fits_is_zero()
+    print("cutlist.py meret-kiiras")
+    test_half_mm_survives_print()
+    print("cutlist.py szabaslista oldal")
+    test_pdf_has_grain_and_edging_columns()
+    test_pdf_flags_missing_grain_and_edging()
     print()
     if FAILED:
         print(f"BUKOTT: {len(FAILED)} -- {', '.join(FAILED)}")

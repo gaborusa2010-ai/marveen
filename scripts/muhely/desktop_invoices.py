@@ -42,11 +42,12 @@ import drive_invoices as inv  # noqa: E402
 
 INVOICE_DIR = inv.INVOICE_DIR
 
-# The owner's Windows desktop as WSL sees it. Overridable so this is testable
-# without writing to his real desktop.
+# The owner's Windows desktop as WSL sees it, or the local one on the Mac mini
+# (card #583). Overridable so this is testable without writing to his real desktop.
 DESKTOP_DIR = os.environ.get(
     "MUHELY_DESKTOP_INVOICES",
-    "/mnt/c/Users/gabor/Desktop/Marveen files/Invoices")
+    os.path.expanduser("~/Desktop/Marveen files/Invoices") if sys.platform == "darwin"
+    else "/mnt/c/Users/gabor/Desktop/Marveen files/Invoices")
 
 
 def _ref(name):

@@ -2608,6 +2608,7 @@ function openNewCardModal(status) {
   document.getElementById('cardDesc').value = ''
   document.getElementById('cardPriority').value = 'normal'
   document.getElementById('cardProject').value = ''
+  document.getElementById('cardLocation').value = ''
   document.getElementById('cardDue').value = ''
   document.getElementById('cardStart').value = ''
   document.getElementById('cardEditId').value = ''
@@ -2641,6 +2642,7 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
     assignee: document.getElementById('cardAssignee').value || null,
     priority: document.getElementById('cardPriority').value,
     project: document.getElementById('cardProject').value.trim() || null,
+    location: document.getElementById('cardLocation').value.trim() || null,
     due_date: document.getElementById('cardDue').value
       ? Math.floor(new Date(document.getElementById('cardDue').value).getTime() / 1000)
       : null,
@@ -2888,6 +2890,158 @@ async function renderCardBlockersSection(card) {
     } catch { showToast(t('kanban.toast.blocker_add_error')) }
   }
 }
+
+// === Kanban map helpers (pure) ===
+// Web-Mercator maths, pin grouping and the geocode cache/queue for the map
+// view (#457), ported from the work-log app (src/map.js, src/geocode.js). No
+// DOM: src/__tests__/kanban-map.test.ts runs this block in a vm.
+const KANBAN_MAP_TILE_SIZE = 256
+const KANBAN_MAP_MAX_LAT = 85.05112878
+const KANBAN_MAP_CACHE_SECONDS = 30 * 86400
+const KANBAN_MAP_REQUEST_GAP_MS = 1100
+function kanbanMapProject(lat, lon, zoom) {
+  const size = 2 ** zoom * KANBAN_MAP_TILE_SIZE
+  const rad = Math.max(-KANBAN_MAP_MAX_LAT, Math.min(KANBAN_MAP_MAX_LAT, lat)) * Math.PI / 180
+  return { x: (lon + 180) / 360 * size, y: (1 - Math.asinh(Math.tan(rad)) / Math.PI) / 2 * size }
+}
+function kanbanMapUnproject(x, y, zoom) {
+  const size = 2 ** zoom * KANBAN_MAP_TILE_SIZE
+  return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / size))) * 180 / Math.PI, lon: ((x / size * 360) % 360 + 360) % 360 - 180 }
+}
+function kanbanMapFitView(points, width, height, options = {}) {
+  const valid = (Array.isArray(points) ? points : [])
+    .filter(p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon) && Math.abs(p.lat) <= KANBAN_MAP_MAX_LAT)
+  if (!valid.length) return null
+  const maxZoom = options.maxZoom ?? 15
+  if (valid.length === 1) return { lat: valid[0].lat, lon: valid[0].lon, zoom: maxZoom }
+  const north = Math.max(...valid.map(p => p.lat)), south = Math.min(...valid.map(p => p.lat))
+  const sorted = valid.map(p => ((p.lon % 360) + 360) % 360).sort((a, b) => a - b)
+  // The western edge is just east of the widest empty arc, so pins either side
+  // of the antimeridian still fit in one view.
+  let largestGap = -1, west = sorted[0]
+  for (let i = 0; i < sorted.length; i++) {
+    const next = sorted[(i + 1) % sorted.length] + (i + 1 === sorted.length ? 360 : 0)
+    if (next - sorted[i] > largestGap) {
+      largestGap = next - sorted[i]
+      west = sorted[(i + 1) % sorted.length]
+    }
+  }
+  const lonSpan = 360 - largestGap
+  const centreLat = kanbanMapUnproject(0, (kanbanMapProject(north, 0, 0).y + kanbanMapProject(south, 0, 0).y) / 2, 0).lat
+  const padding = options.padding ?? 30
+  let zoom = options.minZoom ?? 3
+  for (let z = zoom; z <= maxZoom; z++) {
+    const dx = lonSpan / 360 * 2 ** z * KANBAN_MAP_TILE_SIZE
+    const dy = Math.abs(kanbanMapProject(north, 0, z).y - kanbanMapProject(south, 0, z).y)
+    if (dx <= Math.max(1, width - padding * 2) && dy <= Math.max(1, height - padding * 2)) zoom = z
+    else break
+  }
+  return { lat: centreLat, lon: ((west + lonSpan / 2 + 180) % 360 + 360) % 360 - 180, zoom }
+}
+function kanbanMapNormaliseAddress(address) { return String(address ?? '').trim().replace(/\s+/g, ' ').toLowerCase() }
+function kanbanMapGroupByPlace(items) {
+  const groups = new Map()
+  for (const item of Array.isArray(items) ? items : []) {
+    const key = `${Number(item.lat).toFixed(4)},${Number(item.lon).toFixed(4)}`
+    if (!groups.has(key)) groups.set(key, { lat: item.lat, lon: item.lon, cards: [] })
+    groups.get(key).cards.push(item.card)
+  }
+  return [...groups.values()]
+}
+function kanbanMapCacheEntry(entry, nowSeconds) {
+  if (!entry || !Number.isFinite(entry.at) || entry.at < nowSeconds - KANBAN_MAP_CACHE_SECONDS) return null
+  if (entry.miss === true) return { miss: true }
+  return Number.isFinite(entry.lat) && Number.isFinite(entry.lon) ? { lat: entry.lat, lon: entry.lon } : null
+}
+function kanbanMapGeocodeUrl(address) { return `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}` }
+function kanbanMapCreateGeocoder({ fetch, now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  let tail = Promise.resolve(), lastRequestAt = -Infinity
+  async function lookup(address) {
+    return tail = tail.then(async () => {
+      const wait = Math.max(0, KANBAN_MAP_REQUEST_GAP_MS - (now() - lastRequestAt))
+      if (wait) await sleep(wait)
+      lastRequestAt = now()
+      try {
+        const response = await fetch(kanbanMapGeocodeUrl(address), {
+          headers: { Accept: 'application/json' },
+          referrerPolicy: 'strict-origin-when-cross-origin',
+        })
+        if (!response.ok) return { error: true }
+        const rows = await response.json()
+        const lat = Number(rows?.[0]?.lat)
+        const lon = Number(rows?.[0]?.lon)
+        return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : { miss: true }
+      } catch { return { error: true } }
+    })
+  }
+  return { lookup }
+}
+// === end kanban map helpers ===
+
+// === Kanban calendar helpers (pure) ===
+// Month grid and day buckets for the calendar view (#451 part B). No DOM, no
+// globals: the view below renders what these return, and
+// src/__tests__/kanban-calendar.test.ts runs them in a vm. Dates are local
+// (the browser runs in Europe/London), so a card due 23:30 BST lands on its
+// London day, not on the UTC one.
+
+// 'YYYY-MM-DD' of a local Date.
+function kanbanCalDayKey(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+// Local day key of a unix-seconds deadline, or null when it is not a usable
+// number (the column is INTEGER, but a stray string must not throw).
+function kanbanCalDueKey(dueDate) {
+  if (dueDate === null || dueDate === undefined || dueDate === '') return null
+  const sec = Number(dueDate)
+  if (!Number.isFinite(sec) || sec <= 0) return null
+  return kanbanCalDayKey(new Date(sec * 1000))
+}
+
+// Whole weeks covering the month, Monday first. Each cell:
+// { key: 'YYYY-MM-DD', day: <1..31>, inMonth: bool }. 4 to 6 rows of 7.
+function kanbanCalMonthGrid(year, month) {
+  const first = new Date(year, month, 1)
+  const lead = (first.getDay() + 6) % 7 // Mon = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const total = Math.ceil((lead + daysInMonth) / 7) * 7
+  const weeks = []
+  for (let i = 0; i < total; i++) {
+    // new Date(y, m, n) normalises overflow and stays on local midnight across
+    // DST changes, unlike adding 86400000 ms.
+    const d = new Date(year, month, 1 - lead + i)
+    if (i % 7 === 0) weeks.push([])
+    weeks[weeks.length - 1].push({ key: kanbanCalDayKey(d), day: d.getDate(), inMonth: d.getMonth() === month })
+  }
+  return weeks
+}
+
+// Cards grouped by deadline day: Map<'YYYY-MM-DD', card[]>. Cards without a
+// deadline are skipped; done cards only when showDone. Within a day: open
+// before done, then urgent > high > normal > low, then by seq.
+const KANBAN_CAL_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
+function kanbanCalBucket(cards, showDone) {
+  const byDay = new Map()
+  for (const c of Array.isArray(cards) ? cards : []) {
+    if (!c) continue
+    if (c.status === 'done' && !showDone) continue
+    const key = kanbanCalDueKey(c.due_date)
+    if (!key) continue
+    if (!byDay.has(key)) byDay.set(key, [])
+    byDay.get(key).push(c)
+  }
+  const rank = (p) => (p in KANBAN_CAL_PRIORITY_RANK ? KANBAN_CAL_PRIORITY_RANK[p] : 2)
+  for (const list of byDay.values()) {
+    list.sort((a, b) =>
+      ((a.status === 'done') - (b.status === 'done')) ||
+      (rank(a.priority) - rank(b.priority)) ||
+      ((a.seq || 0) - (b.seq || 0)))
+  }
+  return byDay
+}
+// === end kanban calendar helpers ===
 
 // === Kanban feature switches (owner msg 6475) ===
 // Each ClickUp-like addition is switchable on its own in Settings; /api/marveen
@@ -3243,6 +3397,18 @@ async function showCardDetail(card) {
       <span class="meta-value" title="${escapeHtml(formatActiveTime(card.active_seconds) ? t('kanban.active.tooltip') : t('kanban.active.tooltip_none'))}">${escapeHtml(formatActiveTime(card.active_seconds) ?? t('kanban.active.none'))}</span>
     </div>
   `
+  if (card.location) {
+    const item = document.createElement('div')
+    item.className = 'meta-item'
+    const label = document.createElement('span')
+    label.className = 'meta-label'
+    label.textContent = t('kanban.card.location')
+    const value = document.createElement('span')
+    value.className = 'meta-value'
+    value.textContent = card.location
+    item.append(label, value)
+    meta.appendChild(item)
+  }
 
   const waitEdit = meta.querySelector('.wait-edit')
   if (waitEdit) waitEdit.addEventListener('click', async () => {
@@ -3514,6 +3680,7 @@ async function showCardDetail(card) {
     document.getElementById('cardDesc').value = card.description || ''
     document.getElementById('cardPriority').value = card.priority
     document.getElementById('cardProject').value = card.project || ''
+    document.getElementById('cardLocation').value = card.location || ''
     document.getElementById('cardDue').value = card.due_date
       ? new Date(card.due_date * 1000).toISOString().split('T')[0]
       : ''
@@ -20259,6 +20426,406 @@ async function openResearchDoc(agent, name) {
     container.appendChild(nav)
   }
 
+  // === Calendar view (#451 part B, behind the 'calendar' feature flag) ===
+  // A month grid of cards by deadline. Reuses kanbanCards (GET /api/kanban),
+  // no endpoint of its own. Every card string goes in through textContent.
+  let calYear = null
+  let calMonth = null
+  // Done cards are hidden by default; the toolbar checkbox shows them, and the
+  // choice is remembered per browser.
+  let calShowDone = false
+  try { calShowDone = localStorage.getItem('marveen.kanbanCalShowDone') === '1' } catch { /* storage blocked: default off */ }
+
+  function calLocale() {
+    return typeof _lang !== 'undefined' && _lang === 'en' ? 'en-GB' : 'hu-HU'
+  }
+
+  function calGoToday() {
+    const now = new Date()
+    calYear = now.getFullYear()
+    calMonth = now.getMonth()
+  }
+
+  function calStep(delta) {
+    if (calYear === null) calGoToday()
+    const d = new Date(calYear, calMonth + delta, 1)
+    calYear = d.getFullYear()
+    calMonth = d.getMonth()
+    renderKanbanCalendar()
+  }
+
+  function renderKanbanCalendar() {
+    const container = document.getElementById('kanbanCalendarView')
+    if (!container) return
+    if (calYear === null) calGoToday()
+    container.innerHTML = ''
+
+    // Toolbar: prev / today / next, month title, show-done toggle
+    const bar = document.createElement('div')
+    bar.className = 'kanban-cal-toolbar'
+    const mkBtn = (label, fn) => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'view-btn'
+      b.style.cssText = 'width:auto;padding:0 10px;'
+      b.textContent = label
+      b.addEventListener('click', fn)
+      return b
+    }
+    bar.appendChild(mkBtn('‹ ' + t('kanban.gantt.nav_prev'), () => calStep(-1)))
+    bar.appendChild(mkBtn(t('kanban.cal.today'), () => { calGoToday(); renderKanbanCalendar() }))
+    bar.appendChild(mkBtn(t('kanban.gantt.nav_next') + ' ›', () => calStep(1)))
+    const title = document.createElement('span')
+    title.className = 'kanban-cal-title'
+    title.textContent = new Date(calYear, calMonth, 1).toLocaleDateString(calLocale(), { year: 'numeric', month: 'long' })
+    bar.appendChild(title)
+    const doneLabel = document.createElement('label')
+    doneLabel.className = 'kanban-cal-done-toggle'
+    const doneChk = document.createElement('input')
+    doneChk.type = 'checkbox'
+    doneChk.id = 'kanbanCalShowDone'
+    doneChk.checked = calShowDone
+    doneChk.addEventListener('change', () => {
+      calShowDone = doneChk.checked
+      try { localStorage.setItem('marveen.kanbanCalShowDone', calShowDone ? '1' : '0') } catch { /* per-viewer convenience only */ }
+      renderKanbanCalendar()
+    })
+    const doneText = document.createElement('span')
+    doneText.textContent = t('kanban.cal.show_done')
+    doneLabel.appendChild(doneChk)
+    doneLabel.appendChild(doneText)
+    bar.appendChild(doneLabel)
+    container.appendChild(bar)
+
+    const byDay = kanbanCalBucket(typeof kanbanCards !== 'undefined' ? kanbanCards : [], calShowDone)
+    const weeks = kanbanCalMonthGrid(calYear, calMonth)
+    const todayKey = kanbanCalDayKey(new Date())
+
+    const grid = document.createElement('div')
+    grid.className = 'kanban-cal-grid'
+    // Weekday header from a known Monday (2024-01-01), so the names follow the locale.
+    for (let i = 0; i < 7; i++) {
+      const h = document.createElement('div')
+      h.className = 'kanban-cal-weekday'
+      h.textContent = new Date(2024, 0, 1 + i).toLocaleDateString(calLocale(), { weekday: 'short' })
+      grid.appendChild(h)
+    }
+    let shownInMonth = 0
+    for (const week of weeks) {
+      for (const cell of week) {
+        const dayEl = document.createElement('div')
+        dayEl.className = 'kanban-cal-day'
+        if (!cell.inMonth) dayEl.classList.add('kanban-cal-out')
+        if (cell.key === todayKey) dayEl.classList.add('kanban-cal-today')
+        dayEl.dataset.day = cell.key
+        const num = document.createElement('div')
+        num.className = 'kanban-cal-daynum'
+        num.textContent = String(cell.day)
+        dayEl.appendChild(num)
+        for (const card of byDay.get(cell.key) || []) {
+          if (cell.inMonth) shownInMonth++
+          const item = document.createElement('button')
+          item.type = 'button'
+          item.className = 'kanban-card kanban-cal-card'
+          item.dataset.id = card.id
+          item.dataset.priority = card.priority || 'normal'
+          if (card.status === 'done') item.classList.add('kanban-cal-done')
+          const seq = document.createElement('span')
+          seq.className = 'kanban-cal-seq'
+          seq.textContent = card.seq ? '#' + card.seq : ''
+          item.appendChild(seq)
+          // Title in its own span so a phone-width grid can drop it and keep
+          // the #seq chip (the full text stays in the tooltip and the modal).
+          const ttl = document.createElement('span')
+          ttl.className = 'kanban-cal-card-title'
+          ttl.textContent = ' ' + (card.title || '')
+          item.appendChild(ttl)
+          item.title = (card.seq ? '#' + card.seq + ' ' : '') + (card.title || '')
+          item.addEventListener('click', () => showCardDetail(card))
+          dayEl.appendChild(item)
+        }
+        grid.appendChild(dayEl)
+      }
+    }
+    container.appendChild(grid)
+
+    if (shownInMonth === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'kanban-cal-empty'
+      empty.textContent = t('kanban.cal.empty_month')
+      container.appendChild(empty)
+    }
+  }
+
+  // Map view (#457). Nothing leaves the browser until activateMap(), the
+  // user's own click: only then are addresses geocoded and tiles loaded.
+  let mapShowDone = false
+  let mapView = null          // { lat, lon, zoom } of the frame centre
+  let mapUserMoved = false    // until the user pans or zooms, every render fits all pins
+  let mapGeocoded = new Map() // normalised address -> { lat, lon }
+  let mapMissing = new Set()  // normalised addresses Nominatim did not find
+  let mapError = false
+  let mapRun = 0              // bumped to cancel a geocoding loop that is still running
+  let mapOpenPlace = null     // key of the pin whose card list is open
+  let mapLastWheel = 0
+  try { mapShowDone = localStorage.getItem('marveen.kanbanMapShowDone') === '1' } catch { /* storage blocked: default off */ }
+
+  // Unlike the calendar, the map keeps the board filters bar visible, so it honours it.
+  function mapCards() {
+    return (typeof kanbanCards !== 'undefined' ? kanbanCards : []).filter(card =>
+      card.location && (mapShowDone || card.status !== 'done') &&
+      kanbanCardMatchesBaseFilters(card) && kanbanCardMatchesLabelFilter(card))
+  }
+
+  function mapReadCache() {
+    try {
+      const value = JSON.parse(localStorage.getItem('marveen.kanbanGeocodeCache') || '{}')
+      return value && typeof value === 'object' ? value : {}
+    } catch { return {} }
+  }
+
+  function mapWriteCache(cache) {
+    try { localStorage.setItem('marveen.kanbanGeocodeCache', JSON.stringify(cache)) } catch { /* cache is a convenience only */ }
+  }
+
+  function mapCardLabel(card) {
+    return `${card.seq ? '#' + card.seq + ' ' : ''}${card.title || ''}`
+  }
+
+  function mapZoomBy(delta) {
+    if (!mapView) return
+    mapUserMoved = true
+    mapView.zoom = Math.max(3, Math.min(18, mapView.zoom + delta))
+    renderKanbanMap()
+  }
+
+  function renderKanbanMap() {
+    const container = document.getElementById('kanbanMapView')
+    if (!container) return
+    container.replaceChildren()
+
+    const bar = document.createElement('div')
+    bar.className = 'kanban-map-toolbar'
+    const doneLabel = document.createElement('label')
+    doneLabel.className = 'kanban-map-done-toggle'
+    const doneChk = document.createElement('input')
+    doneChk.type = 'checkbox'
+    doneChk.checked = mapShowDone
+    doneChk.addEventListener('change', () => {
+      mapShowDone = doneChk.checked
+      try { localStorage.setItem('marveen.kanbanMapShowDone', mapShowDone ? '1' : '0') } catch { /* per-viewer convenience only */ }
+      mapUserMoved = false
+      geocodeMapCards()
+    })
+    const doneText = document.createElement('span')
+    doneText.textContent = t('kanban.map.show_done')
+    doneLabel.append(doneChk, doneText)
+    bar.appendChild(doneLabel)
+    container.appendChild(bar)
+
+    const frame = document.createElement('div')
+    frame.className = 'kanban-map-frame'
+    container.appendChild(frame)
+    const tiles = document.createElement('div')
+    tiles.className = 'kanban-map-tiles'
+    const pins = document.createElement('div')
+    pins.className = 'kanban-map-pins'
+    frame.append(tiles, pins)
+
+    const zooms = document.createElement('div')
+    zooms.className = 'kanban-map-zooms'
+    for (const [label, delta] of [['+', 1], ['−', -1]]) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.textContent = label
+      b.addEventListener('click', () => mapZoomBy(delta))
+      zooms.appendChild(b)
+    }
+    frame.appendChild(zooms)
+
+    const attr = document.createElement('a')
+    attr.className = 'kanban-map-attribution'
+    attr.href = 'https://www.openstreetmap.org/copyright'
+    attr.target = '_blank'
+    attr.rel = 'noopener'
+    attr.textContent = '© OpenStreetMap contributors'
+    frame.appendChild(attr)
+
+    const cards = mapCards()
+    const located = []
+    for (const card of cards) {
+      const hit = mapGeocoded.get(kanbanMapNormaliseAddress(card.location))
+      if (hit) located.push({ lat: hit.lat, lon: hit.lon, card })
+    }
+    const groups = kanbanMapGroupByPlace(located)
+    const width = frame.clientWidth || 900
+    const height = frame.clientHeight || 440
+    // Refit while results are still arriving, so a later pin is not left off-screen.
+    if (!mapUserMoved && groups.length) mapView = kanbanMapFitView(groups, width, height)
+
+    if (mapView) {
+      const centre = kanbanMapProject(mapView.lat, mapView.lon, mapView.zoom)
+      const count = 2 ** mapView.zoom
+      const left = centre.x - width / 2
+      const top = centre.y - height / 2
+      const size = KANBAN_MAP_TILE_SIZE
+      for (let ty = Math.floor(top / size); ty <= Math.floor((top + height) / size); ty++) {
+        if (ty < 0 || ty >= count) continue
+        for (let tx = Math.floor(left / size); tx <= Math.floor((left + width) / size); tx++) {
+          const img = document.createElement('img')
+          img.loading = 'lazy'
+          img.referrerPolicy = 'strict-origin-when-cross-origin'
+          img.alt = ''
+          img.draggable = false
+          img.src = `https://tile.openstreetmap.org/${mapView.zoom}/${((tx % count) + count) % count}/${ty}.png`
+          img.style.left = `${Math.round(tx * size - left)}px`
+          img.style.top = `${Math.round(ty * size - top)}px`
+          tiles.appendChild(img)
+        }
+      }
+
+      for (const group of groups) {
+        const key = `${group.lat},${group.lon}`
+        const p = kanbanMapProject(group.lat, group.lon, mapView.zoom)
+        const x = Math.round(p.x - left)
+        const y = Math.round(p.y - top)
+        const pin = document.createElement('button')
+        pin.type = 'button'
+        pin.className = 'kanban-map-pin'
+        pin.style.left = `${x}px`
+        pin.style.top = `${y}px`
+        pin.textContent = String(group.cards.length)
+        pin.title = group.cards.map(mapCardLabel).join('\n')
+        pin.addEventListener('click', () => {
+          mapOpenPlace = mapOpenPlace === key ? null : key
+          renderKanbanMap()
+        })
+        pins.appendChild(pin)
+        if (mapOpenPlace !== key) continue
+        // A sibling of the pin, not a child: a button may not contain buttons.
+        const pop = document.createElement('div')
+        pop.className = 'kanban-map-popup'
+        pop.style.left = `${x}px`
+        pop.style.top = `${y + 8}px`
+        for (const card of group.cards) {
+          const b = document.createElement('button')
+          b.type = 'button'
+          b.textContent = mapCardLabel(card)
+          b.addEventListener('click', () => showCardDetail(card))
+          pop.appendChild(b)
+        }
+        pins.appendChild(pop)
+      }
+
+      // Drag to pan: the layers follow the pointer, the redraw happens on release.
+      let drag = null
+      frame.addEventListener('pointerdown', e => {
+        if (e.target.closest('button, a')) return
+        drag = { x: e.clientX, y: e.clientY, dx: 0, dy: 0 }
+        frame.setPointerCapture(e.pointerId)
+      })
+      frame.addEventListener('pointermove', e => {
+        if (!drag) return
+        drag.dx = e.clientX - drag.x
+        drag.dy = e.clientY - drag.y
+        tiles.style.transform = pins.style.transform = `translate(${drag.dx}px, ${drag.dy}px)`
+      })
+      const endDrag = () => {
+        if (!drag) return
+        const { dx, dy } = drag
+        drag = null
+        if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
+          tiles.style.transform = pins.style.transform = ''
+          return
+        }
+        mapUserMoved = true
+        const ll = kanbanMapUnproject(centre.x - dx, centre.y - dy, mapView.zoom)
+        mapView.lat = ll.lat
+        mapView.lon = ll.lon
+        renderKanbanMap()
+      }
+      frame.addEventListener('pointerup', endDrag)
+      frame.addEventListener('pointercancel', endDrag)
+      // One zoom step per gesture: a trackpad fires dozens of wheel events.
+      frame.addEventListener('wheel', e => {
+        e.preventDefault()
+        if (e.timeStamp - mapLastWheel < 250) return
+        mapLastWheel = e.timeStamp
+        mapZoomBy(e.deltaY < 0 ? 1 : -1)
+      }, { passive: false })
+    }
+
+    const progress = document.createElement('p')
+    progress.id = 'kanbanMapProgress'
+    progress.className = 'kanban-map-progress'
+    container.appendChild(progress)
+
+    if (mapError) {
+      const err = document.createElement('p')
+      err.className = 'kanban-map-error'
+      err.textContent = t('kanban.map.network_error')
+      container.appendChild(err)
+    }
+
+    const missingCards = cards.filter(c => mapMissing.has(kanbanMapNormaliseAddress(c.location)))
+    if (missingCards.length) {
+      const box = document.createElement('div')
+      box.className = 'kanban-map-missing'
+      const h = document.createElement('strong')
+      h.textContent = t('kanban.map.not_found')
+      box.appendChild(h)
+      for (const c of missingCards) {
+        const row = document.createElement('div')
+        row.textContent = `${mapCardLabel(c)}: ${c.location}`
+        box.appendChild(row)
+      }
+      container.appendChild(box)
+    }
+  }
+
+  // Cached places first, then the rest one request at a time (the geocoder
+  // spaces them). Misses are cached, errors are not, so a bad network is
+  // retried on the next open but a bad address is not.
+  async function geocodeMapCards() {
+    const run = ++mapRun
+    const cards = mapCards()
+    const cache = mapReadCache()
+    const nowSec = Date.now() / 1000
+    const pending = new Map()
+    mapGeocoded = new Map()
+    mapMissing = new Set()
+    mapError = false
+    for (const card of cards) {
+      const key = kanbanMapNormaliseAddress(card.location)
+      const hit = kanbanMapCacheEntry(cache[key], nowSec)
+      if (hit?.miss) mapMissing.add(key)
+      else if (hit) mapGeocoded.set(key, hit)
+      else if (!pending.has(key)) pending.set(key, card.location.trim().replace(/\s+/g, ' '))
+    }
+    const total = new Set(cards.map(card => kanbanMapNormaliseAddress(card.location))).size
+    let done = total - pending.size
+    renderKanbanMap()
+    const geocoder = kanbanMapCreateGeocoder({ fetch: window.fetch.bind(window) })
+    for (const [key, address] of pending) {
+      const p = document.getElementById('kanbanMapProgress')
+      if (p) p.textContent = t('kanban.map.progress', { done, total })
+      const result = await geocoder.lookup(address)
+      if (run !== mapRun) return
+      done++
+      if (result.error) {
+        mapError = true
+      } else if (result.miss) {
+        mapMissing.add(key)
+        cache[key] = { miss: true, at: Date.now() / 1000 }
+      } else {
+        mapGeocoded.set(key, result)
+        cache[key] = { ...result, at: Date.now() / 1000 }
+      }
+      mapWriteCache(cache)
+      renderKanbanMap()
+    }
+  }
+
   // --- View switcher init (called once after DOM ready) ---
   function initGanttViewSwitcher() {
     if (_initialized) return
@@ -20272,8 +20839,24 @@ async function openResearchDoc(agent, name) {
     const ganttFilters = document.getElementById('kanbanGanttFilters')
     const boardEls  = [document.getElementById('kanbanBoard'), document.getElementById('kanbanSwimlaneBoard')]
     const ganttEl   = document.getElementById('kanbanGanttView')
+    const calBtn    = document.getElementById('kanbanViewCalendar')
+    const calEl     = document.getElementById('kanbanCalendarView')
+    const mapBtn    = document.getElementById('kanbanViewMap')
+    const mapEl     = document.getElementById('kanbanMapView')
+
+    function hideCalendar() {
+      calBtn?.classList.remove('active')
+      if (calEl) calEl.style.display = 'none'
+    }
+    function hideMap() {
+      mapBtn?.classList.remove('active')
+      if (mapEl) mapEl.style.display = 'none'
+      mapRun++
+    }
 
     function activateBoard() {
+      hideCalendar()
+      hideMap()
       boardBtn.classList.add('active')
       ganttBtn.classList.remove('active')
       teamBtn?.classList.remove('active')
@@ -20285,6 +20868,8 @@ async function openResearchDoc(agent, name) {
     }
 
     function activateGantt() {
+      hideCalendar()
+      hideMap()
       ganttBtn.classList.add('active')
       boardBtn.classList.remove('active')
       teamBtn?.classList.remove('active')
@@ -20300,6 +20885,8 @@ async function openResearchDoc(agent, name) {
     // own: it always shows the whole team. A filtered "who is working on what"
     // would answer a question nobody asks.
     function activateTeam() {
+      hideCalendar()
+      hideMap()
       teamBtn?.classList.add('active')
       boardBtn.classList.remove('active')
       ganttBtn.classList.remove('active')
@@ -20314,6 +20901,61 @@ async function openResearchDoc(agent, name) {
     boardBtn.addEventListener('click', activateBoard)
     ganttBtn.addEventListener('click', activateGantt)
     if (teamBtn) teamBtn.addEventListener('click', activateTeam)
+
+    // Calendar: like the team view it has no board filter row; it keeps its
+    // own toolbar (month nav, show-done) inside the container.
+    function activateCalendar() {
+      if (!calEl) return
+      calBtn?.classList.add('active')
+      hideMap()
+      boardBtn.classList.remove('active')
+      ganttBtn.classList.remove('active')
+      teamBtn?.classList.remove('active')
+      boardFilters.style.display = 'none'
+      ganttFilters.style.display = 'none'
+      boardEls.forEach(el => { if (el) el.style.display = 'none' })
+      ganttEl.style.display = 'none'
+      if (teamEl) teamEl.style.display = 'none'
+      calEl.style.display = 'block'
+      renderKanbanCalendar()
+    }
+    if (calBtn) calBtn.addEventListener('click', activateCalendar)
+
+    function activateMap() {
+      if (!mapEl || !kanbanFeatureOn('map')) return
+      hideCalendar()
+      mapBtn?.classList.add('active')
+      boardBtn.classList.remove('active')
+      ganttBtn.classList.remove('active')
+      teamBtn?.classList.remove('active')
+      boardFilters.style.display = 'flex'
+      ganttFilters.style.display = 'none'
+      boardEls.forEach(el => { if (el) el.style.display = 'none' })
+      ganttEl.style.display = 'none'
+      if (teamEl) teamEl.style.display = 'none'
+      mapEl.style.display = 'block'
+      mapView = null
+      mapUserMoved = false
+      mapOpenPlace = null
+      geocodeMapCards()
+    }
+    mapBtn?.addEventListener('click', activateMap)
+
+    // The flag arrives with /api/marveen on every loadKanban, so it is applied
+    // on every render: off hides the button, and an open calendar falls back
+    // to the board.
+    function syncCalendarFlag() {
+      const on = kanbanFeatureOn('calendar')
+      if (calBtn) calBtn.hidden = !on
+      if (!on && calEl && calEl.style.display !== 'none') activateBoard()
+    }
+    function syncMapFlag() {
+      const on = kanbanFeatureOn('map')
+      if (mapBtn) mapBtn.hidden = !on
+      if (!on && mapEl && mapEl.style.display !== 'none') activateBoard()
+    }
+    syncCalendarFlag()
+    syncMapFlag()
 
     // Archived button: navigates AWAY to the archived page (its sidebar entry
     // was removed -- this button is now the entry point). It never takes the
@@ -20347,12 +20989,17 @@ async function openResearchDoc(agent, name) {
       window.renderKanban = function () {
         _origRenderKanban.apply(this, arguments)
         if (ganttEl.style.display !== 'none') renderGantt()
+        syncCalendarFlag()
+        syncMapFlag()
+        if (calEl && calEl.style.display !== 'none') renderKanbanCalendar()
+        if (mapEl && mapEl.style.display !== 'none') geocodeMapCards()
       }
     }
   }
 
   window._initGanttViewSwitcher = initGanttViewSwitcher
   window.renderGantt = renderGantt
+  window.renderKanbanCalendar = renderKanbanCalendar
   // A direct #kanban load routes (switchPage) earlier in this file, before the
   // initializer above exists, so that first call skipped it and the Board /
   // Timeline / Archived buttons stayed dead. Catch up if the board is showing.

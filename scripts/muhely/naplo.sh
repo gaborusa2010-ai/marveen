@@ -14,7 +14,7 @@
 # Usage:  naplo.sh "[LEZART] Tema. Mi tortent, mi lett az eredmenye."
 #         naplo.sh --agent margo "[FOLYAMATBAN] ..."
 set -u
-REPO=/home/gabor/marveen
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 AGENT=forgacs
 if [ "${1:-}" = "--agent" ]; then AGENT="$2"; shift 2; fi
 

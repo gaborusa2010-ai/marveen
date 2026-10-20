@@ -15,8 +15,9 @@ unset CLAUDE_CODE_OAUTH_TOKEN
 
 set -euo pipefail
 
-REPO_DIR="${MARVEEN_DIR:-/home/gabor/marveen}"
-CLAUDE_BIN="${CLAUDE_BIN:-/home/gabor/.local/bin/claude}"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_DIR="${MARVEEN_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 
 # Why the Telegram state directory is redirected to an EMPTY one
 # --------------------------------------------------------------
@@ -43,7 +44,7 @@ CLAUDE_BIN="${CLAUDE_BIN:-/home/gabor/.local/bin/claude}"
 # WITHOUT a Telegram channel -- which is correct: the owner talks to these
 # sessions through the phone app, not through the bot -- and the main agent keeps
 # the token to itself. Nothing shared is modified.
-export TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-/home/gabor/.marveen-remote-control/telegram-state}"
+export TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-$HOME/.marveen-remote-control/telegram-state}"
 
 cd "$REPO_DIR"
 

@@ -122,7 +122,8 @@ def main(gyoker, fajlok):
 if __name__ == '__main__':
     if '--onteszt' in sys.argv:
         sys.exit(onteszt())
-    gy = os.environ.get('MARVEEN_ROOT', '/home/gabor/marveen')
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    gy = os.environ.get('MARVEEN_ROOT', repo)
     # A VISSZATERESI ERTEK KIJUT. Roxy merte meg 2026-09-11-en: a `main` kiszamolta a
     # kodot (`return 1 if ossz else 0`), a hivo viszont eldobta, es a `sys.exit(0)`
     # MINDIG nullat adott. Nem "nincs kilepesi kod" volt, hanem egy KISZAMOLT valasz,

@@ -71,7 +71,8 @@ def main():
     now = int(time.time())
     if audit_mod:
         try:
-            st = json.load(open("/home/gabor/marveen/store/kanban-audit-state.json"))
+            repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            st = json.load(open(os.path.join(repo, "store", "kanban-audit-state.json")))
         except Exception:
             st = {}
         audit([c for c in rows if not c.get("archived_at")], now, st.get("last_audit_at") or 0, st)

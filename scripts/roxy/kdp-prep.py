@@ -11,10 +11,10 @@ after the upload, so the cost of getting it wrong is a whole round trip.
 
 Roxy's own description claimed she did this with Pillow or ImageMagick. Neither
 was installed (measured 2026-08-31), and this machine has no pip and no sudo, so
-Pillow lives in a venv of its own: /home/gabor/.marveen-roxy-venv. RUN THIS WITH
+Pillow lives in a venv of its own: ~/.marveen-roxy-venv. RUN THIS WITH
 THAT INTERPRETER, not with the system python3:
 
-    /home/gabor/.marveen-roxy-venv/bin/python scripts/roxy/kdp-prep.py ...
+    ~/.marveen-roxy-venv/bin/python scripts/roxy/kdp-prep.py ...
 
 What it does NOT do
 -------------------
@@ -53,7 +53,7 @@ try:
 except ImportError:
     sys.stderr.write(
         "Nincs Pillow ebben az interpreterben.\n"
-        "  Hasznald: /home/gabor/.marveen-roxy-venv/bin/python " + " ".join(sys.argv) + "\n")
+        "  Hasznald: ~/.marveen-roxy-venv/bin/python " + " ".join(sys.argv) + "\n")
     sys.exit(3)
 
 # KDP-nel gyakori meretek hüvelykben. A kifestokonyv szokasos merete a 8.5x11.

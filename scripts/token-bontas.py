@@ -32,13 +32,15 @@ because that is what the bill is made of (98.5 percent of it on the week measure
 import argparse, glob, json, os, re, time
 from collections import defaultdict
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # The main agent writes under its own CLAUDE_CONFIG_DIR (.channels-config), not under
 # ~/.claude. Without this root the "whole fleet" total silently missed its traffic:
 # 46 percent of the week 09-16..09-23 (card 686774c2; same fix as MAIN_AGENT_PROJECTS
 # in agent-budget-guard.py, BLINDSPOT901).
 ROOTS = [os.path.expanduser("~/.claude/projects"),
-         "/home/gabor/marveen/.channels-config/projects"] + [
-    f"/home/gabor/marveen/agents/{a}/.claude-config/projects"
+         os.path.join(REPO, ".channels-config", "projects")] + [
+    os.path.join(REPO, "agents", a, ".claude-config", "projects")
     for a in ("anorak", "cody", "forgacs", "margo", "roxy")]
 SCHED = re.compile(r"scheduled-task:([a-z0-9-]+)")
 SENDER = re.compile(r"Uzenet @([a-z-]+)-tol")

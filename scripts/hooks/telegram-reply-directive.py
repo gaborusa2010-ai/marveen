@@ -19,6 +19,8 @@ import json
 import re
 import time
 
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 CHANNEL_RX = re.compile(
     r'<channel\s+source="plugin:telegram:telegram"([^>]*)>',
     re.DOTALL,
@@ -72,7 +74,7 @@ def _keyboard_notice(payload):
             f"[GOMBSOR NYITVA] A {d.get('message_id')}-es kérdésed gombsora még kint van. "
             f"Az ELSŐ válaszod erre az üzenetre -- akár koppintott, akár begépelte -- "
             f"NE a reply toollal menjen, hanem így (ez tünteti el a gombokat): "
-            f"python3 /home/gabor/marveen/scripts/tg-valasztas.py --agent {agent} "
+            f"python3 {os.path.join(REPO, 'scripts', 'tg-valasztas.py')} --agent {agent} "
             f"--valasz \"$(cat fajl)\"\n"
         )
     except Exception:

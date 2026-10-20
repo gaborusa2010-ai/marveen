@@ -2445,7 +2445,7 @@ function buildAutonomyBody(name: string): string {
     'A védelem az IDÉZETT határoló, nem maga a heredoc: a `<<JSON` alak ugyanúgy behelyettesít,',
     "mint a dupla idézőjel, csak a `<<'JSON'` nem. És mivel az idézettben semmit nem lehet",
     'behelyettesíteni, ha a payloadba EGY változó is kell, ne a shell állítsa össze: `python3` +',
-    '`json.dumps` (vagy `jq`) írja fájlba, és `curl --data-binary @fájl` küldje.',
+    '`json.dumps` írja fájlba (`jq` nincs telepítve), és `curl --data-binary @fájl` küldje.',
     'Nem az üzenet-típus számít, hanem hogy a szöveg BACKTICKET vagy `$(...)`-t tartalmaz-e: egy',
     '`python3 -c "..."` dupla idézőjeles parancsban a backtickkel körbevett mezőnevek parancsként futnak le',
     '("command not found"), és némán kiesnek a mentett szövegből, miközben a mentés HTTP 200-at ad.',
@@ -3640,7 +3640,7 @@ Te egy önfejlesztő ágens vagy. A munkád során tanulsz, és újrafelhasznál
 ### Automatikus skill generálás
 Komplex feladatok után (5+ tool hívás, hiba utáni recovery, user korrekció, többlépéses workflow) automatikusan hozz létre SKILL.md fájlt:
 
-mkdir -p ~/.claude/skills/SKILL-NEV
+mkdir -p .claude/skills/SKILL-NEV   # a SAJÁT munkakönyvtáradban; a ~/.claude/skills a globális, az egész flottáé
 A SKILL.md tartalmazzon YAML frontmatter-t (name, description), majd szekciókat: Mikor használd, Eljárás, Buktatók, Ellenőrzés.
 
 ### Skill patch (runtime javítás)

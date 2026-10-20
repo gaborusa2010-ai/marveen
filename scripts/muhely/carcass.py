@@ -33,6 +33,12 @@ Spec
       # source: "mert" (measured on site) or anything else, which counts as an
       # ASSUMPTION. Leaving it out counts as an assumption too, because an
       # unstated provenance is an unverified one. See apply_slope.
+  "depth": {"ref": "door_front", "door_t": 18, "hinge_gap": 3},
+      # ref "carcass" (default): d is the carcass depth. "door_front": d is the
+      # owner's measured depth, door face to the outside of the back; the door
+      # and the hinge gap come off it and the derivation is printed. Both
+      # numbers are required, there is no default. The owner's gap on both
+      # recorded jobs is 3 (Kolbrey, owner msg 983; Lyford 385 = 19 + 3 + 363).
   "top": {"overhang_side": 0, "overhang_front": 0},   # only for "top_applied"
   "dividers": {"count": 2, "height": 1758.9},
       # height: clear divider height. Omit for the internal height, or give
@@ -322,7 +328,8 @@ def _sloped_drawer_limit(slope, drawer_groups, notes, *, W, H, t, bays, div_t, i
     return limit, what
 
 
-def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
+def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth,
+                construction="sides_full", div_height="inner"):
     """Rake the top of the carcass to follow a staircase.
 
     Give the stair as rise/run, as an angle, or as the finished low-end height,
@@ -397,20 +404,63 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth):
     spans = _bay_spans(bays, t, div_t)
     positions = [end + div_t / 2 for (_, end) in spans[:-1]]
 
+    # AN UPRIGHT STANDS BETWEEN PANELS, NOT UNDER THE OUTLINE. The stair line
+    # H - x*tan is the OUTSIDE of the box. A divider sits on the bottom panel
+    # (t) and under the raked top, whose thickness measured VERTICALLY is
+    # t/cos. Until 2026-10-17 every divider got the bare outline, so it came
+    # out t + t/cos too long -- 38.6 mm at 29 degrees -- and the straight case
+    # gave it away: at 0.001 degrees the divider jumped from H-2t to H.
+    # The test now pins that limit, so the two branches cannot drift apart.
+    #
+    # THE LONG POINT IS THE FACE TOWARDS THE HIGH END. The top of an upright is
+    # an angled cut, and its higher face is the one nearer x=0: a divider's at
+    # centre - div_t/2, the low end's at its INSIDE face W - t. The low end used
+    # to get h_low, which is its SHORT point (outside face), labelled long.
+    cos_a = math.cos(alpha)
+    if construction == "top_applied":
+        top_cut, bottom_cut = 0.0, t          # H is the box under the worktop
+    else:
+        top_cut, bottom_cut = t / cos_a, t    # raked top panel, bottom panel
+    # Only "topbottom_full" stands its SIDES between the two panels.
+    side_cut = top_cut + bottom_cut if construction == "topbottom_full" else 0.0
+    between = ("az alj es a ferde teto koze" if construction != "top_applied"
+               else "az alj es a munkalap ala")
+
     for p in list(parts):
         if p["name"] == "oldal":
             parts.remove(p)
-            parts.append({**p, "name": "oldal (magas veg)", "h": round(H, 1), "qty": 1,
-                          "note": f"{high_end} oldal, teljes magassag, hosszu pont"})
-            parts.append({**p, "name": "oldal (alacsony veg)", "h": round(h_low, 1), "qty": 1,
-                          "note": f"szemkozti oldal, {drop_total:.1f} mm-rel rovidebb, hosszu pont"})
+            hi_side = H - side_cut
+            lo_long = H - (W - t) * tan_a - side_cut
+            parts.append({**p, "name": "oldal (magas veg)", "h": round(hi_side, 1), "qty": 1,
+                          "note": f"{high_end} oldal, hosszu pont a KULSO lapjan"})
+            parts.append({**p, "name": "oldal (alacsony veg)", "h": round(lo_long, 1), "qty": 1,
+                          "note": f"szemkozti oldal. Hosszu pont a BELSO lapjan "
+                                  f"{lo_long:.1f}, a kulso lapjan (rovid pont) "
+                                  f"{lo_long - t * tan_a:.1f}"})
         elif p["name"] == "valaszfal":
             parts.remove(p)
             for i, xp in enumerate(positions, 1):
-                hi = H - xp * tan_a
+                xf = xp - div_t / 2
+                outline = H - xf * tan_a
+                if div_height == "full":
+                    hi = outline
+                    how_div = f"kulso vonal {outline:.1f} (teljes kulso magassag)"
+                else:
+                    hi = outline - top_cut - bottom_cut
+                    how_div = (f"kulso vonal {outline:.1f}, {between}: "
+                               f"- {bottom_cut:.1f} alj"
+                               + (f" - {top_cut:.1f} teto (fuggolegesen, t/cos)"
+                                  if top_cut else "")
+                               + f" = {hi:.1f}")
+                    if div_height != "inner":
+                        if float(div_height) > hi + 0.5:
+                            raise ValueError(f"A(z) {i}. valaszfal {float(div_height):.1f} mm "
+                                             f"magas, a ferde rekeszben ott csak {hi:.1f} fer el.")
+                        hi = float(div_height)
+                        how_div += f"; a megadott reszmagassag {hi:.1f} marad"
                 parts.append({**p, "name": f"valaszfal {i}.", "h": round(hi, 1), "qty": 1,
-                              "note": f"{xp:.0f} mm-re a magas vegtol, ezert "
-                                      f"{xp * tan_a:.1f} mm-rel rovidebb, hosszu pont"})
+                              "note": f"magas veg feloli lapja {xf:.0f} mm-re a magas "
+                                      f"vegtol, hosszu pont. {how_div}"})
         elif p["name"] in ("tetolap", "munkalap"):
             # THE RAKE STRETCHES THE PANEL'S OWN SPAN, NOT THE CARCASS WIDTH.
             # A "sides_full" top sits BETWEEN the sides, so its horizontal span
@@ -766,12 +816,19 @@ def apply_plinth(parts, notes, *, spec, W, H, t, slope_info):
                  f"elolapjatol, {over:.0f} mm tulmerettel megy ki. A padlohoz helyben "
                  f"szabjuk.")
     if slope_info:
-        notes.append(f"FERDE KORPUSZ + LABAZAT: az alacsony vegen a korpusz "
-                     f"{slope_info['h_low']:.0f} mm, ebbol a labazat {h:.0f}-et elvesz, "
-                     f"tehat ott {slope_info['h_low'] - h:.0f} mm hasznos magassag marad. "
-                     f"AMIT EZ NEM MOND MEG: a lepcso also foka. Ha a butor a lepcso "
-                     f"aljanal a foknak utkozik, a labazatot ki kell vagni ra -- azt a "
-                     f"helyszini meres dönti el, nem ez a szamitas.")
+        # THE PLINTH IS UNDER THE BOX, NOT INSIDE IT. The Lyford Road boxes are
+        # 429 high, the end panels that run to the floor are 479, and the 426
+        # door is H - 3: so H is the box and the plinth adds below it. Until
+        # 2026-10-17 this note said the plinth "takes 50 out of" h_low, which
+        # turned the one figure that has to fit under the slope 2*h out.
+        notes.append(f"FERDE KORPUSZ + LABAZAT: a labazat a korpusz ALATT van, tehat a "
+                     f"padlotol merve a magas vegen {H + h:.0f}, az alacsony vegen "
+                     f"{slope_info['h_low'] + h:.0f} mm a butor. EZ a szam kell, hogy "
+                     f"elferjen a lepcso vagy a ferde mennyezet alatt: ha a helyszinen a "
+                     f"padlotol mertel, a spec h-jabol es h_low-jabol vond le a "
+                     f"{h:.0f} mm-es labazatot. AMIT EZ NEM MOND MEG: a lepcso also foka. "
+                     f"Ha a butor a lepcso aljanal a foknak utkozik, a labazatot ki kell "
+                     f"vagni ra -- azt a helyszini meres dönti el, nem ez a szamitas.")
 
 
 def build(spec):
@@ -792,6 +849,36 @@ def build(spec):
     notes = []
     parts_add.default_material = f"{t:.0f}mm"
 
+    # THE OWNER'S DEPTH IS NOT THE CARCASS DEPTH. He measures from the face of
+    # the door to the outside of the back, so the door and the hinge gap are
+    # already inside his number (agents/forgacs/CLAUDE.md, workshop
+    # conventions: "a melyseg a legfontosabb"). Until 2026-10-20 (#611) `d` was
+    # always taken as the carcass, so a measured depth came out a door plus a
+    # gap too deep, and the derivation was never printed. Neither number has a
+    # default: the door thickness and the hinge gap differ per job and per
+    # hinge, and a guessed gap is a guessed depth.
+    depth = spec.get("depth") or {}
+    measured_d = None
+    if depth.get("ref", "carcass") == "door_front":
+        missing = [k for k in ("door_t", "hinge_gap") if depth.get(k) is None]
+        if missing:
+            raise ValueError("A depth.ref door_front, de hianyzik: "
+                             + ", ".join(missing)
+                             + ". Ajtovastagsag es pantres nelkul a korpuszmelyseg tipp.")
+        measured_d = D
+        door_t = float(depth["door_t"])
+        hinge_gap = float(depth["hinge_gap"])
+        D = measured_d - door_t - hinge_gap
+        notes.append(f"MELYSEG LEVEZETES: mert {measured_d:.1f} (ajto elejetol a hatlap "
+                     f"kulso lapjaig) - {door_t:.1f} ajto - {hinge_gap:.1f} pantres = "
+                     f"{D:.1f} mm korpuszmelyseg.")
+    elif depth.get("ref", "carcass") != "carcass":
+        raise ValueError(f"Ismeretlen depth.ref: {depth.get('ref')!r} (carcass vagy door_front).")
+    elif spec.get("doors"):
+        notes.append(f"MELYSEG: a d={D:.1f} KORPUSZMELYSEGKENT szamolva, az ajto nincs "
+                     f"benne. Ha ez a gazda mert melysege (ajto elejetol), add meg: "
+                     f"\"depth\": {{\"ref\": \"door_front\", \"door_t\": .., \"hinge_gap\": ..}}.")
+
     # Depth available for panels in front of the back
     if back_type == "rebate":
         # A rebated back sits INSIDE the carcass depth: the rebate is machined
@@ -809,6 +896,10 @@ def build(spec):
     else:
         panel_depth = D
         notes.append("Nyitott hatu korpusz, nincs hatlap.")
+    # What a shelf or a drawer box can actually use. A rebated back sits INSIDE
+    # the panel depth, so it is back_t less; applied and open backs leave the
+    # whole panel depth clear.
+    clear_d = panel_depth - back_t if back_type == "rebate" else panel_depth
 
     if construction == "sides_full":
         parts_add(parts, "oldal", panel_depth, H, 2, grain="h",
@@ -955,7 +1046,12 @@ def build(spec):
             clr = -dado
             notes.append(f"A polc HORONYBA ul, oldalankent {dado:.1f} mm melyen, "
                          f"ezert oldalankent ennyivel NAGYOBB a nyilasnal.")
-        sd = panel_depth - setback
+        # The setback is measured from the CLEAR depth, not the panel depth. A
+        # rebated back sits inside the panels, so until 2026-10-20 (#611) the
+        # shelf came out panel_depth - 5: one millimetre deeper than the 6 mm
+        # back leaves room for, so it stood proud of the front and hit the door.
+        # Applied and open backs already have panel depth == clear depth.
+        sd = clear_d - setback
         # An adjustable shelf goes in through the face frame; a fixed one does
         # not. With no frame the two are the same number.
         through_front = bool(sh.get("adjustable")) and not dado
@@ -970,14 +1066,14 @@ def build(spec):
                 opening = bw_ - shelf_ref_deduct
                 parts_add(parts, f"polc {bi}. rekesz", opening - 2 * clr, sd, n_shelf, grain="w",
                           note=f"{opening:.1f} mm nyilas, oldalankent {clr:.1f} mm jatek, "
-                               f"elol {setback:.0f} mm hatrahuzva")
+                               f"{clear_d:.1f} szabad melyseg, elol {setback:.0f} mm hatrahuzva")
             notes.append(f"A polc a REKESZ szelessegere megy, nem a belso szelessegre. "
                          f"{n_shelf} db rekeszenkent, osszesen {n_shelf * len(bays)} db.")
         else:
             opening = inner_w - shelf_ref_deduct
             parts_add(parts, "polc", opening - 2 * clr, sd, n_shelf, grain="w",
                       note=f"{opening:.1f} mm nyilas, oldalankent {clr:.1f} mm jatek, "
-                           f"elol {setback:.0f} mm hatrahuzva")
+                           f"{clear_d:.1f} szabad melyseg, elol {setback:.0f} mm hatrahuzva")
         kind = "allithato, furt sorral" if sh.get("adjustable") else "fix, bekotve"
         notes.append(f"{n_shelf} db polc ({kind}).")
 
@@ -1053,11 +1149,13 @@ def build(spec):
         runner_len = dg.get("runner_length")
         if runner_len:
             box_d = float(runner_len)
-            if box_d > panel_depth + 0.5:
+            # Against the CLEAR depth (#611, 2026-10-20): checked against the
+            # panel depth, a runner up to back_t too long passed in silence.
+            if box_d > clear_d + 0.5:
                 notes.append(f"FIGYELEM: a {box_d:.0f} mm-es sin nem fer be a "
-                             f"{panel_depth:.0f} mm-es korpuszba.")
+                             f"{clear_d:.0f} mm szabad melysegu korpuszba.")
         else:
-            box_d = panel_depth - cfg["drawer_box_rear_clearance"]
+            box_d = clear_d - cfg["drawer_box_rear_clearance"]
         tag = f"fiok{gi}" if len(drawer_groups) > 1 else "fiok"
 
         # Read from the spec, not from `brand` above: that name only exists on the
@@ -1172,7 +1270,9 @@ def build(spec):
     slope_info = None
     if spec.get("slope"):
         slope_info = apply_slope(parts, notes, slope=spec["slope"], W=W, H=H, t=t,
-                                 bays=bays, div_t=div_t, panel_depth=panel_depth)
+                                 bays=bays, div_t=div_t, panel_depth=panel_depth,
+                                 construction=construction,
+                                 div_height=(spec.get("dividers") or {}).get("height", "inner"))
 
     apply_plinth(parts, notes, spec=spec, W=W, H=H, t=t, slope_info=slope_info)
 
@@ -1188,7 +1288,8 @@ def build(spec):
     return {
         "job": spec.get("job", ""),
         "external": {"w": W, "h": H, "d": D},
-        "internal": {"w": round(inner_w, 1), "h": round(inner_h, 1), "d": round(panel_depth, 1)},
+        "measured_d": measured_d,
+        "internal": {"w": round(inner_w, 1), "h": round(inner_h, 1), "d": round(clear_d, 1)},
         "thickness": t,
         "construction": construction,
         "back": back_type,
@@ -1251,7 +1352,9 @@ def main(argv):
         return 0
 
     print(f"MUNKA: {r['job']}")
-    print(f"Kulso meret:  {r['external']['w']:.0f} x {r['external']['h']:.0f} x {r['external']['d']:.0f} mm")
+    print(f"Kulso meret:  {r['external']['w']:.0f} x {r['external']['h']:.0f} x {r['external']['d']:.1f} mm")
+    if r.get("measured_d") is not None:
+        print(f"Mert melyseg: {r['measured_d']:.1f} mm (ajto elejetol), levezetes a jegyzetekben")
     print(f"Belso meret:  {r['internal']['w']:.0f} x {r['internal']['h']:.0f} x {r['internal']['d']:.0f} mm")
     print(f"Anyagvastagsag: {r['thickness']:.0f} mm, kotes: {r['construction']}, hatlap: {r['back']}")
     print()

@@ -31,7 +31,8 @@ import urllib.request
 
 AGENT = "forgacs"
 API = "http://localhost:3420/api/daily-log"
-TOKEN_FILE = "/home/gabor/marveen/store/.dashboard-token"
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+TOKEN_FILE = os.path.join(REPO, "store", ".dashboard-token")
 ALLAPOTOK = ("LEZART", "FOLYAMATBAN")
 
 

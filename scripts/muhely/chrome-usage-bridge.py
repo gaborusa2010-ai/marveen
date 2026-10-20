@@ -40,6 +40,9 @@ EXT_ID = "knemcdpkggnbhpoaaagmjiigenifejfo"      # Claude Usage Tracker
 WIN_USERS = "/mnt/c/Users"
 REL = ("AppData/Local/Google/Chrome/User Data/{profile}/"
        "Local Extension Settings/" + EXT_ID)
+# macOS keeps Chrome's profiles under the user's own Library (card #583).
+MAC_ROOT = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+MAC_REL = "{profile}/Local Extension Settings/" + EXT_ID
 PROFILES = ["Default", "Profile 1", "Profile 2", "Profile 3"]
 
 # The payload is JSON escaped inside a log string, so quotes arrive as \" and
@@ -65,6 +68,12 @@ STAMP = re.compile(rb'"timestamp":"(\d\d:\d\d:\d\d\.\d+)"')
 
 
 def _stores():
+    if sys.platform == "darwin":
+        for prof in PROFILES:
+            p = os.path.join(MAC_ROOT, MAC_REL.format(profile=prof))
+            if os.path.isdir(p):
+                yield p
+        return
     for user in sorted(glob.glob(os.path.join(WIN_USERS, "*"))):
         for prof in PROFILES:
             p = os.path.join(user, REL.format(profile=prof))

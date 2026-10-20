@@ -601,6 +601,27 @@ export function readExtraChannelPluginIds(): string[] {
   }
 }
 
+// store/subagent-plugins.json -- hook-only plugins (mods, not channels) a
+// sub-agent loads next to its OWN Telegram bot, e.g. telegram-reaction (owner
+// tg 8585, 2026-10-20: the emoji reactions the main agent has had since tg 7837
+// via CHANNEL_PLUGINS_EXTRA). Without this the isolated settings.json copies the
+// shared file, where the plugin is false, so every sub-agent came up without it.
+// Gated by the caller on an own Telegram token: the reaction plugin reads its
+// bot token from TELEGRAM_STATE_DIR/.env and, with no state dir, falls back to
+// the MAIN bot's dir -- a channel-less agent must never load it.
+// Shape: {"plugins": ["telegram-reaction@marveen-telegram-reaction"]}. Absent or
+// unreadable -> [] -> the launch is byte-identical to before.
+export const SUBAGENT_PLUGINS_PATH = join(STORE_DIR, 'subagent-plugins.json')
+export function readSubagentPluginIds(path = SUBAGENT_PLUGINS_PATH): string[] {
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { plugins?: unknown }
+    if (!Array.isArray(raw.plugins)) return []
+    return raw.plugins.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map(p => p.trim())
+  } catch {
+    return []
+  }
+}
+
 /**
  * Which shared-root regression this main-agent launch is, if any.
  *
@@ -985,7 +1006,10 @@ function provisionIsolatedConfigDir(
       const link = join(cfg, entry)
       let needsLink = true
       try {
-        if (lstatSync(link).isSymbolicLink()) needsLink = false
+        // A live symlink is kept even if it points elsewhere (a deliberate
+        // redirect). A dangling one is relinked: after a copy to a machine with
+        // a different home, every old absolute target is gone (card #583).
+        if (lstatSync(link).isSymbolicLink() && existsSync(link)) needsLink = false
         else rmSync(link, { recursive: true, force: true })
       } catch { /* absent -> create */ }
       if (needsLink) {
@@ -1103,7 +1127,10 @@ function provisionIsolatedConfigDir(
       if (!existsSync(target)) continue
       let needsLink = true
       try {
-        if (lstatSync(link).isSymbolicLink()) needsLink = false
+        // A live symlink is kept even if it points elsewhere (a deliberate
+        // redirect). A dangling one is relinked: after a copy to a machine with
+        // a different home, every old absolute target is gone (card #583).
+        if (lstatSync(link).isSymbolicLink() && existsSync(link)) needsLink = false
         else rmSync(link, { recursive: true, force: true })
       } catch { /* absent -> create */ }
       if (needsLink) {
@@ -1863,6 +1890,52 @@ export function shouldBriefAfterStart(
   return opts.fresh === true && result.ok
 }
 
+// Exported for the unit test. True only for the dev-channels modal that names
+// exactly `server:worksource` with the cursor on the "local development" option.
+export function isWorksourceDevChannelModal(pane: string): boolean {
+  if (!/is for local channel development/.test(pane)) return false
+  if (!/^\s*Channels:\s*server:worksource\s*$/m.test(pane)) return false
+  return /❯\s*1\.\s*I am using this for local development/.test(pane)
+}
+
+function scheduleWorksourceDevChannelConfirm(session: string, name: string): void {
+  const deadline = Date.now() + 90_000
+  const tick = () => {
+    let pane = ''
+    try { pane = capturePane(session) ?? '' } catch { /* transient capture miss */ }
+    if (isWorksourceDevChannelModal(pane)) {
+      try { runTmux(null, ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 4000 }) } catch { /* ignore */ }
+      logger.info({ name, session }, 'worksource dev-channel modal confirmed')
+      return
+    }
+    if (Date.now() < deadline) setTimeout(tick, 1500)
+    else logger.warn({ name, session }, 'worksource dev-channel modal not seen within 90s')
+  }
+  setTimeout(tick, 2000)
+}
+
+// WSROOTDISABLE1017: Claude Code reads project settings up to the repo root, so a
+// `disabledMcpjsonServers: ["worksource"]` in PROJECT_ROOT/.claude/settings.local.json
+// switches the worksource server off for EVERY agent dir under agents/. Measured
+// 2026-10-17 (card #560) on a hidden test agent: with the entry present `/mcp`
+// said "No MCP servers configured" and no server.mjs ran; with only that entry
+// removed the server started and a queued message was delivered. The entry was
+// written 2026-10-15 20:54:06 during the fleet switch, writer not identified.
+// The main agent (the only one rooted there) never runs worksource, so the entry
+// can only ever break the sub-agents that opted in. Removes just that one name;
+// returns true when it changed the file. Exported for the unit test.
+export function dropRootWorksourceDisable(settingsPath: string): boolean {
+  if (!existsSync(settingsPath)) return false
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+  const disabled = settings.disabledMcpjsonServers
+  if (!Array.isArray(disabled) || !disabled.includes('worksource')) return false
+  const rest = disabled.filter(s => s !== 'worksource')
+  if (rest.length > 0) settings.disabledMcpjsonServers = rest
+  else delete settings.disabledMcpjsonServers
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
+  return true
+}
+
 export async function startAgentProcess(name: string, opts: { fresh?: boolean } = {}): Promise<{ ok: boolean; pid?: number; error?: string }> {
   const dir = agentDir(name)
   if (!existsSync(dir)) return { ok: false, error: 'Agent not found' }
@@ -1944,6 +2017,10 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
   if (extraLaunch.skipped.length > 0) {
     logger.warn({ name, skipped: extraLaunch.skipped }, 'extraChannels: provider configured but no token in its state dir -- not loaded')
   }
+  const extraPluginIds = [
+    ...extraLaunch.pluginIds,
+    ...(token && agentProvider === 'telegram' ? readSubagentPluginIds() : []),
+  ]
   const hasExtraChannels = extraLaunch.providers.length > 0
   const hasAnyChannel = hasChannel || hasExtraChannels
 
@@ -2242,6 +2319,14 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
           env: { WORKSOURCE_AGENT_ID: name, WORKSOURCE_DIR: worksourceRootFor(name) },
         }
         writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, 2))
+        const rootLocalSettings = join(PROJECT_ROOT, '.claude', 'settings.local.json')
+        try {
+          if (dropRootWorksourceDisable(rootLocalSettings)) {
+            logger.warn({ name, rootLocalSettings }, 'worksource was disabled for the whole repo in root settings.local.json; entry removed')
+          }
+        } catch (err) {
+          logger.warn({ err, name, rootLocalSettings }, 'Could not check root settings.local.json for a worksource disable')
+        }
         // The dev-channels flag takes a TAGGED LIST (`server:<name>` for a manually
         // configured MCP server, `plugin:<name>@<marketplace>` for a plugin one).
         // Measured by the reviewer on the PR head: without the value the CLI exits
@@ -2305,7 +2390,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
         )
         // AGENTEXTRACH1006: the co-listen plugins stay on after the
         // primary-only scope above turned them off.
-        s.enabledPlugins = enableExtraPlugins(s.enabledPlugins as Record<string, boolean>, extraLaunch.pluginIds)
+        s.enabledPlugins = enableExtraPlugins(s.enabledPlugins as Record<string, boolean>, extraPluginIds)
         writeFileSync(settingsPath, JSON.stringify(s, null, 2))
       } catch (err) {
         logger.warn({ err, name }, 'Could not scope channel plugins for sub-agent')
@@ -2389,7 +2474,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
         // of the dir -- and on Linux the provisioner deliberately never
         // touches .credentials.json, see ISOLATED_CONFIG_SKIP), so the
         // isolation gate must NOT be hasFleetOauthToken() here.
-        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraLaunch.pluginIds)
+        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraPluginIds)
         if (isolated) {
           claudeConfigDir = isolated
           // Linux keeps the credential as a file, so its absence is reliably
@@ -2411,7 +2496,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
       } else if (ownTokenFile) {
         // 2fb86ef2: isolated exactly like the fleet branch below; only the token
         // source differs, so the fleet token's presence is irrelevant here.
-        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraLaunch.pluginIds)
+        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraPluginIds)
         if (isolated) {
           claudeConfigDir = isolated
           oauthTokenEnv = ownOauthTokenExport(ownTokenFile)
@@ -2423,7 +2508,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
         // A channel-less agent provisions with a null provider so its isolated
         // settings.json disables EVERY channel plugin -- it has no bot token,
         // so a loaded plugin could only fight the fleet over poller slots.
-        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraLaunch.pluginIds)
+        const isolated = ensureIsolatedChannelConfigDir(name, hasChannel ? agentProvider : null, extraPluginIds)
         if (isolated) {
           claudeConfigDir = isolated
           // Read the token at launch via $(cat) so the literal secret never
@@ -2813,6 +2898,14 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // -- the outbound pre-flight remains the safety net if this misses.
     // Fire-and-forget: scheduleIdentitySetup only schedules delayed timers;
     // startAgentProcess stays synchronous (out of scope, per the conversion rules).
+    // WORKSOURCEDEVCONFIRM1015: the dev-channels launch flag (above) makes
+    // Claude Code park EVERY launch on a "I am using this for local development /
+    // Exit" modal. Measured 2026-10-15 on cody: nothing answered it, so any
+    // unattended restart (budget guard, context guard, reconciler) would leave a
+    // worksource agent parked there, deaf to its queue. We passed the flag
+    // ourselves, for our own local plugin, so confirming it is a startup detail;
+    // the matcher still refuses a modal that names any channel besides worksource.
+    if (worksourceFlags) scheduleWorksourceDevChannelConfirm(session, name)
     void scheduleIdentitySetup(session, readAgentDisplayName(name))
 
     // Colleague auto-unlock (2026-06-22): mirror the main session's

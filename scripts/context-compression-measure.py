@@ -23,9 +23,14 @@ Denominator matters, so it is printed with every figure:
 
 Usage:  python3 scripts/context-compression-measure.py [--days 7] [--tail 0.20]
 """
-import argparse, collections, datetime, glob, json, os, statistics
+import argparse, collections, datetime, glob, json, os, re, statistics
 
-PROJECT_DIR = os.path.expanduser('~/.claude/projects/-home-gabor-marveen')
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_SLUG = project_slug(REPO)
+PROJECT_DIR = os.path.expanduser(os.path.join('~/.claude/projects', PROJECT_SLUG))
 
 
 CHARS_PER_TOKEN = 3.5     # text; rough, and labelled as an estimate in the output

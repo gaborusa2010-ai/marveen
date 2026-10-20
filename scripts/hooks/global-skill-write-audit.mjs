@@ -52,12 +52,15 @@ import { execFileSync } from 'node:child_process'
 // `approvedBy`. Two readers for one file is how two halves of a gate start
 // disagreeing about who is allowed what -- the project's own gate-repair skill
 // says to unify them rather than keep them in step by hand.
-import { readGrant, readStandingGrants } from './global-skill-write-gate.mjs'
+import { readGrant, readStandingGrants, REPO_SKILL_DIR } from './global-skill-write-gate.mjs'
 import { localStamp } from './lib/local-time.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const AUDIT_LOG = join(REPO_ROOT, 'store', 'global-skill-writes.log')
 const SNAPSHOT = join(REPO_ROOT, 'store', '.global-skill-tree.json')
+// #261: the repo-root skill folder gets its own snapshot, so neither tree's
+// baseline can be mistaken for the other's.
+const REPO_SNAPSHOT = join(REPO_ROOT, 'store', '.repo-skill-tree.json')
 const TOKEN_PATH = join(REPO_ROOT, 'store', '.dashboard-token')
 
 export const GLOBAL_SKILL_DIR = join(homedir(), '.claude', 'skills')
@@ -221,6 +224,36 @@ export function agentFromCwd(cwd = process.cwd()) {
   return i >= 0 && parts[i + 1] ? parts[i + 1] : 'marveen'
 }
 
+/**
+ * #261, owner tg 8276: in the REPO folder the main agent may fix an EXISTING
+ * skill without a grant. So a change there is covered when every touched skill
+ * was already in the baseline, nothing was removed wholesale, and the observer
+ * is the main agent.
+ *
+ * Why the observer counts HERE when grantCovers says it must not: the main
+ * agent's own writes -- Write/Edit or a script it ran -- are followed at once
+ * by ITS OWN PostToolUse run, so in practice it observes its own change first.
+ * A sub-agent observing a change to an existing repo skill means either the
+ * sub-agent wrote it (exactly what this folder is protected against) or it
+ * caught the main agent's write in the few milliseconds before the main
+ * agent's hook ran. The second is a rare false alarm, to the main agent itself;
+ * the first is the case this exists for. Cheap noise for a real signal.
+ */
+export function repoChangeCovered(d, beforeFiles, observedBy) {
+  if (observedBy !== 'marveen') return false
+  const existing = new Set(Object.keys(beforeFiles || {}).map(skillOfRelPath).filter(Boolean))
+  const afterSkills = new Set()
+  for (const p of [...d.added, ...d.modified]) afterSkills.add(skillOfRelPath(p))
+  for (const k of skillsInDiff(d)) if (!existing.has(k)) return false
+  // A skill whose every file disappeared is a deletion of the skill, not a fix.
+  for (const p of d.deleted) {
+    const k = skillOfRelPath(p)
+    const stillHas = Object.keys(beforeFiles).some((q) => skillOfRelPath(q) === k && !d.deleted.includes(q))
+    if (!stillHas && !afterSkills.has(k)) return false
+  }
+  return true
+}
+
 function logLine(kind, detail) {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
@@ -230,10 +263,10 @@ function logLine(kind, detail) {
   }
 }
 
-function saveSnapshot(tree) {
+function saveSnapshot(tree, path = SNAPSHOT) {
   try {
     mkdirSync(join(REPO_ROOT, 'store'), { recursive: true })
-    writeFileSync(SNAPSHOT, JSON.stringify({ at: Date.now(), files: tree }), 'utf-8')
+    writeFileSync(path, JSON.stringify({ at: Date.now(), files: tree }), 'utf-8')
   } catch {
     // If the snapshot cannot be written the next run re-baselines. Noisy once,
     // never wrong.
@@ -296,6 +329,11 @@ function isInvokedDirectly() {
  * An audit that cannot run must fail silent, because the alternative is that
  * someone switches it off -- and then the silent change is silent again.
  */
+const TREES = [
+  { name: 'global', root: GLOBAL_SKILL_DIR, snapshot: SNAPSHOT, tag: '', label: 'KOZOS SKILL-MAPPA' },
+  { name: 'repo', root: REPO_SKILL_DIR, snapshot: REPO_SNAPSHOT, tag: 'tree="repo" ', label: 'REPO SKILL-MAPPA (.claude/skills)' },
+]
+
 function run() {
   let payload = null
   try {
@@ -303,23 +341,33 @@ function run() {
   } catch {
     payload = null  // a malformed payload still deserves a tree check
   }
+  for (const cfg of TREES) {
+    // One tree failing must not hide the other.
+    try {
+      runTree(cfg, payload)
+    } catch (e) {
+      logLine('AUDIT_ERROR', `${cfg.tag}msg="${String(e && e.message ? e.message : e).slice(0, 200).replace(/"/g, "'")}"`)
+    }
+  }
+}
 
-  const { files: after, rootOk } = readTree()
-  const snap = readJson(SNAPSHOT)
+function runTree(cfg, payload) {
+  const { files: after, rootOk } = readTree(cfg.root)
+  const snap = readJson(cfg.snapshot)
 
   if (!rootOk) {
     // Say it, and change NOTHING. Writing a baseline from an unreadable root is
     // how a blind check becomes a permanent one: {} stored now means every later
     // run compares {} to {} and reports calm. Leaving the old snapshot alone
     // means the next healthy run picks the real difference up.
-    logLine('AUDIT_BLIND', `reason="protected root unreadable" path="${GLOBAL_SKILL_DIR}"`)
+    logLine('AUDIT_BLIND', `${cfg.tag}reason="protected root unreadable" path="${cfg.root}"`)
     return
   }
 
   if (!isTreeShaped(after)) {
     // Refuse to store a reading we do not recognise. See isTreeShaped: this is
     // the guard that stops one bad reading from becoming a bad baseline.
-    logLine('AUDIT_SUSPECT', 'reason="readTree returned a non-tree shape"')
+    logLine('AUDIT_SUSPECT', `${cfg.tag}reason="readTree returned a non-tree shape"`)
     return
   }
 
@@ -329,8 +377,8 @@ function run() {
     // is not evidence that anyone touched the folder, and reporting 40
     // "deletions" from it is noise that buries the real signal.
     const why = snap && snap.files && !isTreeShaped(snap.files) ? 'corrupt-snapshot' : 'first-run'
-    saveSnapshot(after)
-    logLine('TREE_BASELINE', `files=${Object.keys(after).length} why="${why}"`)
+    saveSnapshot(after, cfg.snapshot)
+    logLine('TREE_BASELINE', `${cfg.tag}files=${Object.keys(after).length} why="${why}"`)
     return
   }
 
@@ -339,9 +387,9 @@ function run() {
   // own thing rather than as N deletions, and do not overwrite the baseline, so
   // the state survives for whoever looks.
   if (Object.keys(after).length === 0 && Object.keys(snap.files).length > 0) {
-    logLine('AUDIT_SUSPECT', `reason="tree read as empty but snapshot had files" had=${Object.keys(snap.files).length}`)
+    logLine('AUDIT_SUSPECT', `${cfg.tag}reason="tree read as empty but snapshot had files" had=${Object.keys(snap.files).length}`)
     alertMainAgent(
-      `[KOZOS SKILL-MAPPA] A vedett fa URESNEK olvasodott, pedig a pillanatkep ` +
+      `[${cfg.label}] A vedett fa URESNEK olvasodott, pedig a pillanatkep ` +
       `${Object.keys(snap.files).length} fajlt tartalmazott. Ez VAGY egy valodi torles, VAGY -- sokkal ` +
       `valoszinubben -- a meres bukott el. A pillanatkepet NEM irtam felul, tehat a kovetkezo ` +
       `ep futas meg latni fogja a kulonbseget. Nezd meg, letezik-e es olvashato-e a mappa.`,
@@ -355,7 +403,14 @@ function run() {
 
   const skills = skillsInDiff(d)
   const agent = agentFromCwd()
-  const cov = grantCovers(skills, readGrant(), readStandingGrants(), agent)
+  // Standing grants are scoped to the GLOBAL folder (see the gate), so the repo
+  // tree takes an ad-hoc grant or the main agent's existing-skill rule.
+  let cov = cfg.name === 'repo'
+    ? grantCovers(skills, readGrant(), [], agent)
+    : grantCovers(skills, readGrant(), readStandingGrants(), agent)
+  if (!cov.covered && cfg.name === 'repo' && repoChangeCovered(d, snap.files, agent)) {
+    cov = { covered: true, how: 'main-existing', id: agent }
+  }
   const tool = String(payload?.tool_name ?? '')
   const parts = []
   if (d.added.length) parts.push(`added=${d.added.join(',')}`)
@@ -363,7 +418,7 @@ function run() {
   if (d.deleted.length) parts.push(`deleted=${d.deleted.join(',')}`)
   // `observed_by`, not `agent`: see grantCovers -- this hook runs after SOME
   // tool call, not necessarily the one that moved the file.
-  const detail = `tool="${tool}" observed_by="${agent}" skills="${skills.join(',')}" ${parts.join(' ')}`
+  const detail = `${cfg.tag}tool="${tool}" observed_by="${agent}" skills="${skills.join(',')}" ${parts.join(' ')}`
 
   // The log line goes down BEFORE the alert, and the snapshot only after both.
   // If the process dies in between, the next run sees the same difference and
@@ -373,7 +428,7 @@ function run() {
   } else {
     logLine('TREE_CHANGE_UNGRANTED', detail)
     alertMainAgent(
-      `[KOZOS SKILL-MAPPA] A vedett fa megvaltozott ERVENYES ENGEDELY NELKUL. ` +
+      `[${cfg.label}] A vedett fa megvaltozott ERVENYES ENGEDELY NELKUL. ` +
       `Erintett skill(ek): ${skills.join(', ') || 'ismeretlen'}. ${parts.join(' | ')}. ` +
       `Eszlelte: ${agent} (${tool || 'ismeretlen eszkoz'}) -- de NEM biztos, hogy o irta: ez az ellenorzes ` +
       `a kovetkezo tool-hivas utan fut, barmelyik agensé is az, tehat a nevet eszlelokent olvasd, ne szerzokent. ` +
@@ -382,7 +437,7 @@ function run() {
       agent,
     )
   }
-  saveSnapshot(after)
+  saveSnapshot(after, cfg.snapshot)
 }
 
 if (isInvokedDirectly()) {

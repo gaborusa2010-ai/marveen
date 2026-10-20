@@ -7,8 +7,10 @@ ami ugy hangzik, mintha a metodus nem letezne, holott csak a forma volt rossz.
 """
 import json, os, sys, urllib.request, uuid
 
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 def token_of(agent):
-    p = f'/home/gabor/marveen/agents/{agent}/.claude/channels/telegram/.env'
+    p = os.path.join(REPO, 'agents', agent, '.claude', 'channels', 'telegram', '.env')
     if not os.path.exists(p): return None
     for line in open(p):
         if line.startswith('TELEGRAM_BOT_TOKEN='):

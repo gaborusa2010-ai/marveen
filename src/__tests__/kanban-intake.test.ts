@@ -25,6 +25,7 @@ describe('kanban client intake API', () => {
       title: 'Ügyfél: Kiss Anna: Tetőjavítást szeretnék.',
       description: 'Ügyfél-kérés (űrlap)\nNév: Kiss Anna\nElérhetőség: anna@example.com\nHelyszín: Fő utca 1.\nMikorra: 2026-10-17\nProjekt: Tető\n\nKérés:\nTetőjavítást szeretnék.\nA hátsó épületen.',
       status: 'planned', priority: 'normal', assignee: null, project: 'Tető',
+      location: 'Fő utca 1.',
     })
     expect(getLabelsForCard(card.id).map((label) => label.name)).toEqual(['Ügyfél-kérés'])
   })

@@ -13,7 +13,8 @@ proxy). This file exists partly so the fifth one is caught once instead of night
 """
 import sqlite3, time, sys, json, os
 
-DB = "/home/gabor/marveen/store/claudeclaw.db"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB = os.path.join(REPO, "store", "claudeclaw.db")
 NAP = 86400
 
 
@@ -79,7 +80,7 @@ def main():
     # SOROZATBAN, es ezert fut vele egy allando kontroll: ha egy bizonyithatoan
     # hasznalt skill a "nincs sora" listan all, a cimke maga a lelet.
     roster = set()
-    for d in (os.path.expanduser("~/.claude/" + "skills"), "/home/gabor/marveen/.claude/" + "skills"):
+    for d in (os.path.expanduser("~/.claude/" + "skills"), os.path.join(REPO, ".claude", "skills")):
         try:
             roster |= {n for n in os.listdir(d) if not n.startswith(".")}
         except OSError:

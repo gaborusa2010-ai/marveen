@@ -38,6 +38,12 @@ is a cost with no measured benefit.
 WHY THE MAIN AGENT IS NEVER STOPPED. It is the channel. Stopping it silences the
 owner's only way to reach the fleet, and then nobody can even lift the gate.
 
+WHY --exclude-main. The gate never stops the main agent, so counting its spend
+only lets it stop the sub-agents in its place: on 2026-10-17 the main agent was
+58.7% of the day (375.6M of 640.3M) and Anorak was stopped for it. With the flag
+the main agent is still measured and printed, but left out of the total. The
+weekly guard is unaffected. Owner decision, Telegram msg 8268 (2026-10-18), on trial.
+
 Usage
 -----
   fleet-daily-budget.py                      # measure, print, no action
@@ -311,6 +317,9 @@ def main(argv=None):
                          "kell allitania mara'. Ez KAPCSOLO es nem egy elerhetetlen "
                          "--warn-at szam, mert egy kikapcsolt ertesitesnek latszania "
                          "kell a parancssorban.")
+    ap.add_argument("--exclude-main", action="store_true",
+                    help="a fo-agens fogyasztasa NE szamitson a napi osszegbe "
+                         "(merve es kiirva marad). Gazda, Telegram msg 8268, 2026-10-18.")
     a = ap.parse_args(argv)
 
     g = _load_guard()
@@ -323,13 +332,15 @@ def main(argv=None):
             continue
         per_agent[name] = tok
         last_seen[name] = last or 0.0
-        total += tok
+        if not (a.exclude_main and name == MAIN):
+            total += tok
 
     pct = total / a.budget * 100 if a.budget else 0
     heti = None if a.ignore_weekly else read_weekly(max_age_min=a.weekly_max_age_min)
     itelet = weekly_verdict(heti, a.weekly_stop_at, a.weekly_lead)
     print(json.dumps({"total": total, "budget": a.budget, "pct": round(pct, 1),
-                      "per_agent": per_agent, "unmeasurable": missing,
+                      "per_agent": per_agent, "main_excluded": a.exclude_main,
+                      "unmeasurable": missing,
                       "weekly": heti, "weekly_verdict": itelet},
                      ensure_ascii=False))
 

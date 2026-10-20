@@ -29,10 +29,14 @@ Measured when this was written (50 minutes after a fresh backup): 3 changed
 memory pages and 1 new commit -- so the check discriminates rather than always
 firing. A quiet evening really does exit 1.
 """
-import os, subprocess, sys, time
+import os, re, subprocess, sys, time
+
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.path.expanduser("~")
+SLUG = project_slug(ROOT)
 STATE = os.path.join(ROOT, "store", ".last-backup-ok")
 FLOOR_DAYS = 6.5
 
@@ -44,7 +48,7 @@ WATCH = [
     (os.path.join(HOME, ".claude", "skills"),               "kozos skill-fa"),
     (os.path.join(HOME, ".claude", "scheduled-tasks"),      "utemezett feladatok"),
     (os.path.join(HOME, ".claude", "projects",
-                  "-home-gabor-marveen", "memory"),         "kozos memoria"),
+                  SLUG, "memory"),                           "kozos memoria"),
 ]
 
 

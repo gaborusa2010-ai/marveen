@@ -96,7 +96,10 @@ case "${1:-status}" in
     # Copies only what differs by mtime or size, so re-running it costs a stat
     # per file and nothing else. It never deletes: a mirror that prunes is one
     # bad predicate away from being the thing that loses the pictures.
-    DEST="${IMAGE_MIRROR_DIR:-/mnt/c/Users/gabor/Desktop/Marveen files/Kepek}"
+    # On the Mac mini the desktop is the local one (card #583).
+    if [ "$(uname -s)" = Darwin ]; then DEFAULT_DEST="$HOME/Desktop/Marveen files/Kepek"
+    else DEFAULT_DEST="/mnt/c/Users/gabor/Desktop/Marveen files/Kepek"; fi
+    DEST="${IMAGE_MIRROR_DIR:-$DEFAULT_DEST}"
     list_images > "${REPO_ROOT}/store/.image-mirror-list.tmp"
     python3 - "${REPO_ROOT}" "${DEST}" "${REPO_ROOT}/store/.image-mirror-list.tmp" <<'PY'
 import os, shutil, sys

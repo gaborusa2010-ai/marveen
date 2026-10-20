@@ -21,8 +21,11 @@ so it is swept. What the model CANNOT price is continuity: a shorter session
 loses the thread more often, and that cost is the owner's call, not this
 script's.
 """
-import json, glob, os, datetime, statistics
-D='/home/gabor/marveen/.channels-config/projects/-home-gabor-marveen'
+import json, glob, os, re, datetime, statistics
+def project_slug(path):
+    return re.sub(r'[^A-Za-z0-9]','-',path)
+REPO=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+D=os.path.join(REPO,'.channels-config','projects',project_slug(REPO))
 cut=datetime.datetime.now().timestamp()-7*86400
 sessions=[]
 for f in glob.glob(os.path.join(D,'**','*.jsonl'),recursive=True):

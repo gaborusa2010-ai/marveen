@@ -100,6 +100,25 @@ def main():
         check("a nem kolto ketto NEM all le",
               "anorak" not in g.stopped and "roxy" not in g.stopped, f"{g.stopped}")
 
+        print("1b. --exclude-main: a fo-agens fogyasztasa nem szamit a napi osszegbe")
+        # 2026-10-17 alakja: a fo-agens viszi a nap nagyjat, a subok egyutt a keret fele alatt.
+        s = dict(MIND, marveen=375_000_000, cody=108_000_000, margo=96_000_000,
+                 anorak=23_000_000)
+        allapot = {}
+        rc, g = run(s, ["--notify", "--budget", "520000000", "--exclude-main"], allapot)
+        check("kapcsoloval NEM allit le", not g.stopped, f"{g.stopped}")
+        check("kapcsoloval nem kuld", not g.sent, f"{len(g.sent)}")
+        allapot = {}
+        rc, g = run(s, ["--notify", "--budget", "520000000"], allapot)
+        check("kapcsolo NELKUL ugyanez leallit (negativ kontroll)", bool(g.stopped),
+              f"{g.stopped}")
+        allapot = {}
+        rc, g = run(dict(s, cody=300_000_000, margo=200_000_000),
+                    ["--notify", "--budget", "520000000", "--exclude-main"], allapot)
+        check("kapcsoloval is leallit, ha a subok maguk tullepik",
+              set(g.stopped) >= {"cody", "margo"} and "marveen" not in g.stopped,
+              f"{g.stopped}")
+
         print("2. A kuszob ALATT semmi nem tortenik (negativ kontroll)")
         allapot = {}
         rc, g = run(dict(MIND, marveen=100_000_000), ["--notify", "--budget", "520000000"],

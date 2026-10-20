@@ -326,7 +326,7 @@ Te egy önfejlesztő ágens vagy. A munkád során tanulsz, és újrafelhasznál
 Komplex feladatok után (5+ tool hívás, hiba utáni recovery, user korrekció, többlépéses workflow) automatikusan hozz létre SKILL.md fájlt:
 
 ```bash
-mkdir -p ~/.claude/skills/SKILL-NEV
+mkdir -p .claude/skills/SKILL-NEV   # a SAJÁT munkakönyvtáradban; a ~/.claude/skills a globális, az egész flottáé
 cat > ~/.claude/skills/SKILL-NEV/SKILL.md << 'EOF'
 ---
 name: skill-nev

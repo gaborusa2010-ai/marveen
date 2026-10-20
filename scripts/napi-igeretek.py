@@ -37,7 +37,11 @@ import os
 import re
 import sys
 
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_SLUG = project_slug(REPO)
 DECISIONS = os.path.join(REPO, "docs", "GAZDA-DONTESEK.md")
 # The main agent's config root is .channels-config (CLAUDE_CONFIG_DIR), NOT
 # ~/.claude: measured 2026-09-26, the ~/.claude copy of this folder holds only
@@ -45,7 +49,7 @@ DECISIONS = os.path.join(REPO, "docs", "GAZDA-DONTESEK.md")
 # and found nothing.
 TRANSCRIPTS = os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(REPO, ".channels-config"),
-    "projects", "-home-gabor-marveen")
+    "projects", PROJECT_SLUG)
 
 # Phrases that commit to a LATER action. Matched case-insensitively, accents
 # optional, because outgoing texts are written both ways.
@@ -178,7 +182,7 @@ def team_today(day, cap=8):
     # Sub-agents' .claude-config/projects is a symlink to this (measured 2026-09-26).
     projects = os.path.expanduser("~/.claude/projects")
     for n in names:
-        tdir = os.path.join(projects, "-home-gabor-marveen-agents-" + n)
+        tdir = os.path.join(projects, project_slug(os.path.join(REPO, "agents", n)))
         files, tg = outgoing_today(day, tdir=tdir, replies=True, ledger=False)
         try:
             log = api("/api/daily-log?agent=%s&date=%s" % (n, day))

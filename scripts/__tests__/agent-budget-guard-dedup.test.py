@@ -48,7 +48,7 @@ def main():
     now = datetime.datetime.now()
     with tempfile.TemporaryDirectory() as td:
         mod.PROJECTS = td
-        d = os.path.join(td, "-home-gabor-marveen-agents-proba")
+        d = os.path.join(td, mod.project_slug(os.path.join(mod.REPO, "agents", "proba")))
         os.makedirs(d)
         p = os.path.join(d, "s.jsonl")
         with open(p, "w", encoding="utf-8") as fh:

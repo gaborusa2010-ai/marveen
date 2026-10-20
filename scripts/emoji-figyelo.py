@@ -46,8 +46,13 @@ costs the finding.
 """
 import argparse, glob, json, os, re, sys
 
-TRANSCRIPTS = "/home/gabor/marveen/.channels-config/projects/-home-gabor-marveen"
-ALLAPOT = "/home/gabor/marveen/store/emoji-figyelo.json"
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_SLUG = project_slug(REPO)
+TRANSCRIPTS = os.path.join(REPO, ".channels-config", "projects", PROJECT_SLUG)
+ALLAPOT = os.path.join(REPO, "store", "emoji-figyelo.json")
 
 # Pictographs, symbols and dingbats. Deliberately NOT \u2190-\u21ff (arrows): the
 # terminal chrome in our own transcripts uses those, and they are not emoji.

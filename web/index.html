@@ -316,6 +316,9 @@
         <button class="view-btn active" id="kanbanViewBoard" style="width:auto;padding:0 12px;" data-i18n="kanban.view.board">Tábla</button>
         <button class="view-btn" id="kanbanViewGantt" style="width:auto;padding:0 12px;" data-i18n="kanban.view.gantt">Idővonal</button>
         <button class="view-btn" id="kanbanViewTeam" style="width:auto;padding:0 12px;" data-i18n="kanban.view.team">Csapat</button>
+        <!-- Hidden until /api/marveen says the 'calendar' feature is on (syncCalendarFlag). -->
+        <button class="view-btn" id="kanbanViewCalendar" style="width:auto;padding:0 12px;" data-i18n="kanban.view.calendar" hidden>Naptár</button>
+        <button class="view-btn" id="kanbanViewMap" style="width:auto;padding:0 12px;" data-i18n="kanban.map.button" hidden>Térkép</button>
         <button class="view-btn" id="kanbanIntakeBtn" style="width:auto;padding:0 12px;" data-i18n="kanban.intake.button" hidden>Ügyfél-kérés</button>
         <span id="kanbanTotals" style="margin-left:auto;font-size:13px;color:var(--muted);white-space:nowrap;"></span>
         <button class="view-btn" id="kanbanViewArchived" style="width:auto;padding:0 12px;margin-left:12px;" data-i18n="kanban.view.archived">Archiváltak</button>
@@ -427,6 +430,9 @@
       <div class="kanban-board kanban-swimlane-board" id="kanbanSwimlaneBoard" hidden></div>
       <!-- Gantt / timeline view container -->
       <div id="kanbanGanttView" style="display:none;"></div>
+      <!-- Calendar view: month grid of cards by deadline (#451 part B) -->
+      <div id="kanbanCalendarView" class="kanban-cal-view" style="display:none;"></div>
+      <div id="kanbanMapView" class="kanban-map-view" style="display:none;"></div>
     </div>
 
     <!-- === Team Notes Page === -->
@@ -2210,6 +2216,10 @@
             <label for="cardProject" data-i18n="common.project">Projekt <span class="hint" data-i18n="common.optional_hint">(opcionális)</span></label>
             <input type="text" id="cardProject" list="projectSuggestions" placeholder="pl. Dream Engine" autocomplete="off">
             <datalist id="projectSuggestions"></datalist>
+          </div>
+          <div class="form-group form-half">
+            <label for="cardLocation" data-i18n="kanban.card.location">Helyszín</label>
+            <input type="text" id="cardLocation" maxlength="300" autocomplete="street-address">
           </div>
         </div>
         <input type="hidden" id="cardEditId">

@@ -28,10 +28,14 @@ _FOLD = {"ő": "ö", "Ű": "Ö", "ű": "ü", "Ő": "Ü"}
 _FONT_CANDIDATES = {
     "F1": ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-           "/mnt/c/Windows/Fonts/arial.ttf"),
+           "/mnt/c/Windows/Fonts/arial.ttf",
+           "/System/Library/Fonts/Supplemental/Arial.ttf",
+           "/Library/Fonts/Arial.ttf"),
     "F2": ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-           "/mnt/c/Windows/Fonts/arialbd.ttf"),
+           "/mnt/c/Windows/Fonts/arialbd.ttf",
+           "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+           "/Library/Fonts/Arial Bold.ttf"),
 }
 _FONT_CACHE = {}
 

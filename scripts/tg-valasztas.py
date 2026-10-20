@@ -23,7 +23,7 @@ Prints the sent message_id; exit 1 if Telegram did not answer ok.
 import json, re, sys, time, urllib.parse, urllib.request
 
 import os
-BASE = "/home/gabor/marveen"
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE + "/scripts/hooks")
 
 

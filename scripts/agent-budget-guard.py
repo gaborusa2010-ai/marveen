@@ -87,6 +87,10 @@ def override_today(agent, daily_from=None):
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
 def _tg_env():
     """Bot token file: install-scoped first (#915), legacy HOME as fallback.
 
@@ -111,13 +115,12 @@ TOKEN_FIELDS = ("input_tokens", "output_tokens",
 # project dir has no "-agents-<name>" tail. Without this the guard reports
 # "NEM MERHETO" for it forever -- correctly, since the directory really is
 # absent, but for the wrong reason: the path was built from the wrong rule.
-MAIN_AGENT_DIRNAME = "-home-gabor-marveen"
+MAIN_AGENT_DIRNAME = project_slug(REPO)
 
 
 # The main agent runs under its own CLAUDE_CONFIG_DIR, so its transcripts are NOT
 # under ~/.claude/projects. Every other agent is, which is why this went unnoticed.
-MAIN_AGENT_PROJECTS = os.path.join(
-    "/home/gabor/marveen/.channels-config", "projects")
+MAIN_AGENT_PROJECTS = os.path.join(REPO, ".channels-config", "projects")
 
 
 def project_dir(agent):
@@ -150,7 +153,7 @@ def project_dir(agent):
         if os.path.isdir(primary):
             return primary
         return os.path.join(PROJECTS, MAIN_AGENT_DIRNAME)
-    return os.path.join(PROJECTS, "-home-gabor-marveen-agents-" + agent)
+    return os.path.join(PROJECTS, project_slug(os.path.join(REPO, "agents", agent)))
 
 
 def day_start(reset_hour):

@@ -35,7 +35,12 @@ mozditja. Ezert szamol ez a script MIND A KETToT, es a SORT nezi elsonek.
 """
 import os, re, glob, time, sys, argparse
 
-M = "/home/gabor/.claude/projects/-home-gabor-marveen/memory"
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_SLUG = project_slug(REPO)
+M = os.path.join(os.path.expanduser("~"), ".claude", "projects", PROJECT_SLUG, "memory")
 LIMIT_LINES = 200
 LIMIT_CHARS = 25000
 # Cel: a plafon 80 szazaleka, hogy a napi 10-15 uj bejegyzes ne vigye at azonnal.

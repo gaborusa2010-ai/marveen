@@ -191,7 +191,7 @@ describe('launcher binding (agent-process.ts startAgentProcess)', () => {
   })
   it('the agent settings.json keeps the extras enabled after the scope step', () => {
     const scopeAt = FN.indexOf('s.enabledPlugins = scopeChannelPlugins(')
-    const extraAt = FN.indexOf('s.enabledPlugins = enableExtraPlugins(s.enabledPlugins as Record<string, boolean>, extraLaunch.pluginIds)')
+    const extraAt = FN.indexOf('s.enabledPlugins = enableExtraPlugins(s.enabledPlugins as Record<string, boolean>, extraPluginIds)')
     expect(scopeAt).toBeGreaterThan(-1)
     // AFTER the scope step, or the scope would switch the extras off again.
     expect(extraAt).toBeGreaterThan(scopeAt)
@@ -200,7 +200,11 @@ describe('launcher binding (agent-process.ts startAgentProcess)', () => {
   it('every isolation provisioner call passes the extras', () => {
     const calls = FN.match(/ensureIsolatedChannelConfigDir\([^)]*\)/g) ?? []
     expect(calls.length).toBe(3)
-    for (const c of calls) expect(c).toContain('extraLaunch.pluginIds')
+    for (const c of calls) expect(c).toContain('extraPluginIds')
+  })
+  it('extraPluginIds = the co-listen extras plus the own-Telegram-bot hook plugins (owner tg 8585)', () => {
+    expect(FN).toContain('...extraLaunch.pluginIds,')
+    expect(FN).toContain("...(token && agentProvider === 'telegram' ? readSubagentPluginIds() : []),")
   })
   it('a resumed launch with extras is verified, primary AND extras, with the fresh fallback', () => {
     const at = FN.indexOf('if (continueFlag && hasAnyChannel && name !== MAIN_AGENT_ID) {')

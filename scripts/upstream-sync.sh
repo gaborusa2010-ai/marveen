@@ -70,7 +70,15 @@ fi
 # Serialise: a fetch+merge must never overlap with itself or with a hand-run
 # copy. Non-blocking -- if another run holds it, this tick is simply skipped.
 exec 9>"$LOCK" || exit 2
-flock -n 9 || exit 0
+# macOS has no flock unless Homebrew's is installed. Without it, "flock -n 9 ||
+# exit 0" skipped EVERY tick with exit 0, so the sync would silently never run.
+# launchd never starts a second copy of a running job, so only a hand-run copy
+# can overlap; say so on stderr instead of stopping.
+if command -v flock >/dev/null 2>&1; then
+  flock -n 9 || exit 0
+else
+  echo "upstream-sync: flock not found, running without the lock" >&2
+fi
 
 # state <result> <detail> -- always written, so the state is inspectable even
 # on the quiet ticks. Python, not jq: jq is not installed on this host.

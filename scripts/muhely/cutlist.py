@@ -75,7 +75,7 @@ class Placement:
 
     def as_dict(self):
         return {"name": self.name, "x": round(self.x, 1), "y": round(self.y, 1),
-                "w": round(self.w, 1), "h": round(self.h, 1), "rotated": self.rotated}
+                "w": round(self.w, 3), "h": round(self.h, 3), "rotated": self.rotated}
 
 
 class Sheet:
@@ -185,6 +185,17 @@ SVG_COLOURS = ["#cfe3f7", "#d6f0d8", "#fbe6c8", "#efd9f2", "#d9eef0",
                "#f7d9d9", "#e6e6c8", "#dcdcf0"]
 
 
+def mm(v):
+    """A part size for print, exactly as given: 523.5 stays 523.5, 564.0 is 564.
+
+    Never round a size for display. carcass.py already rounds to the 0.5 mm the
+    panel saw can do, and that half millimetre is the whole point. The old
+    ':.0f' printed 523.5 as 524 and 2115.5 as 2116 (Python rounds a half to the
+    EVEN neighbour), so the saw got a number 0.5 mm off in either direction.
+    """
+    return format(float(v), ".3f").rstrip("0").rstrip(".")
+
+
 def to_svg(sheet, index, label, scale=0.25):
     w = sheet.w * scale
     h = sheet.h * scale
@@ -209,9 +220,9 @@ def to_svg(sheet, index, label, scale=0.25):
                        f'font-size="9" text-anchor="middle" fill="#111">{p.name}</text>')
             out.append(f'<text x="{cx:.1f}" y="{cy + 8:.1f}" font-family="sans-serif" '
                        f'font-size="8" text-anchor="middle" fill="#444">'
-                       f'{p.w:.0f}x{p.h:.0f}{" R" if p.rotated else ""}</text>')
+                       f'{mm(p.w)}x{mm(p.h)}{" R" if p.rotated else ""}</text>')
     out.append(f'<text x="4" y="{h + 18:.0f}" font-family="sans-serif" font-size="11" fill="#111">'
-               f'{label} | tabla {index}: {sheet.w:.0f}x{sheet.h:.0f} mm, '
+               f'{label} | tabla {index}: {mm(sheet.w)}x{mm(sheet.h)} mm, '
                f'hulladek {sheet.waste_pct():.1f}%</text>')
     out.append("</svg>")
     return "\n".join(out)
@@ -224,8 +235,69 @@ PDF_COLOURS = [(0.81, 0.89, 0.97), (0.84, 0.94, 0.85), (0.98, 0.90, 0.78),
                (0.90, 0.90, 0.78), (0.86, 0.86, 0.94)]
 
 
-def render_pdf(result, path):
-    """One A4 landscape page per sheet, plus a summary page up front."""
+GRAIN_LABEL = {"w": "a SZELES menten", "h": "a MAGAS menten",
+               "any": "mindegy", "none": "mindegy"}
+
+
+def _parts_pages(job_name, parts, W, H):
+    """The cut list itself: one row per part, with GRAIN and EDGING columns.
+
+    The owner's rule (agents/forgacs/CLAUDE.md, workshop conventions): a cut
+    list for the shop carries a SZALIRANY and an ELSZALAG column, and without
+    them the list is not finished -- it is the reason he trusts the list over
+    the drawing. Until 2026-10-20 (#611) the PDF had neither: the sheet pages
+    print name and size only, so grain and banding lived on the screen and in
+    the JSON, never on the paper that goes to the saw.
+
+    A missing value is printed as missing, in red, never as a blank: a blank
+    cell reads as "nothing to do", and for edging that is a SIZE decision.
+    """
+    RED = (0.7, 0, 0)
+    no_edging = not any("edging" in p for p in parts)
+    cols = [(40, "ALKATRESZ"), (210, "SZELES"), (270, "MAGAS"), (330, "DB"),
+            (360, "ANYAG"), (420, "SZALIRANY"), (530, "ELSZALAG"), (640, "MEGJEGYZES")]
+    pages, pg, y = [], None, 0
+    for i, p in enumerate(parts):
+        if pg is None or y < 50:
+            pg = Page(W, H)
+            pages.append(pg)
+            y = H - 42
+            pg.text(40, y, f"{job_name or 'Szabaslista'}: SZABASLISTA", size=14, font="F2")
+            y -= 18
+            if no_edging:
+                pg.text(40, y, "A LISTA NINCS KESZ: egyetlen soron sincs elszalag megadva. "
+                               "Az elszalag elenkent megy, es minden szalagos el 2 mm-t "
+                               "vesz le abbol a meretbol.", size=9, font="F2", colour=RED)
+                y -= 14
+            y -= 4
+            for x, head in cols:
+                pg.text(x, y, head, size=8, font="F2")
+            y -= 4
+            pg.line(40, y, W - 40, y, lw=0.5)
+            y -= 11
+        # Empty counts as missing, the same as listcheck.py's NINCS SZALIRANY.
+        grain = str(p["grain"]).lower() if p.get("grain") else None
+        g_txt = GRAIN_LABEL.get(grain, grain) if grain is not None else "NINCS MEGADVA"
+        edging = p.get("edging")
+        e_txt = edging if edging else "NINCS MEGADVA"
+        pg.text(40, y, str(p.get("name", "?"))[:30], size=8)
+        pg.text(210, y, mm(float(p["w"])), size=8)
+        pg.text(270, y, mm(float(p["h"])), size=8)
+        pg.text(330, y, str(p.get("qty", 1)), size=8)
+        pg.text(360, y, str(p.get("material", ""))[:10], size=8)
+        pg.text(420, y, g_txt, size=8, colour=RED if grain is None else (0, 0, 0))
+        pg.text(530, y, e_txt[:18], size=8, colour=RED if not edging else (0, 0, 0))
+        pg.text(640, y, str(p.get("note", ""))[:38], size=7, colour=(0.35, 0.35, 0.35))
+        y -= 11
+    if pg is not None:
+        pg.text(40, 28, "SZALIRANY: merre fusson az erezet az alkatreszen. A meretek mm-ben, "
+                        "VAGASI meret (a carcass.py-bol jovo listan az elszalag mar levonva).",
+                size=7.5, colour=(0.45, 0.45, 0.45))
+    return pages
+
+
+def render_pdf(result, path, parts=None):
+    """A summary page, the cut list with grain and edging, then one page per sheet."""
     if Page is None:
         raise RuntimeError("pdfout.py not importable, PDF output unavailable")
     W, H = A4_LANDSCAPE
@@ -242,7 +314,7 @@ def render_pdf(result, path):
         pg.text(40, y, f"{e['label']}", size=12, font="F2")
         cost = f"   koltseg {e['cost']:.2f}" if e["stock"]["price"] else ""
         pg.text(300, y, f"{e['sheets_needed']} db tabla "
-                        f"({e['stock']['w']:.0f} x {e['stock']['h']:.0f} mm)"
+                        f"({mm(e['stock']['w'])} x {mm(e['stock']['h'])} mm)"
                         f"   hulladek {e['waste_pct']}%{cost}", size=10)
         y -= 18
     if result.get("total_cost"):
@@ -255,10 +327,14 @@ def render_pdf(result, path):
         pg.text(40, y, "NEM FER RA A TABLARA:", size=11, font="F2", colour=(0.7, 0, 0))
         y -= 15
         for u in result["unplaced"]:
-            pg.text(52, y, f"[{u['material']}] {u['name']}  {u['w']:.0f} x {u['h']:.0f}",
+            pg.text(52, y, f"[{u['material']}] {u['name']}  {mm(u['w'])} x {mm(u['h'])}",
                     size=9, colour=(0.7, 0, 0))
             y -= 12
     pages.append(pg)
+
+    # --- the cut list: grain and edging per part ---
+    if parts:
+        pages.extend(_parts_pages(result.get("job", ""), parts, W, H))
 
     # --- one page per sheet ---
     for e in result["materials"]:
@@ -273,7 +349,7 @@ def render_pdf(result, path):
             pg.text(40, H - 42, f"{result['job'] or 'Szabaslista'}", size=14, font="F2")
             pg.text(40, H - 60,
                     f"{e['label']}   |   {sheet['index']}. tabla / {e['sheets_needed']}"
-                    f"   |   {sw:.0f} x {sh_mm:.0f} mm   |   hulladek {sheet['waste_pct']}%",
+                    f"   |   {mm(sw)} x {mm(sh_mm)} mm   |   hulladek {sheet['waste_pct']}%",
                     size=10, colour=(0.25, 0.25, 0.25))
 
             draw_w, draw_h = 470.0, 380.0
@@ -293,7 +369,7 @@ def render_pdf(result, path):
                 if pw > 42 and ph > 18:
                     pg.text(x + pw / 2, yy + ph / 2 + 1, pl["name"], size=6.5, align="center")
                     pg.text(x + pw / 2, yy + ph / 2 - 7,
-                            "%.0fx%.0f%s" % (pl["w"], pl["h"], " R" if pl["rotated"] else ""),
+                            "%sx%s%s" % (mm(pl["w"]), mm(pl["h"]), " R" if pl["rotated"] else ""),
                             size=6, colour=(0.35, 0.35, 0.35), align="center")
 
             # parts table down the right hand side
@@ -308,10 +384,11 @@ def render_pdf(result, path):
                     break
                 r = " R" if pl["rotated"] else ""
                 pg.text(tx, ty, pl["name"][:22], size=7.5)
-                pg.text(tx + 120, ty, "%.0f x %.0f%s" % (pl["w"], pl["h"], r), size=7.5)
+                pg.text(tx + 120, ty, "%s x %s%s" % (mm(pl["w"]), mm(pl["h"]), r), size=7.5)
                 ty -= 10.5
 
-            pg.text(40, 28, "R = forgatva. A meretek mm-ben, keszmeret. "
+            pg.text(40, 28, "R = forgatva. A meretek mm-ben, VAGASI meret (a carcass.py-bol "
+                            "jovo listan az elszalag mar levonva). "
                             "Vagas elott ellenorizd a tabla tenyleges meretet.",
                     size=7.5, colour=(0.45, 0.45, 0.45))
             pages.append(pg)
@@ -457,7 +534,7 @@ def main(argv):
 
     if "--pdf" in argv:
         out = argv[argv.index("--pdf") + 1]
-        render_pdf(result, out)
+        render_pdf(result, out, parts=all_parts)
         result["pdf"] = out
         if not as_json:
             print(f"Nyomtathato szabaslista: {out}")
@@ -482,7 +559,7 @@ def main(argv):
     print()
     for e in result["materials"]:
         print(f"=== {e['label']} ({e['material']}) ===")
-        print(f"Tabla {e['stock']['w']:.0f} x {e['stock']['h']:.0f} mm, "
+        print(f"Tabla {mm(e['stock']['w'])} x {mm(e['stock']['h'])} mm, "
               f"szukseges: {e['sheets_needed']} db", end="")
         if e["stock"]["price"]:
             print(f", koltseg {e['cost']:.2f}")
@@ -493,7 +570,7 @@ def main(argv):
             print(f"  --- {s['index']}. tabla (hulladek {s['waste_pct']}%) ---")
             for pl in sorted(s["parts"], key=lambda q: (q["y"], q["x"])):
                 r = " [forgatva]" if pl["rotated"] else ""
-                print(f"    {pl['name']:<20} {pl['w']:>7.0f} x {pl['h']:<7.0f} "
+                print(f"    {pl['name']:<20} {mm(pl['w']):>7} x {mm(pl['h']):<7} "
                       f"@ x={pl['x']:.0f} y={pl['y']:.0f}{r}")
         print()
     if result["total_cost"]:
@@ -502,7 +579,7 @@ def main(argv):
         print()
         print("NEM FER RA A TABLARA (daraboljuk vagy nagyobb tabla kell):")
         for u in result["unplaced"]:
-            print(f"  [{u['material']}] {u['name']}  {u['w']:.0f} x {u['h']:.0f}")
+            print(f"  [{u['material']}] {u['name']}  {mm(u['w'])} x {mm(u['h'])}")
     return rc
 
 

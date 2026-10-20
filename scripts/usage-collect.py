@@ -695,6 +695,98 @@ def _collect_claude_estimate():
     }
 
 
+def _probe_claude_overage():
+    """Extra-usage (overage) state from the unified rate-limit response headers.
+
+    Fallback for when /api/oauth/usage refuses the token: the fleet's setup
+    token (.env) has inference scope only, and the oauth/usage endpoint answers
+    403 to it (since 2026-09-28, when ~/.claude/.credentials.json lost its
+    access token). Every /v1/messages response still carries
+    anthropic-ratelimit-unified-overage-* headers, so one 1-token Haiku call
+    reads them. What they give: whether extra usage is allowed, the share of the
+    monthly spend cap used, and when that resets. What they do NOT give: the
+    money amount -- without a cap the utilization stays 0.0 even while spending
+    (2026-09-28: 80.92 GBP spent, limit null, used_percent 0.0)."""
+    token, token_source = _read_claude_token()
+    if not token:
+        return None
+    body = json.dumps({
+        "model": "claude-haiku-5-5", "max_tokens": 1,
+        "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+        "messages": [{"role": "user", "content": "hi"}],
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "content-type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            h = resp.headers
+    except urllib.error.HTTPError as e:
+        h = e.headers  # a 429 still carries the unified headers
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    pre = "anthropic-ratelimit-unified-"
+
+    def num(name):
+        try:
+            return float(h.get(pre + name))
+        except (TypeError, ValueError):
+            return None
+
+    status = h.get(pre + "overage-status")
+    if status is None:
+        return {"error": "no overage headers in response"}
+    reset = num("overage-reset")
+    return {
+        "status": status,  # allowed / allowed_warning / rejected
+        "disabled_reason": h.get(pre + "overage-disabled-reason"),
+        "used_percent": None if num("overage-utilization") is None else 100.0 * num("overage-utilization"),
+        "resets_at": int(reset) if reset else None,
+        "representative_claim": h.get(pre + "representative-claim"),
+        "unified_status": h.get(pre + "status"),
+        "unified_reset": int(num("reset")) if num("reset") else None,
+        "plan_exhausted": any((num(w) or 0) >= 1.0 for w in ("5h-utilization", "7d-utilization")),
+        "token_source": token_source,
+    }
+
+
+OVERAGE_NOTIFY_STATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "store", ".overage-switch-notified")
+
+
+def _notify_overage_switch(overage):
+    """Tell the owner ONCE per plan window when the fleet starts spending usage
+    credits (owner tg 8508 promise). The switch is read off the headers: the
+    unified 5h/7d windows are exhausted (unified status rejected or the binding
+    claim names overage) while overage itself is allowed. Deduped on the
+    unified reset timestamp, so the next window can fire again."""
+    claim = (overage.get("representative_claim") or "").lower()
+    on_extra = overage.get("status", "").startswith("allowed") and (
+        "overage" in claim or overage.get("unified_status") == "rejected"
+        or overage.get("plan_exhausted"))
+    if not on_extra:
+        return
+    key = str(overage.get("unified_reset"))
+    try:
+        if open(OVERAGE_NOTIFY_STATE).read().strip() == key:
+            return
+    except OSError:
+        pass
+    msg = ("A heti vagy az 5 órás keret elfogyott, mostantól az extra kreditből megyünk "
+           "(fejléc: " + (overage.get("representative_claim") or "?") + ").")
+    rc = subprocess.run(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify.sh"), msg],
+                        capture_output=True, text=True, timeout=30).returncode
+    if rc == 0:
+        with open(OVERAGE_NOTIFY_STATE, "w") as f:
+            f.write(key)
+
+
 def collect_claude():
     result = {"provider": "claude", "source": "estimate", "ok": True}
     windows, err, err_kind = _collect_claude_authoritative()
@@ -704,6 +796,11 @@ def collect_claude():
         return result
 
     result["auth_error"] = err
+    if err_kind == "permanent":
+        overage = _probe_claude_overage()
+        if overage:
+            result["overage"] = overage
+            _notify_overage_switch(overage)
 
     # A transient failure (429/5xx/timeout/unparseable) must not throw away
     # real numbers -- reuse the last authoritative snapshot if it's fresh
@@ -845,6 +942,18 @@ def render_summary(snapshot):
             lines.append(
                 f"  {names.get(label, label)} limit: {pct_str} used (reset: {local_str}, {rel})"
                 f"{_format_pace_suffix(pace)}"
+            )
+        ov = claude.get("overage")
+        if ov and ov.get("error"):
+            lines.append(f"  extra usage (headers): unavailable -- {ov['error']}")
+        elif ov:
+            pct = ov.get("used_percent")
+            pct_str = f"{pct:.1f}% of monthly cap" if isinstance(pct, (int, float)) else "? of monthly cap"
+            local_str, rel = fmt_reset(ov.get("resets_at"))
+            reason = f", {ov['disabled_reason']}" if ov.get("disabled_reason") else ""
+            lines.append(
+                f"  extra usage (headers): {ov.get('status')}{reason}; {pct_str} (0.0 also when no cap is set); "
+                f"binding limit now: {ov.get('representative_claim')}; resets {local_str} ({rel})"
             )
     else:
         if claude.get("auth_error"):

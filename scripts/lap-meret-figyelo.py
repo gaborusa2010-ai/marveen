@@ -33,7 +33,8 @@ Exit 0 = nothing over threshold, 1 = something grew past its limit, 2 = error.
 """
 import argparse, json, os, sys, time
 
-REPO = "/home/gabor/marveen"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HOME = os.path.expanduser("~")
 ALLAPOT = os.path.join(REPO, "store", "lap-meretek.json")
 
 # (ut, hatar_bajt, mikor_toltodik_be)
@@ -45,12 +46,12 @@ ALLAPOT = os.path.join(REPO, "store", "lap-meretek.json")
 # hamis riasztast adott egy lapra, ami semmit nem valtozott.
 LAPOK = [
     (os.path.join(REPO, "CLAUDE.md"), 62000, "MINDEN fordulóban"),
-    ("/home/gabor/.claude/scheduled-tasks/folyamatos-ellenorzes/SKILL.md", 11000, "felorankent, es bent marad"),
-    ("/home/gabor/.claude/scheduled-tasks/memoria-heartbeat/SKILL.md", 6000, "orankent"),
-    ("/home/gabor/.claude/scheduled-tasks/kanban-audit/SKILL.md", 13000, "naponta negyszer"),
-    ("/home/gabor/.claude/scheduled-tasks/heti-mentes/SKILL.md", 10000, "naponta este"),
-    ("/home/gabor/.claude/scheduled-tasks/esti-kanban-atnezes/SKILL.md", 20000, "naponta este"),
-    ("/home/gabor/.claude/scheduled-tasks/munkanaplo-zaras-orzo/SKILL.md", 21000, "hetkoznap"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "folyamatos-ellenorzes", "SKILL.md"), 11000, "felorankent, es bent marad"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "memoria-heartbeat", "SKILL.md"), 6000, "orankent"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "kanban-audit", "SKILL.md"), 13000, "naponta negyszer"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "heti-mentes", "SKILL.md"), 10000, "naponta este"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "esti-kanban-atnezes", "SKILL.md"), 20000, "naponta este"),
+    (os.path.join(HOME, ".claude", "scheduled-tasks", "munkanaplo-zaras-orzo", "SKILL.md"), 21000, "hetkoznap"),
     (os.path.join(REPO, ".claude", "skills", ".skill-index.md"), 14000, "skill-valasztaskor"),
 ]
 
