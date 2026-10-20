@@ -158,9 +158,10 @@ describe('wake on unblock', () => {
     expect(sent).toHaveLength(0) // b2 still open
     await move('b2', { status: 'done' })
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toMatchObject({ from: 'system', to: 'dex' })
-    expect(sent[0].content).toContain(`#${seq('w')} (w) kártyád feloldódott`)
-    expect(sent[0].content).toContain(`#${seq('b2')} (b2)`)
+    // the wake comes from upstream's notifyUnblockedCards (#567), sent as the main agent
+    expect(sent[0]).toMatchObject({ to: 'dex' })
+    expect(sent[0].content).toContain(`A(z) #${seq('w')} kártyád már nem vár semmire`)
+    expect(sent[0].content).toContain(`#${seq('b2')} (#b2) kész lett`)
   })
 
   it('a PUT to done wakes too', async () => {

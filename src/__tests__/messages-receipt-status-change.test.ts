@@ -83,27 +83,28 @@ describe('the receipt hangs on the status CHANGE, not on the UPDATE succeeding',
     expect(receiptCount(msg.id)).toBe(1)
   })
 
-  it('done -> done sends NO second receipt, and the corrected result IS stored', async () => {
+  it('done -> done is refused (409) and sends NO second receipt', async () => {
     const msg = createAgentMessage('agent-a', 'agent-b', 'do the other thing')
     await putStatus(msg.id, 'done', 'elso valasz')
     expect(receiptCount(msg.id)).toBe(1)
 
-    // The correction itself must still succeed -- this is the half that a guard on
-    // the UPDATE would have broken.
+    // Since upstream v1.44.0 (closeOpenMessage) a second close is a 409: the
+    // first close stands, the result is not overwritten.
     const again = await putStatus(msg.id, 'done', 'javitott valasz')
-    expect(again).toEqual({ ok: true })
-    expect(getAgentMessage(msg.id)?.result).toBe('javitott valasz')
+    expect(again).toMatchObject({ error: 'Message already closed', status: 'done' })
+    expect(getAgentMessage(msg.id)?.result).toBe('elso valasz')
 
     // ...and it must not have woken the sender a second time.
     expect(receiptCount(msg.id)).toBe(1)
   })
 
-  it('failed -> done creates a receipt, because that IS a change', async () => {
+  it('failed -> done is refused too: a failed message is already closed', async () => {
     const msg = createAgentMessage('agent-a', 'agent-b', 'do the third thing')
     markMessageFailed(msg.id, 'elszallt')
     expect(receiptCount(msg.id)).toBe(0)
 
-    await putStatus(msg.id, 'done', 'megis sikerult')
-    expect(receiptCount(msg.id)).toBe(1)
+    const r = await putStatus(msg.id, 'done', 'megis sikerult')
+    expect(r).toMatchObject({ error: 'Message already closed', status: 'failed' })
+    expect(receiptCount(msg.id)).toBe(0)
   })
 })

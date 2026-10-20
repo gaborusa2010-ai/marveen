@@ -35,7 +35,7 @@ trap 'rm -rf "$TMP"' EXIT
 # jq is not installed on every fleet host (CLAUDE.md), so without it a small
 # python3 stand-in answers the only shapes this suite asks: `jq -r EXPR [FILE]`
 # with EXPR = .key, .key[N], `.key // "default"`, and the pipe stages
-# `length` and `map(select(. == "X"))`.
+# `length`, `sort`, `join(",")` and `map(select(. == "X"))`.
 if ! command -v jq >/dev/null 2>&1; then
 jq() {
   [ "$1" = "-r" ] && shift
@@ -53,6 +53,8 @@ try:
         m = re.fullmatch(r"map\(select\(\. == \"(.*)\"\)\)", st)
         if st == "length": v = len(v)
         elif m: v = [x for x in v if x == m.group(1)]
+        elif st == "sort": v = sorted(v)
+        elif st == "join(\",\")": v = ",".join(v)
         else: raise SystemExit("jq stand-in: unsupported stage " + st)
     if v is None or v is False and dflt: raise KeyError
 except (KeyError, IndexError, TypeError):

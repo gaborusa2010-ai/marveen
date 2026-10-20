@@ -1607,10 +1607,10 @@ function renderKanbanTeamView() {
 
     const head = document.createElement('div')
     head.className = 'kanban-team-head'
-    head.innerHTML = `<span class="kanban-team-avatar ${meta.avatarClass}">${escapeHtml(meta.avatarChar || '')}</span>` +
+    head.innerHTML = `<span class="kanban-team-avatar ${escapeHtml(meta.avatarClass)}">${escapeHtml(meta.avatarChar || '')}</span>` +
       `<span class="kanban-team-name">${escapeHtml(meta.label)}</span>` +
       (meta.nickname ? `<span class="kanban-nickname">${escapeHtml(meta.nickname)}</span>` : '') +
-      `<span class="kanban-team-open">${t('kanban.team.open_n', { n: cards.length })}</span>`
+      `<span class="kanban-team-open">${escapeHtml(t('kanban.team.open_n', { n: cards.length }))}</span>`
     kanbanDecorateAvatar(head.querySelector('.kanban-team-avatar'), key)
     row.appendChild(head)
 
@@ -1644,7 +1644,7 @@ function renderKanbanTeamView() {
         const activeTxt = c.status === 'in_progress' ? formatActiveTime(c.active_seconds, 'short') : null
         const rightTxt = activeTxt ?? ageTxt
         const rightTip = activeTxt ? t('kanban.active.tooltip') : t('kanban.team.moved_tooltip')
-        item.innerHTML = `<span class="seq">#${c.seq ?? '?'}</span><span class="title">${escapeHtml(c.title)}</span>` +
+        item.innerHTML = `<span class="seq">#${escapeHtml(c.seq ?? '?')}</span><span class="title">${escapeHtml(c.title)}</span>` +
           `<span class="age" title="${escapeHtml(rightTip)}">${escapeHtml(rightTxt)}</span>`
         item.addEventListener('click', () => showCardDetail(c))
         box.appendChild(item)
@@ -1922,7 +1922,7 @@ function kanbanDecorateAvatar(spanEl, key) {
   img.className = 'kanban-avatar-img'
   img.alt = ''
   img.addEventListener('error', () => img.remove())
-  img.src = url
+  img.src = safeHref(url, { relative: true })
   spanEl.appendChild(img)
 }
 
@@ -2249,15 +2249,15 @@ function createCardEl(card, embeddedChildren = []) {
   }
   if (kanbanFeatureOn('checklist') && card.checklist_total > 0) {
     const allDone = card.checklist_done >= card.checklist_total
-    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-checklist${allDone ? ' complete' : ''}" title="${escapeHtml(t('kanban.checklist.badge_tooltip', { done: card.checklist_done, total: card.checklist_total }))}">☑ ${card.checklist_done}/${card.checklist_total}</span>`
+    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-checklist${allDone ? ' complete' : ''}" title="${escapeHtml(t('kanban.checklist.badge_tooltip', { done: card.checklist_done, total: card.checklist_total }))}">☑ ${escapeHtml(card.checklist_done)}/${escapeHtml(card.checklist_total)}</span>`
   }
   if (kanbanFeatureOn('attachments') && card.attachment_count > 0) {
-    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-attach" title="${escapeHtml(t('kanban.attach.badge_tooltip', { n: card.attachment_count }))}">📎 ${card.attachment_count}</span>`
+    featureBadgesHtml += `<span class="kanban-card-feature kanban-card-attach" title="${escapeHtml(t('kanban.attach.badge_tooltip', { n: card.attachment_count }))}">📎 ${escapeHtml(card.attachment_count)}</span>`
   }
 
   const waitReason = card.status === 'waiting' ? kanbanWaitReason(card) : null
   const waitHtml = card.status === 'waiting' && waitReason?.source !== 'blockers'
-    ? `<span class="kanban-card-wait ${waitReason ? `kind-${waitReason.kind}` : 'missing'} ${waitReason?.expired ? 'expired' : ''}"${waitReason?.note && waitReason.kind !== 'external' ? ` title="${escapeHtml(waitReason.note)}"` : ''}>${escapeHtml(kanbanWaitReasonText(card, waitReason))}</span>`
+    ? `<span class="kanban-card-wait ${waitReason ? `kind-${escapeHtml(waitReason.kind)}` : 'missing'} ${waitReason?.expired ? 'expired' : ''}"${waitReason?.note && waitReason.kind !== 'external' ? ` title="${escapeHtml(waitReason.note)}"` : ''}>${escapeHtml(kanbanWaitReasonText(card, waitReason))}</span>`
     : ''
 
   // Card aging: left stripe + top-right badge based on hours since last update.
@@ -2426,7 +2426,7 @@ function kanbanAskWaitReason(card) {
         <div class="modal-header"><h3 id="kanbanWaitTitle">${t('kanban.wait.question')}</h3></div>
         <div class="modal-body">
           <div class="kanban-wait-kinds">
-            ${['owner', 'external', 'card', 'date'].map((kind, i) => `<label><input type="radio" name="wait-kind" value="${kind}" ${i === 0 ? 'checked' : ''}> ${t(`kanban.wait.${kind}`)}</label>`).join('')}
+            ${['owner', 'external', 'card', 'date'].map((kind, i) => `<label><input type="radio" name="wait-kind" value="${escapeHtml(kind)}" ${i === 0 ? 'checked' : ''}> ${escapeHtml(t(`kanban.wait.${kind}`))}</label>`).join('')}
           </div>
           <label class="kanban-wait-field wait-external">${t('kanban.wait.who')}<input type="text" maxlength="200"></label>
           <label class="kanban-wait-field wait-card">${t('kanban.wait.which_card')}<input type="text" autocomplete="off"><small></small></label>
@@ -3248,9 +3248,9 @@ function renderCardRecurrenceSection(card) {
   const rule = kanbanParseRecurrence(card.recurrence)
 
   freqSel.innerHTML = ['', 'daily', 'weekly', 'monthly', 'interval']
-    .map((f) => `<option value="${f}">${escapeHtml(t(`kanban.recur.freq_${f || 'none'}`))}</option>`).join('')
+    .map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(t(`kanban.recur.freq_${f || 'none'}`))}</option>`).join('')
   weekdaySel.innerHTML = [1, 2, 3, 4, 5, 6, 7]
-    .map((n) => `<option value="${n}">${escapeHtml(kanbanWeekdayName(n))}</option>`).join('')
+    .map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(kanbanWeekdayName(n))}</option>`).join('')
   freqSel.value = rule ? rule.freq : ''
   // Sensible starting values: the weekday / day of the current due date, else today.
   const ref = card.due_date ? new Date(card.due_date * 1000) : new Date()
@@ -3403,7 +3403,7 @@ async function renderCardAttachmentsSection(card) {
   grid.innerHTML = rows.map((a) => {
     const isImage = String(a.mime).startsWith('image/')
     const preview = isImage
-      ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener"><img class="kanban-attachment-thumb" src="${escapeHtml(a.url)}" alt="${escapeHtml(a.filename)}" loading="lazy"></a>`
+      ? `<a href="${escapeHtml(safeHref(a.url, { relative: true }))}" target="_blank" rel="noopener"><img class="kanban-attachment-thumb" src="${escapeHtml(safeHref(a.url, { relative: true }))}" alt="${escapeHtml(a.filename)}" loading="lazy"></a>`
       : `<div class="kanban-attachment-icon">${escapeHtml((a.filename.split('.').pop() || 'file').toUpperCase().slice(0, 4))}</div>`
     return `
       <div class="kanban-attachment" data-att-id="${escapeHtml(a.id)}">
@@ -3411,7 +3411,7 @@ async function renderCardAttachmentsSection(card) {
         <div class="kanban-attachment-name" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</div>
         <div class="kanban-attachment-meta">${formatIdeaAttachmentSize(a.size)}${a.uploaded_by ? ' · ' + escapeHtml(a.uploaded_by) : ''}</div>
         <div class="kanban-attachment-actions">
-          <a class="btn-secondary btn-compact" href="${escapeHtml(a.url)}?download=1">${escapeHtml(t('kanban.attach.download'))}</a>
+          <a class="btn-secondary btn-compact" href="${escapeHtml(safeHref(a.url, { relative: true }))}?download=1">${escapeHtml(t('kanban.attach.download'))}</a>
           <button type="button" class="btn-secondary btn-compact kanban-attachment-del" style="color:var(--danger)">${escapeHtml(t('kanban.attach.delete'))}</button>
         </div>
       </div>`
@@ -3534,7 +3534,7 @@ async function showCardDetail(card) {
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.priority')}</span>
-      <span class="meta-value meta-value-editable" id="metaPriorityValue" data-card-id="${card.id}" title="${t('kanban.meta.edit_tooltip')}">${priorityLabels[card.priority]}</span>
+      <span class="meta-value meta-value-editable" id="metaPriorityValue" data-card-id="${escapeHtml(card.id)}" title="${t('kanban.meta.edit_tooltip')}">${priorityLabels[card.priority]}</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.project')}</span>

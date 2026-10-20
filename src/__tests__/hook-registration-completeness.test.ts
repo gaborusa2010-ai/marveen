@@ -128,14 +128,8 @@ const CHECKOUT_ONLY: Record<string, string> = {
     'level-aware email gate for the MAIN agent (EMAILKAPU901 PR2, #1149): its docstring scopes it to sessions rooted at PROJECT_ROOT, and sub-agents keep their unconditional hard-deny (email-send-gate.mjs), behind which this gate would be a no-op',
   'inbox-drain.py':
     'main-agent inbox PULL (#506): sub-agents are fed by the message router\'s tmux-push path, and draining them here too would double-deliver (docstring: "Main-agent ONLY")',
-  'ledger-capture.py':
-    'conversation-continuity ledger: docs/conversation-continuity.md wires the ledger trio in the PROJECT settings for the main channels session ("NOT user scope"); the sub-agent path is the clear-capture/clear-replay pair, which IS in the template',
   'ledger-turn-failure.py':
-    'StopFailure half of the same ledger: like telegram-reply-guard.py it decides from ledger_lib.open_question_with_age, i.e. the conversation_log the main-only ledger trio writes; seeded alone it would find no open inbound and record nothing, a silent no-op',
-  'ledger-outbound.py':
-    'conversation-continuity ledger: same design as ledger-capture.py (docs/conversation-continuity.md, project settings only)',
-  'ledger-replay.py':
-    'conversation-continuity ledger: same design as ledger-capture.py; the docs state it is "wired in the repo\'s project settings only (the main agent)"',
+    'StopFailure half of the same ledger: like telegram-reply-guard.py it decides from ledger_lib.open_question_with_age, i.e. the conversation_log the ledger trio writes; #102 (ensureAgentLedgerHooks) seeds only the trio for sub-agents with their own bot, and wiring this StopFailure half for them is a separate step not taken yet',
   'persona-change-notify.py':
     'fleet-wide BY CONSTRUCTION, so one wiring already covers every agent: it resolves the repo root from its own file location, and watched() enumerates agents/*/CLAUDE.md and SOUL.md alongside the main pair. Seeding it per-agent would point every seeded session at the SAME store/.persona-hashes.json, and because the hook stamps the new digest BEFORE it sends, whichever session reaches it first silences the others -- the race can only LOSE an alert, so seeding would weaken the guard rather than extend it',
   'telegram-reply-guard.py':
