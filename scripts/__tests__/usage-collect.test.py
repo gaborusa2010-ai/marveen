@@ -62,25 +62,18 @@ class TestFmtReset(unittest.TestCase):
         _, rel = uc.fmt_reset(ts)
         self.assertEqual(rel, "now")
 
-    def test_local_string_ends_with_the_local_tz_abbrev(self):
+    def test_local_string_has_the_zone_abbreviation(self):
+        # The zone is pinned here: LOCAL_TZ is the install zone, so the runner's
+        # own zone (UTC on CI) must not decide the marker.
+        from zoneinfo import ZoneInfo
         ts = _future_ts(days=1)
-        local_str, _ = uc.fmt_reset(ts)
-        # The comment on the old form already said what it wanted -- "must
-        # contain a plausible tz abbrev" -- but the regex spelled out CET/CEST,
-        # so the suite only passed where the author sat. This deployment is
-        # Europe/London on purpose, and got "2026-09-10 11:48 BST" -> red.
-        #
-        # The abbrev is derived from uc.LOCAL_TZ, the module's OWN display zone
-        # (MARVEEN_TZ, default Europe/Budapest) -- NOT from the process TZ.
-        # Measured 2026-09-09: fmt_reset ignores TZ entirely, so a version of
-        # this line built on datetime.astimezone() went red under TZ=Asia/Tokyo
-        # while the code was behaving correctly. Derived for that same instant,
-        # so it also survives a DST boundary.
-        expected = datetime.fromtimestamp(ts, tz=uc.LOCAL_TZ).strftime("%Z")
-        self.assertTrue(
-            local_str.endswith(expected),
-            f"local string {local_str!r} does not end with the local tz abbrev {expected!r}",
-        )
+        with patch.object(uc, "LOCAL_TZ", ZoneInfo("Europe/Budapest")):
+            local_str, _ = uc.fmt_reset(ts)
+        # e.g. "2026-07-23 14:45 CEST"
+        self.assertRegex(local_str, r"CES?T$")
+        with patch.object(uc, "LOCAL_TZ", ZoneInfo("America/New_York")):
+            local_str, _ = uc.fmt_reset(ts)
+        self.assertRegex(local_str, r"E[DS]T$")
 
 
 class TestParseIsoToEpoch(unittest.TestCase):
@@ -1126,6 +1119,27 @@ class TestCodexSnapshotFreshness(unittest.TestCase):
             self.assertIsNone(result["snapshot_at"])
             self.assertIsNone(result["snapshot_age_hours"])
 
+    def test_collect_codex_without_sessions_names_reason_no_sessions(self):
+        # Codex never ran on this host (the common case): ok False, and a
+        # stable reason field the /usage reply keys on instead of the error text.
+        with patch.object(uc.glob, "glob", return_value=[]):
+            result = uc.collect_codex()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result.get("reason"), "no_sessions")
+        self.assertIn("no ~/.codex/sessions rollout files found", result.get("error", ""))
+
+    def test_collect_codex_real_failure_has_no_no_sessions_reason(self):
+        # A real failure (rollout present, no rate_limits) must not be labelled
+        # as "Codex never ran".
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rollout-x.jsonl")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "event", "payload": {"rate_limits": {}}}) + "\n")
+            with patch.object(uc.glob, "glob", return_value=[path]):
+                result = uc.collect_codex()
+        self.assertFalse(result["ok"])
+        self.assertNotEqual(result.get("reason"), "no_sessions")
+
     def _snapshot(self, codex):
         return {
             "generated_at_local": "2026-09-11 14:00:00 CEST",
@@ -1194,6 +1208,31 @@ class TestCollectClaudeStatuslineFallback(unittest.TestCase):
         mock_est.assert_called_once()
         self.assertEqual(result["source"], "estimate")
 
+
+class TestInstallZone(unittest.TestCase):
+    """ISSUE1895 (#1895): reset stamps follow the install zone, not a fixed Europe/Budapest."""
+
+    def test_explicit_marveen_tz_wins(self):
+        with patch.dict(os.environ, {"MARVEEN_TZ": "Europe/London"}):
+            self.assertEqual(str(uc._local_tz()), "Europe/London")
+
+    def test_scheduler_tz_from_the_overrides_file(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(uc, "STORE_DIR", d), patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MARVEEN_TZ", None)
+            with open(os.path.join(d, "config-overrides.json"), "w") as f:
+                json.dump({"SCHEDULER_TZ": "America/New_York"}, f)
+            self.assertEqual(str(uc._local_tz()), "America/New_York")
+
+    def test_host_fallback_is_a_named_zone_not_a_fixed_offset(self):
+        # A fixed offset (datetime.now().astimezone().tzinfo) renders a reset on the
+        # other side of a DST switch one hour off; a ZoneInfo keeps the rules.
+        from zoneinfo import ZoneInfo
+        with tempfile.TemporaryDirectory() as d, patch.object(uc, "STORE_DIR", d), patch.object(uc, "ENV_PATH", os.path.join(d, ".env")):
+            env = {k: v for k, v in os.environ.items() if k not in ("MARVEEN_TZ", "TZ")}
+            with patch.dict(os.environ, env, clear=True):
+                if "/zoneinfo/" not in os.path.realpath("/etc/localtime"):
+                    self.skipTest("host has no named zone to fall back to")
+                self.assertIsInstance(uc._local_tz(), ZoneInfo)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

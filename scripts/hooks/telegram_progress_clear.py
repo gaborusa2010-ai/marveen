@@ -101,6 +101,13 @@ def api(tok, method, payload):
     return body
 
 
+def topic_of(entry):
+    """The topic the placeholder was posted into (TELEGRAM_TOPICS_ENABLED), as
+    sendMessage parameters; empty for a plain chat, so the payload stays as is."""
+    t = entry.get("message_thread_id")
+    return {"message_thread_id": t} if isinstance(t, int) and t > 0 else {}
+
+
 def last_assistant_text(transcript_path):
     """Return the last non-empty assistant text message from the JSONL transcript
     (the agent's final user-facing answer). Empty string if none / unreadable."""
@@ -232,7 +239,7 @@ def main():
             delivered_here = True
             if answer:
                 try:
-                    api(tok, "sendMessage", {"chat_id": cid, "text": answer[:4000]})
+                    api(tok, "sendMessage", {"chat_id": cid, "text": answer[:4000], **topic_of(p)})
                     sent += 1
                 except Exception as e:
                     delivered_here = False

@@ -24,9 +24,16 @@ type Hooks = Record<string, HookEntry[]>
 const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8')) as { hooks?: Hooks }
 const hooks: Hooks = settings.hooks ?? {}
 
-// The full expected registration: event -> script basenames (order-free).
-// A change here is a REVIEWED decision about what runs in the main session,
-// never a side effect.
+// The full expected registration: event -> one entry per matcher group
+// (order-free, duplicates count): the script basename, followed by
+// ` @ <matcher>` when the group has a matcher. A change here is a REVIEWED
+// decision about what runs in the main session, never a side effect.
+//
+// Group granularity matters because several scripts are registered under more
+// than one matcher (outgoing-copy-gate.py and email-approval-gate.py: one group
+// per mail surface and channel). A script-name set stays green when one of
+// those groups is deleted or its matcher narrowed, and when a non-gate hook's
+// matcher changes; this list does not.
 //
 // Both channel providers' progress hooks are listed unconditionally. That is
 // deliberate: each one is provider-scoped internally and no-ops on the other
@@ -42,16 +49,13 @@ const EXPECTED: Record<string, string[]> = {
     'marveen-commands.py',
   ],
   PostToolUse: [
-    'ledger-outbound.py', 'tool-log-capture.py',
-    'telegram_progress_reply_clear.py', 'slack_progress_reply_clear.py',
-    'skill-usage-capture.py',
-    // Local addition on this install: global-skill-write-audit.mjs is the
-    // AFTER-the-fact, effect-based check on the shared skill tree (it diffs the
-    // protected tree against a snapshot on every tool call). It cannot prevent a
-    // write -- it runs after the tool -- so it is deliberately a PostToolUse /
-    // PostToolUseFailure pair rather than a gate.
-    'global-skill-write-audit.mjs',
-    'memory-frontmatter-bash-gate.py',
+    'ledger-outbound.py @ mcp__plugin_[^_]+_[^_]+__reply', 'tool-log-capture.py',
+    'telegram_progress_reply_clear.py @ telegram.*reply', 'slack_progress_reply_clear.py @ slack.*reply',
+    'skill-usage-capture.py @ Skill|Read', 'memory-frontmatter-bash-gate.py @ Bash',
+    // Local addition on this install: global-skill-write-audit.mjs is the AFTER-the-fact,
+    // effect-based check on the shared skill tree (it runs after the tool, so it cannot
+    // prevent a write), registered for PostToolUse and PostToolUseFailure alike.
+    'global-skill-write-audit.mjs @ Bash|Write|Edit|MultiEdit|NotebookEdit',
     // The persona guard watches the main agent's own CLAUDE.md/SOUL.md and
     // every agents/*/ pair, and it must fire on EVERY tool call: the first
     // version filtered on the Write/Edit file_path and a python3 heredoc
@@ -61,7 +65,7 @@ const EXPECTED: Record<string, string[]> = {
     // Local (owner, Telegram msg 7441, 2026-10-11): line-cap-gate.py re-counts
     // the capped files (SKILL.md, hand-written CLAUDE.md) after a Bash call,
     // because a shell write cannot be predicted by the PreToolUse half.
-    'line-cap-gate.py',
+    'line-cap-gate.py @ Bash',
   ],
   // A failed tool call fires PostToolUseFailure, never PostToolUse
   // (TOOLLOGVAKSIKER921): without this entry tool_call_log cannot hold a 0.
@@ -69,41 +73,48 @@ const EXPECTED: Record<string, string[]> = {
   // PostToolUse below): a write that made the tool call FAIL still changed the
   // protected tree, so the snapshot diff has to run on the failure path too.
   // KAPUEGYUT918: a failed Bash call can still have written a memory file.
-  PostToolUseFailure: ['tool-log-capture.py', 'global-skill-write-audit.mjs', 'memory-frontmatter-bash-gate.py'],
-  PreToolUse: [
-    'outgoing-copy-gate.py', 'email-approval-gate.py',
-    'channel-image-resize.sh', 'egress-gate.mjs', 'memory-frontmatter-gate.py',
-    'memory-frontmatter-bash-gate.py',
-    // Local additions on this install, both BEFORE-the-fact gates (the audit
-    // hook above is the after-the-fact half): bash-egress-gate.mjs checks the
-    // network destinations a Bash command reaches for, and
-    // global-skill-write-gate.mjs stops a write aimed at the shared skill tree.
-    'bash-egress-gate.mjs', 'global-skill-write-gate.mjs',
-    // Local (owner, Telegram msg 5850, 2026-10-04): the Checked block has to
-    // exist BEFORE a Telegram reply leaves, not only at the end of the turn.
-    'check-before-send.py',
-    // Local (owner, Telegram msg 7441): a Write/Edit that would push a SKILL.md
-    // or a hand-written CLAUDE.md past 500 lines is denied before it lands.
-    'line-cap-gate.py',
+  PostToolUseFailure: [
+    'tool-log-capture.py', 'memory-frontmatter-bash-gate.py @ Bash',
+    'global-skill-write-audit.mjs @ Bash|Write|Edit|MultiEdit|NotebookEdit',
   ],
-  // Local addition on this install (reviewed 2026-09-16, v1.38.0 merge):
-  // ledger-midturn-capture.py backfills mid-turn inbound rows into the
-  // conversation ledger (MIDTURN901). The PostToolUseFailure entry that used to
-  // sit here too is upstream's own since v1.39.0 (TOOLLOGVAKSIKER921, above) --
-  // the auto-merge left both copies, which is a silent duplicate key in JS and
-  // an error only typecheck catches.
-  //
-  // Local addition on this install (owner's approval, Telegram msg 2369,
-  // 2026-09-10; moved into this file 2026-09-26): require-checked.py blocks a
-  // turn whose final text carries no "Checked:" block. It used to be
-  // registered by an absolute path into ~/.claude/hooks, which the portability
-  // test below rightly refused; the script now lives in scripts/hooks like
-  // every other registered hook.
+  PreToolUse: [
+    'outgoing-copy-gate.py @ Bash',
+    'outgoing-copy-gate.py @ .*send_email.*',
+    'outgoing-copy-gate.py @ .*manage_email.*',
+    'outgoing-copy-gate.py @ .*[Gg]mail.*__.*',
+    'outgoing-copy-gate.py @ .*draft_email.*',
+    'outgoing-copy-gate.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
+    'outgoing-copy-gate.py @ mcp__plugin_discord_discord__reply|mcp__plugin_discord_discord__edit_message',
+    'email-approval-gate.py @ Bash',
+    'email-approval-gate.py @ .*send_email.*',
+    'email-approval-gate.py @ .*manage_email.*',
+    'email-approval-gate.py @ .*[Gg]mail.*__.*',
+    'email-approval-gate.py @ .*draft_email.*',
+    'channel-image-resize.sh @ Read', 'egress-gate.mjs @ WebFetch', 'memory-frontmatter-gate.py @ Write|Edit|MultiEdit',
+    'memory-frontmatter-bash-gate.py @ Bash',
+    // Local additions on this install, BEFORE-the-fact gates (the audit hook is the
+    // after-the-fact half): bash-egress-gate.mjs checks the network destinations a
+    // Bash command reaches for; global-skill-write-gate.mjs stops a write aimed at the
+    // shared skill tree; check-before-send.py (owner, Telegram msg 5850) needs the
+    // Checked block BEFORE a Telegram reply leaves; line-cap-gate.py (owner, msg 7441)
+    // denies a SKILL.md or hand-written CLAUDE.md past 500 lines.
+    'bash-egress-gate.mjs @ Bash', 'global-skill-write-gate.mjs @ Bash',
+    'global-skill-write-gate.mjs @ Write|Edit|MultiEdit|NotebookEdit',
+    'check-before-send.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
+    'line-cap-gate.py @ Write|Edit|MultiEdit',
+  ],
+  // Local additions on this install: ledger-midturn-capture.py backfills mid-turn
+  // inbound rows into the conversation ledger (MIDTURN901); require-checked.py
+  // (owner, Telegram msg 2369) blocks a turn whose final text has no "Checked:" block.
   Stop: [
     'marveen-commands.py', 'telegram-reply-guard.py', 'telegram_progress_clear.py', 'slack_progress_clear.py',
     'ledger-midturn-capture.py', 'require-checked.py',
   ],
-  SessionStart: ['ledger-replay.py', 'taskstate-replay.py', 'clear-replay.py', 'marveen-commands.py'],
+  StopFailure: ['ledger-turn-failure.py'],
+  SessionStart: [
+    'ledger-replay.py @ startup|resume|clear', 'taskstate-replay.py @ compact|resume|clear',
+    'clear-replay.py @ clear', 'marveen-commands.py',
+  ],
   SessionEnd: ['clear-capture.py'],
 }
 
@@ -111,19 +122,48 @@ function commands(event: string): string[] {
   return (hooks[event] ?? []).flatMap((e) => e.hooks ?? []).map((h) => h.command ?? '')
 }
 
+const scriptOf = (command: string) => command.match(/scripts\/hooks\/([^/\s'"]+?\.(?:py|sh|mjs))/)?.[1] ?? ''
+
 function scriptNames(event: string): Set<string> {
-  return new Set(
-    commands(event)
-      .map((c) => c.match(/scripts\/hooks\/([^/\s'"]+?\.(?:py|sh|mjs))/)?.[1] ?? '')
-      .filter(Boolean),
-  )
+  return new Set(commands(event).map(scriptOf).filter(Boolean))
 }
+
+// One descriptor per handler, in the EXPECTED form: '<script>' or '<script> @ <matcher>'.
+function groupDescriptors(event: string): string[] {
+  return (hooks[event] ?? []).flatMap((e) => (e.hooks ?? []).map((h) => {
+    const script = scriptOf(h.command ?? '') || `<no script: ${h.command ?? ''}>`
+    return e.matcher === undefined ? script : `${script} @ ${e.matcher}`
+  }))
+}
+
+// The keys this file uses today. A new key (a stray `id` or `description`, a
+// handler option nobody reviewed) has to be added here on purpose.
+const GROUP_KEYS = new Set(['matcher', 'hooks'])
+const HANDLER_KEYS = new Set(['type', 'command', 'timeout'])
 
 describe('tracked .claude/settings.json hook anchor (#1305)', () => {
   it('registers exactly the expected script set per event', () => {
     expect(Object.keys(hooks).sort()).toEqual(Object.keys(EXPECTED).sort())
     for (const [event, expected] of Object.entries(EXPECTED)) {
-      expect([...scriptNames(event)].sort(), `event ${event}`).toEqual([...new Set(expected)].sort())
+      const names = expected.map((d) => d.split(' @ ')[0])
+      expect([...scriptNames(event)].sort(), `event ${event}`).toEqual([...new Set(names)].sort())
+    }
+  })
+
+  it('registers exactly the expected matcher groups per event (each group, each matcher)', () => {
+    for (const [event, expected] of Object.entries(EXPECTED)) {
+      expect(groupDescriptors(event).sort(), `event ${event}`).toEqual([...expected].sort())
+    }
+  })
+
+  it('uses only the reviewed hook keys (matcher group: matcher, hooks; handler: type, command, timeout)', () => {
+    for (const [event, entries] of Object.entries(hooks)) {
+      entries.forEach((e, i) => {
+        for (const k of Object.keys(e)) expect(GROUP_KEYS.has(k), `${event}[${i}] group key ${k}`).toBe(true)
+        for (const h of e.hooks ?? []) {
+          for (const k of Object.keys(h)) expect(HANDLER_KEYS.has(k), `${event}[${i}] handler key ${k}`).toBe(true)
+        }
+      })
     }
   })
 

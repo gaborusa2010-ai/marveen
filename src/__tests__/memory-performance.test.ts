@@ -117,20 +117,16 @@ describe('getAgentMemories in-process cache', () => {
 // 3. Embedding backfill
 // ---------------------------------------------------------------------------
 describe('backfillEmbeddings', () => {
-  it('returns 0 when all memories already have embeddings or Ollama is unreachable', async () => {
+  it('accounts for every pending row whether or not Ollama is reachable', async () => {
     // In the test environment Ollama is not running; the function must
     // complete gracefully and return 0 (no memories without embeddings
     // that it could successfully embed).
-    const count = await backfillEmbeddings()
-    expect(typeof count).toBe('number')
-    expect(count).toBeGreaterThanOrEqual(0)
-    // FLAKY901 (2026-09-01): green on its own -- measured 3/3 in isolation, twice
-    // -- and red twice the same day inside the FULL suite. What it waits for is a
-    // connection attempt to an Ollama that is not there, and under parallel load
-    // that refusal plus scheduling occasionally passed the default 5s. The
-    // assertions are unchanged; only the clock is honest about what the test
-    // actually does. A suite that goes red at random teaches everyone to ignore
-    // red, which is a worse defect than the one it keeps not finding.
+    const { attempted, embedded, failed } = await backfillEmbeddings()
+    expect(embedded).toBeGreaterThanOrEqual(0)
+    expect(embedded + failed).toBe(attempted)
+    // FLAKY901 (2026-09-01): green on its own and red inside the FULL suite: it waits
+    // for a connection attempt to an Ollama that is not there, and under parallel load
+    // that refusal occasionally passed the default 5s. Only the clock changed.
   }, 20_000)
 
   it('processes rows without embeddings and updates them when Ollama responds', async () => {

@@ -524,6 +524,17 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-turn-failure.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "permissions": {

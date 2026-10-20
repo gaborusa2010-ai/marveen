@@ -8,6 +8,7 @@ import {
 import { getEffectiveSettingValue } from '../../settings-store.js'
 import { readMarveenTelegramConfig, readMarveenDiscordConfig, readMarveenSlackConfig, readMarveenGooglechatConfig, readMarveenTeamsConfig, sendMarveenAvatarChange } from '../telegram.js'
 import { hardRestartMarveenChannels } from '../channel-monitor.js'
+import { gateManualRestart, MANUAL_RESTART_FORCE_HINT, wantsForceRestart } from '../manual-restart-gate.js'
 import { readFileOr } from '../agent-config.js'
 import { nicknameFor } from '../team-nicknames.js'
 import { kanbanFeatureEnabled } from '../kanban-features.js'
@@ -18,6 +19,14 @@ import { readActiveModelFromProjectDir, readContextTokensFromProjectDir } from '
 import { readAutoRestartConfig } from '../auto-restart-store.js'
 import { configDirFor } from '../main-transcript-root.js'
 import type { RouteContext } from './types.js'
+import { logger } from '../../logger.js'
+import { reportNonColourSetting } from '../../css-color.js'
+
+// A colour setting as served to the dashboard; one that is not a CSS colour
+// is logged (once per value) -- the dashboard shows its default for it.
+function colourSetting(key: string): unknown {
+  return reportNonColourSetting(key, getEffectiveSettingValue(key), (ctx, msg) => logger.warn(ctx, msg))
+}
 
 function getActiveMarveenModel(): string {
   // configDirFor, not the host default: when the channels session runs on its
@@ -114,9 +123,9 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
         warnH: getEffectiveSettingValue('KANBAN_AGING_WARN_H'),
         cautionH: getEffectiveSettingValue('KANBAN_AGING_CAUTION_H'),
         criticalH: getEffectiveSettingValue('KANBAN_AGING_CRITICAL_H'),
-        warnColor: getEffectiveSettingValue('KANBAN_AGING_WARN_COLOR'),
-        cautionColor: getEffectiveSettingValue('KANBAN_AGING_CAUTION_COLOR'),
-        criticalColor: getEffectiveSettingValue('KANBAN_AGING_CRITICAL_COLOR'),
+        warnColor: colourSetting('KANBAN_AGING_WARN_COLOR'),
+        cautionColor: colourSetting('KANBAN_AGING_CAUTION_COLOR'),
+        criticalColor: colourSetting('KANBAN_AGING_CRITICAL_COLOR'),
       },
       // Resolved through the settings overrides layer (override > .env >
       // registry default) instead of the boot-time config.ts constants, so a
@@ -131,10 +140,10 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
           done: getEffectiveSettingValue('KANBAN_WIP_DONE'),
         },
         warnPct: getEffectiveSettingValue('KANBAN_WIP_WARN_PCT'),
-        okColor: getEffectiveSettingValue('KANBAN_WIP_OK_COLOR'),
-        warnColor: getEffectiveSettingValue('KANBAN_WIP_WARN_COLOR'),
-        fullColor: getEffectiveSettingValue('KANBAN_WIP_FULL_COLOR'),
-        overColor: getEffectiveSettingValue('KANBAN_WIP_OVER_COLOR'),
+        okColor: colourSetting('KANBAN_WIP_OK_COLOR'),
+        warnColor: colourSetting('KANBAN_WIP_WARN_COLOR'),
+        fullColor: colourSetting('KANBAN_WIP_FULL_COLOR'),
+        overColor: colourSetting('KANBAN_WIP_OVER_COLOR'),
       },
       // Each kanban feature is switchable on its own (owner msg 6475). Read
       // per request through the settings layer, so a toggle on the Settings
@@ -150,7 +159,7 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
       },
       kanbanSwimlanes: {
         defaultGroup: getEffectiveSettingValue('KANBAN_SWIMLANE_DEFAULT_GROUP'),
-        separatorColor: getEffectiveSettingValue('KANBAN_SWIMLANE_SEPARATOR_COLOR') || null,
+        separatorColor: colourSetting('KANBAN_SWIMLANE_SEPARATOR_COLOR') || null,
       },
       kanbanLabels: {
         colors: KANBAN_LABEL_COLORS,
@@ -169,6 +178,13 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
   }
 
   if (path === '/api/marveen/restart' && method === 'POST') {
+    // A kezi restart nem vagja el a futo turnt. Beragadt fo-agensnel csak explicit {"force": true} atlepi a kaput.
+    const force = wantsForceRestart(await readBody(req))
+    if (force) logger.warn({ route: '/api/marveen/restart' }, 'manual main restart forced past the pane gate')
+    if (!force) {
+      const gate = await gateManualRestart(MAIN_CHANNELS_SESSION)
+      if (!gate.allow) { json(res, { error: 'restart-blocked', reason: gate.reason, hint: MANUAL_RESTART_FORCE_HINT }, 409); return true }
+    }
     const result = hardRestartMarveenChannels()
     if (!result.ok) { json(res, { error: result.error || 'Restart failed' }, 500); return true }
     json(res, { ok: true })
