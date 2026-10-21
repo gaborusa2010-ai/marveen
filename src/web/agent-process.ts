@@ -2076,7 +2076,17 @@ export function dropRootWorksourceDisable(settingsPath: string): boolean {
   return true
 }
 
+// #607: bumped by every stop. A resume verification started under an older
+// generation must not run its fresh fallback: measured 2026-10-19 06:00-06:01,
+// roxy and margo were stopped during the window and came back about 90 s later.
+const launchGenerations = new Map<string, number>()
+function launchGeneration(name: string): number { return launchGenerations.get(name) ?? 0 }
+function bumpLaunchGeneration(name: string): void { launchGenerations.set(name, launchGeneration(name) + 1) }
+
 export async function startAgentProcess(name: string, opts: { fresh?: boolean } = {}): Promise<{ ok: boolean; pid?: number; error?: string }> {
+  // #607: a start without a stop (channel-monitor revive) also retires an older
+  // verification, so it cannot kill this new session on its fallback.
+  bumpLaunchGeneration(name)
   const dir = agentDir(name)
   if (!existsSync(dir)) return { ok: false, error: 'Agent not found' }
 
@@ -2942,7 +2952,9 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
     // come back, or the agent is relaunched fresh. The extras are probed in the
     // resumed claude's own process tree only (extra-channel-liveness.ts).
     if (continueFlag && hasAnyChannel && name !== MAIN_AGENT_ID) {
+      const generation = launchGeneration(name)
       void verifyContinueLaunch({
+        cancelled: () => launchGeneration(name) !== generation,
         probe: () => {
           const pid = getClaudePidForSession(session)
           if (!pid) return 'unknown'
@@ -2954,6 +2966,10 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
       }).then(async (v) => {
         if (v.outcome === 'alive') {
           logger.info({ name, session, polls: v.polls, elapsedMs: v.elapsedMs }, 'resumed channel agent: plugin alive, context kept')
+          return
+        }
+        if (v.outcome === 'cancelled' || launchGeneration(name) !== generation) {
+          logger.info({ name, session, polls: v.polls, elapsedMs: v.elapsedMs }, 'resumed channel agent: stopped during verification, no fresh fallback')
           return
         }
         logger.warn({ name, session, polls: v.polls, elapsedMs: v.elapsedMs }, 'resumed channel agent: plugin NOT alive within the window; relaunching FRESH')
@@ -3088,6 +3104,7 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
 
 export async function stopAgentProcess(name: string): Promise<{ ok: boolean; error?: string }> {
   const session = agentSessionName(name)
+  bumpLaunchGeneration(name)
   if (!isAgentRunning(name)) return { ok: false, error: 'Agent is not running' }
 
   const target = agentTmuxTarget(name)

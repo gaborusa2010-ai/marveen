@@ -85,6 +85,22 @@ describe('verifyContinueLaunch (condition 3)', () => {
     expect(r.elapsedMs).toBeGreaterThanOrEqual(90_000)
     expect(r.polls).toBe(31)
   })
+  it('#607: a stop during the window cancels the wait instead of timing out', async () => {
+    let t = 0
+    let stopped = false
+    const r = await verifyContinueLaunch({
+      probe: () => { if (t >= 6_000) stopped = true; return 'unknown' },
+      cancelled: () => stopped,
+      windowMs: 90_000, intervalMs: 3_000, now: () => t, sleep: async (ms) => { t += ms },
+    })
+    expect(r).toMatchObject({ outcome: 'cancelled', polls: 3, elapsedMs: 9_000 })
+  })
+  it('#607: cancelled before the first probe never probes', async () => {
+    let probes = 0
+    const r = await verifyContinueLaunch({ probe: () => { probes += 1; return 'alive' }, cancelled: () => true })
+    expect(r.outcome).toBe('cancelled')
+    expect(probes).toBe(0)
+  })
 })
 
 describe('the launch path is wired to the policy', () => {
@@ -103,6 +119,16 @@ describe('the launch path is wired to the policy', () => {
     expect(block).toContain('probeChannelPluginLiveness(pid, agentProvider, name)')
     expect(block).toContain("['kill-session', '-t', exactTmuxTarget(session)]")
     expect(block).toContain('startAgentProcess(name, { fresh: true })')
+  })
+  it('#607: a stop bumps the launch generation and the fallback skips a stopped agent', () => {
+    const at = PROCESS_SRC.indexOf('if (continueFlag && hasAnyChannel && name !== MAIN_AGENT_ID) {')
+    const block = PROCESS_SRC.slice(at, at + 3000)
+    expect(block).toContain('cancelled: () => launchGeneration(name) !== generation')
+    const skip = block.indexOf("if (v.outcome === 'cancelled' || launchGeneration(name) !== generation) {")
+    expect(skip).toBeGreaterThan(-1)
+    expect(skip).toBeLessThan(block.indexOf('startAgentProcess(name, { fresh: true })'))
+    const stop = PROCESS_SRC.slice(PROCESS_SRC.indexOf('export async function stopAgentProcess('))
+    expect(stop.slice(0, stop.indexOf('isAgentRunning(name)'))).toContain('bumpLaunchGeneration(name)')
   })
 })
 

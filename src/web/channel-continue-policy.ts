@@ -128,15 +128,21 @@ export function decideContinueFlag(i: ContinueDecisionInput): ContinueDecision {
   return { useContinue: true, reason: `telegram + fleet token + Claude Code ${i.installedCli} >= ${CONTINUE_MIN_CLI} (measured 2026-09-23)` }
 }
 
-export type ContinueVerifyOutcome = 'alive' | 'timeout'
+export type ContinueVerifyOutcome = 'alive' | 'timeout' | 'cancelled'
 
 /**
  * Condition 3: poll the plugin-liveness probe until it says 'alive' or the
  * window closes. 'unknown' (a failed ps) and 'down' both keep polling: only a
  * positive verdict ends the wait early. Injected clock/sleep for tests.
+ *
+ * #607: `cancelled` ends the wait with 'cancelled' (checked before every
+ * probe). The caller wires it to "the agent was stopped or relaunched since
+ * this launch", so a stop during the window no longer ends in a timeout that
+ * the fresh fallback then turns into an unwanted restart.
  */
 export async function verifyContinueLaunch(deps: {
   probe: () => 'alive' | 'down' | 'unknown'
+  cancelled?: () => boolean
   windowMs?: number
   intervalMs?: number
   now?: () => number
@@ -149,6 +155,7 @@ export async function verifyContinueLaunch(deps: {
   const started = now()
   let polls = 0
   for (;;) {
+    if (deps.cancelled?.()) return { outcome: 'cancelled', polls, elapsedMs: now() - started }
     polls += 1
     if (deps.probe() === 'alive') return { outcome: 'alive', polls, elapsedMs: now() - started }
     if (now() - started >= windowMs) return { outcome: 'timeout', polls, elapsedMs: now() - started }
