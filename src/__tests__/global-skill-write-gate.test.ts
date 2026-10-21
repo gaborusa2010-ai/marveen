@@ -15,11 +15,11 @@
 
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
 // @ts-expect-error -- plain .mjs hook script, no types
-import { skillWriteDecision, isGlobalSkillPath, bashTouchesGlobalSkills, readGrant, skillOfPath, skillsInCommand, agentFromCwd, GLOBAL_SKILL_DIR } from '../../scripts/hooks/global-skill-write-gate.mjs'
+import { skillWriteDecision, isGlobalSkillPath, bashTouchesGlobalSkills, readGrant, skillOfPath, skillsInCommand, agentFromCwd, GLOBAL_SKILL_DIR, REPO_SKILL_DIR } from '../../scripts/hooks/global-skill-write-gate.mjs'
 
 const GLOBAL = join(homedir(), '.claude', 'skills')
 const OWN = '/home/gabor/marveen/.claude/skills'
@@ -137,6 +137,13 @@ describe('global skill gate: a segment is not the whole command (GLOBALSKILL901-
   // folder chained with an unrelated write elsewhere in the same command. The
   // gate had tested "mentions the folder" and "has a write verb" against the
   // whole string, and they belonged to different segments.
+  // #606: since #261 a relative `.claude/skills` is judged by the caller's cwd,
+  // and from the repo root it IS the protected repo folder. These cases were
+  // written for a sub-agent's own folder, so they run from a sub-agent's cwd.
+  // The absolute repo-root mkdir that used to stand here is a protected write
+  // now (tg 8271); it only passed when the repo root was not /home/gabor/marveen.
+  const REPO_ROOT = dirname(dirname(REPO_SKILL_DIR))
+  const AGENT_CWD = join(REPO_ROOT, 'agents', 'cody')
   const SHOULD_PASS = [
     'ls ~/.claude/skills | head -3',
     'ls ~/.claude/skills | head -3 && mkdir -p .claude/skills/proba && rmdir .claude/skills/proba',
@@ -145,11 +152,16 @@ describe('global skill gate: a segment is not the whole command (GLOBALSKILL901-
     `cp ${GLOBAL}/x/SKILL.md /tmp/masolat.md`,
     `diff ${GLOBAL}/a/SKILL.md /tmp/b`,
     'find ~/.claude/skills -name SKILL.md | wc -l',
-    'mkdir -p /home/gabor/marveen/.claude/skills/sajat',
     'rm -rf /tmp/junk && ls ~/.claude/skills',
   ]
   it.each(SHOULD_PASS)('allows: %s', (cmd) => {
-    expect(bashTouchesGlobalSkills(cmd)).toBe(false)
+    expect(bashTouchesGlobalSkills(cmd, AGENT_CWD)).toBe(false)
+  })
+
+  it('#261: the same relative mkdir from the repo root is a write to the protected repo folder', () => {
+    const cmd = 'ls ~/.claude/skills | head -3 && mkdir -p .claude/skills/proba && rmdir .claude/skills/proba'
+    expect(bashTouchesGlobalSkills(cmd, REPO_ROOT)).toBe(true)
+    expect(bashTouchesGlobalSkills(`mkdir -p ${REPO_SKILL_DIR}/sajat`, AGENT_CWD)).toBe(true)
   })
 
   const SHOULD_BLOCK = [
