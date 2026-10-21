@@ -2084,9 +2084,6 @@ function launchGeneration(name: string): number { return launchGenerations.get(n
 function bumpLaunchGeneration(name: string): void { launchGenerations.set(name, launchGeneration(name) + 1) }
 
 export async function startAgentProcess(name: string, opts: { fresh?: boolean } = {}): Promise<{ ok: boolean; pid?: number; error?: string }> {
-  // #607: a start without a stop (channel-monitor revive) also retires an older
-  // verification, so it cannot kill this new session on its fallback.
-  bumpLaunchGeneration(name)
   const dir = agentDir(name)
   if (!existsSync(dir)) return { ok: false, error: 'Agent not found' }
 
@@ -2146,6 +2143,10 @@ export async function startAgentProcess(name: string, opts: { fresh?: boolean } 
 
 
   if (isAgentRunning(name)) return { ok: false, error: 'Agent is already running' }
+  // #607: a start without a stop (channel-monitor revive) also retires an older
+  // verification, so it cannot kill this new session on its fallback. Only past
+  // the already-running refusal: a refused start must not cancel a live check.
+  bumpLaunchGeneration(name)
 
   const agentProvider = resolveAgentProvider(name)
   const provider = getProvider(agentProvider)

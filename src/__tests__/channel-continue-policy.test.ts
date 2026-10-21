@@ -129,6 +129,10 @@ describe('the launch path is wired to the policy', () => {
     expect(skip).toBeLessThan(block.indexOf('startAgentProcess(name, { fresh: true })'))
     const stop = PROCESS_SRC.slice(PROCESS_SRC.indexOf('export async function stopAgentProcess('))
     expect(stop.slice(0, stop.indexOf('isAgentRunning(name)'))).toContain('bumpLaunchGeneration(name)')
+    const start = PROCESS_SRC.slice(PROCESS_SRC.indexOf('export async function startAgentProcess('))
+    const refused = start.indexOf("if (isAgentRunning(name)) return { ok: false, error: 'Agent is already running' }")
+    expect(refused).toBeGreaterThan(-1)
+    expect(start.indexOf('bumpLaunchGeneration(name)')).toBeGreaterThan(refused)
   })
 })
 
