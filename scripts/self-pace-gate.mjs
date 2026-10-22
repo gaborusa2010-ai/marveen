@@ -139,7 +139,8 @@ const WRITE_INTENT_RX = /(>>?|\btee\b|\bsed\b[\s\S]*\s-i|\bdd\b|\bcp\b|\bmv\b)/i
 // mention check is on the directory NAME, not on `.claude/`.
 // `scheduled-tasks-archive` and `scheduled-tasks-io.ts` do not match.
 //
-// What stays open, on purpose: a READ by any route, and the native Edit tool on the
+// What stays open, on purpose: a READ by the common routes (the replay and the
+// test table below are the measure, not a proof of every shell form), and the native Edit tool on the
 // SKILL.md of a task whose task-config.json `agent` is the caller itself (prompt
 // upkeep of one's own task -- Ariel's practice since 2026-10), and DELETING (rm,
 // find -delete): removing a task cannot make an agent self-pace, and Margo removes
@@ -154,28 +155,39 @@ const WRITE_INTENT_RX = /(>>?|\btee\b|\bsed\b[\s\S]*\s-i|\bdd\b|\bcp\b|\bmv\b)/i
 // (`python3 job.py`), a path built at runtime, and a relative target after a
 // `cd` that does not spell the directory name. The runtime tool-deny and the
 // input-driven rule stay the primary guard; this narrows the casual route.
+// OVERSHOOT (accepted): an inline program that names a path in the directory AND
+// writes anywhere (`open('/tmp/o','w').write(open(DIR/x).read())`) is denied, since
+// the literal and the write marker are not paired. Copy out with cp or `>` instead.
+// xargs is judged by the segment right before it, without knowing the separator.
 const TASKS_DIR_RX = /(?:^|[\/\s'"=~:])scheduled-tasks(?![-\w.])/i
-const TASKS_DIR_CD_RX = /(?:^|[;&|\n(]\s*)cd\s+[^;&|\n]*scheduled-tasks(?![-\w.])/i
+const TASKS_DIR_CD_RX = /(?:^|[;&|\n({]\s*)cd\s+[^;&|\n]*scheduled-tasks(?![-\w.])/i
 // Commands whose every path argument is a write target.
-const TASKS_DIR_TOUCHERS = new Set(['mkdir', 'touch', 'ln', 'truncate', 'chmod', 'chown', 'tee', 'patch', 'unzip', 'tar'])
+const TASKS_DIR_TOUCHERS = new Set(['mkdir', 'touch', 'ln', 'truncate', 'chmod', 'chown', 'tee', 'patch'])
 // Commands whose LAST path argument (or -t DIR) is the target; the sources are reads.
 const TASKS_DIR_COPIERS = new Set(['cp', 'mv', 'install', 'rsync', 'dd'])
 const TASKS_DIR_WRAPPERS = new Set(['sudo', 'env', 'nice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'xargs', 'timeout'])
 const TASKS_DIR_INTERPRETER_RX = /^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php)$/
 // Code-level write markers (python / node / ruby / perl).
-const TASKS_DIR_CODE_WRITE_RX = /\bopen\s*\([^)]*['"][wax+]|write_text|write_bytes|\bjson\.dump\b|os\.(?:replace|rename|makedirs|mkdir|symlink|link)|shutil\.(?:copy|move|rmtree)|\.(?:mkdir|touch|symlink_to)\s*\(|(?:write|append)File(?:Sync)?|copyFile|renameSync|mkdirSync|symlinkSync|cpSync/
+// open(): the mode is a later argument (`open(p, 'w')`, `open(fh, '>', p)`) or the
+// only one of Path.open('w') -- never the first letter of the path (`open('a...')`).
+const TASKS_DIR_CODE_WRITE_RX = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"](?:[rbt]*[wax+]|\+?>)|\.open\s*\(\s*(?:mode\s*=\s*)?['"][rbt]*[wax+]|write_text|write_bytes|\bjson\.dump\b|os\.(?:replace|rename|makedirs|mkdir|symlink|link)|shutil\.(?:copy|move|rmtree)|\.(?:mkdir|touch|symlink_to)\s*\(|(?:write|append)File(?:Sync)?|copyFile|renameSync|mkdirSync|symlinkSync|cpSync/
 // A path to the directory written as a string literal on one line (a program's path
 // argument), as opposed to a prose mention in a message body.
 const TASKS_DIR_LITERAL_RX = /['"](?:~|\/|\$HOME|\$\{HOME\}|\.claude)[^'"\s]*scheduled-tasks\/[^'"\s]*['"]/i
 
+const XARGS_VALUE_FLAGS = new Set(['-I', '-n', '-L', '-P', '-d', '-s', '-E', '-a'])
 function commandAt(words) {
   let i = 0
+  let xargs = false
   for (;;) {
     while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++
     const w = (words[i] ?? '').replace(/^.*\//, '')
-    if (!TASKS_DIR_WRAPPERS.has(w)) return i
+    if (!TASKS_DIR_WRAPPERS.has(w)) return { i, xargs }
+    if (w === 'xargs') xargs = true
     i++
-    while (i < words.length && (/^-/.test(words[i]) || (w === 'timeout' && /^\d/.test(words[i])))) i++
+    while (i < words.length && (/^-/.test(words[i]) || (w === 'timeout' && /^\d/.test(words[i])))) {
+      i += w === 'xargs' && XARGS_VALUE_FLAGS.has(words[i]) ? 2 : 1
+    }
   }
 }
 
@@ -184,8 +196,8 @@ function commandAt(words) {
 function segmentCommands(seg) {
   const words = seg.split(/\s+/).filter(Boolean)
   const out = []
-  const i = commandAt(words)
-  if (i < words.length) out.push({ cmd: words[i].replace(/^.*\//, ''), args: words.slice(i + 1) })
+  const { i, xargs } = commandAt(words)
+  if (i < words.length) out.push({ cmd: words[i].replace(/^.*\//, ''), args: words.slice(i + 1), xargs })
   for (let j = 0; j < words.length - 1; j++) {
     if (/^-(?:exec|execdir|ok|okdir)$/.test(words[j])) {
       const end = words.findIndex((w, k) => k > j && /^(?:\\?;|\+)$/.test(w))
@@ -206,25 +218,64 @@ function hitsTasksDir(word, ctx) {
   return ctx.inDir && !/^[\/~$]/.test(w)
 }
 
+// tar writes in two places only: the archive file of a create/append/update
+// (-f FILE), and the extract directory (-C DIR, else the cwd). Its other paths
+// are the sources being read, so a backup `tar -czf /tmp/b.tgz DIR/x` and a
+// listing `tar -tvf DIR/x.tgz` stay open.
+function tarAllowed(args, ctx) {
+  let mode = ''
+  let file = ''
+  let dir = ''
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]
+    const long = a.match(/^--(extract|get|create|append|update|file|directory)(?:=(.*))?$/)
+    if (long) {
+      if (long[1] === 'file') file = long[2] ?? args[++k] ?? ''
+      else if (long[1] === 'directory') dir = long[2] ?? args[++k] ?? ''
+      else mode += long[1] === 'get' || long[1] === 'extract' ? 'x' : 'c'
+      continue
+    }
+    // short flags: `-czf FILE` or the old dashless bundle `czf FILE` as the first word
+    if (/^-[a-zA-Z]+$/.test(a) || (k === 0 && /^[a-zA-Z]+$/.test(a))) {
+      mode += a.replace(/^-/, '')
+      if (/f$/.test(a)) file = args[++k] ?? ''
+      else if (/C$/.test(a)) dir = args[++k] ?? ''
+      continue
+    }
+  }
+  if (/[cru]/.test(mode) && file && hitsTasksDir(file, ctx)) return false
+  if (/x/.test(mode) && (dir ? hitsTasksDir(dir, ctx) : ctx.inDir)) return false
+  return true
+}
+
 // One shell segment, in the context of the segments before it.
 export function tasksDirBashSegmentAllowed(seg, ctx = { inDir: false, vars: [] }) {
   const s = String(seg ?? '').trim()
-  if (!ctx.inDir && !ctx.vars.length && !TASKS_DIR_RX.test(s)) return true
+  if (!ctx.inDir && !ctx.prevInDir && !ctx.vars.length && !TASKS_DIR_RX.test(s)) return true
   for (const m of s.matchAll(OUTPUT_REDIRECT_RX)) {
     const target = m[1]
     if (/^&?\d+$/.test(target) || target === '/dev/null') continue
     if (hitsTasksDir(target, ctx)) return false
   }
   ctx = { ...ctx, findInDir: /(?:^|\s)find\s/.test(s) && TASKS_DIR_RX.test(s) }
-  for (const { cmd, args } of segmentCommands(s)) {
+  for (const { cmd, args, xargs } of segmentCommands(s)) {
     const paths = args.filter((a) => !/^-/.test(a))
-    if (TASKS_DIR_TOUCHERS.has(cmd) && paths.some((a) => hitsTasksDir(a, ctx))) return false
+    // `echo DIR/x | xargs mkdir`: the paths arrive on stdin from the segment before
+    const fed = xargs && ctx.prevInDir
+    if (TASKS_DIR_TOUCHERS.has(cmd) && (fed || paths.some((a) => hitsTasksDir(a, ctx)))) return false
     if (TASKS_DIR_COPIERS.has(cmd)) {
       const t = args.indexOf('-t')
       const target = t >= 0 ? args[t + 1] : (cmd === 'dd' ? (args.find((a) => a.startsWith('of=')) ?? '').slice(3) : paths[paths.length - 1])
       if (target && hitsTasksDir(target, ctx)) return false
+      if (fed && t < 0 && (!target || target.includes('{}'))) return false
     }
-    if ((cmd === 'sed' || cmd === 'perl') && /\s-[a-zA-Z]*i/.test(s) && paths.some((a) => hitsTasksDir(a, ctx))) return false
+    if ((cmd === 'sed' || cmd === 'perl') && /\s-[a-zA-Z]*i/.test(s) && (fed || paths.some((a) => hitsTasksDir(a, ctx)))) return false
+    if (cmd === 'tar' && !tarAllowed(args, ctx)) return false
+    if (cmd === 'unzip' && !/^-[a-zA-Z]*[lvtZ]/.test(args[0] ?? '')) {
+      const d = args.indexOf('-d')
+      if (d >= 0 ? hitsTasksDir(args[d + 1] ?? '', ctx) : ctx.inDir) return false
+    }
+    if (cmd === 'zip' && paths.length && hitsTasksDir(paths[0], ctx)) return false
     // `bash -c "echo x > DIR/..."` -- the redirect is caught above; a copier inside
     // the quoted body is a separate naive segment once split.
   }
@@ -251,10 +302,12 @@ export function tasksDirInlineProgramAllowed(command, segs) {
 }
 
 export function tasksDirBashAllowed(command, segs) {
-  const ctx = { inDir: false, vars: [] }
+  const ctx = { inDir: false, vars: [], prevInDir: false }
   for (const seg of segs) {
-    const s = String(seg).trim()
+    // `(cd DIR; echo x > f)` / `{ cd DIR; ...; }`: the opener is not the command
+    const s = String(seg).trim().replace(/^(?:[({]\s*)+/, '')
     if (!tasksDirBashSegmentAllowed(s, ctx)) return false
+    ctx.prevInDir = ctx.inDir || TASKS_DIR_RX.test(s)
     const cd = s.match(/^cd\s+(\S+)/)
     if (cd) ctx.inDir = TASKS_DIR_RX.test(cd[1]) || (ctx.inDir && !/^[\/~$]/.test(cd[1]))
     for (const m of s.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)/g)) {
@@ -391,6 +444,9 @@ export function fileToolTargetsAllowlist(toolInput, allowlistPath = DEFAULT_ALLO
 export function splitSegments(command) {
   return String(command ?? '')
     .replace(/\\\r?\n/g, ' ')
+    // `>|` (noclobber override) is a redirect, not a pipe: splitting on its `|`
+    // would leave `echo x >` and the bare target in two segments (Ariel, #630)
+    .replace(/>\|/g, '>')
     .split(/&&|\|\||[;&|]|\r?\n/)
     // trim so a leading-separator segment (" at now") anchors at ^ correctly
     .map((s) => s.trim())

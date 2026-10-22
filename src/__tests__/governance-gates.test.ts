@@ -210,6 +210,49 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `cd /x && python3 - <<'PY'\nimport json\nmsg = """A ${T}/x mappaba nem irtam."""\njson.dump({'content': msg}, open('/tmp/m.json','w'))\nPY`,
     ]) expect(bash(cmd), cmd).toBe(false)
   })
+  // Ariel's cross-check (card comment 2095): three write shapes that passed and two
+  // reads that were denied, plus their siblings. Both directions in one table.
+  it('denies the noclobber, subshell, xargs and archive write shapes (Ariel, #630)', () => {
+    for (const cmd of [
+      `echo x >| ${T}/x/SKILL.md`,
+      'echo x >| ~/.claude/scheduled_tasks.json',
+      `(cd ${T}/x; echo x > SKILL.md)`,
+      `{ cd ${T}/x; cp /tmp/a SKILL.md; }`,
+      `(mkdir -p ${T}/y)`,
+      `echo ${T}/ariel-uj | xargs mkdir -p`,
+      `find ${T} -name task-config.json | xargs sed -i s/false/true/`,
+      `echo ${T}/x | xargs -I{} cp /tmp/a.md {}/SKILL.md`,
+      `cd ${T}; ls | xargs touch`,
+      `tar -xzf /tmp/b.tgz -C ${T}`,
+      `cd ${T} && tar xzf /tmp/b.tgz`,
+      `tar -czf ${T}/x/b.tgz /tmp/a`,
+      `unzip /tmp/b.zip -d ${T}/x`,
+      `zip ${T}/x/b.zip /tmp/a`,
+      `python3 -c "from pathlib import Path; Path('${T}/x/SKILL.md').open('w').write('x')"`,
+      `cd ${T}/x && python3 -c "open('SKILL.md', mode='a').write('x')"`,
+    ]) expect(bash(cmd), cmd).toBe(true)
+  })
+  it('ALLOWS archive backups, listings and open() reads of a/w/x-named files (Ariel, #630)', () => {
+    for (const cmd of [
+      `tar -czf /tmp/mentes.tgz ${T}/ariel-arfigyeles`,
+      `tar -tvf ${T}/x/b.tgz`,
+      `zip -r /tmp/m.zip ${T}/ariel-arfigyeles`,
+      `unzip -l ${T}/x/b.zip`,
+      `cd ${T} && python3 -c "import json; print(json.load(open('ariel-arfigyeles/task-config.json')))"`,
+      `cd ${T} && python3 -c "print(open('wiki/task-config.json').read(), open('x/SKILL.md').read())"`,
+      `ls ${T} | xargs -I{} cat ${T}/{}/task-config.json`,
+      `find ${T} -name task-config.json | xargs grep -l agent`,
+      `find ${T} -name '*.json' | xargs cp -t /tmp/backup`,
+      `(cd ${T} && ls -la) 2>/dev/null`,
+      '(cd /tmp; echo x > a.txt)',
+      'echo x >| /tmp/a.txt',
+    ]) expect(bash(cmd), cmd).toBe(false)
+  })
+  it('accepted overshoot: an inline program that reads the directory and writes elsewhere', () => {
+    // The literal path and the write marker are judged on the whole program, not
+    // paired with each other; copy out with cp or a redirect instead.
+    expect(bash(`python3 -c "open('/tmp/o.json','w').write(open('${T}/x/task-config.json').read())"`)).toBe(true)
+  })
   it('native tools: denies Write/Edit into the directory, also through the config symlink', () => {
     expect(file('Write', '~/.claude/scheduled-tasks/x/task-config.json')).toBe(true)
     expect(file('Write', join(tasksDir, 'margo-new', 'SKILL.md'))).toBe(true)
