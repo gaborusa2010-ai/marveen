@@ -13,7 +13,7 @@ import {
 import { MAIN_AGENT_ID } from '../config.js'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 // --- self-pace-gate: blocks the agent from scheduling its own future turns ---
@@ -130,6 +130,99 @@ describe('self-pace-gate gateDecision', () => {
   it('ALLOWS read-only tools', () => {
     expect(selfPaceDecision('Read', {}).deny).toBe(false)
     expect(selfPaceDecision('Grep', {}).deny).toBe(false)
+  })
+})
+
+// --- #630: the schedule runner's own task directory (~/.claude/scheduled-tasks/).
+// A folder there with a task-config.json OR only a SKILL.md is a live task, so a
+// sub-agent write there is self-pace. Judged target-aware: reads (incl. the
+// `2>/dev/null` / `2>&1` shapes) and deletes stay open, and so does a native Edit of
+// the SKILL.md of a task whose task-config `agent` is the caller. The ALLOW cases
+// below are real sub-agent command shapes from the 60-day transcript replay. ---
+describe('self-pace-gate: the runner task directory (#630)', () => {
+  const T = '~/.claude/scheduled-tasks'
+  const C = '/home/gabor/marveen/agents/margo/.claude-config/scheduled-tasks'
+  const root = mkdtempSync(join(tmpdir(), 'sched630-'))
+  const tasksDir = join(root, 'scheduled-tasks')
+  const agentDir = join(root, 'agents', 'margo')
+  for (const [task, agent] of [['margo-own', 'margo'], ['ariel-other', 'ariel']]) {
+    mkdirSync(join(tasksDir, task), { recursive: true })
+    writeFileSync(join(tasksDir, task, 'task-config.json'), JSON.stringify({ agent, schedule: '0 9 * * *' }))
+    writeFileSync(join(tasksDir, task, 'SKILL.md'), 'x')
+  }
+  mkdirSync(join(agentDir, '.claude-config'), { recursive: true })
+  symlinkSync(tasksDir, join(agentDir, '.claude-config', 'scheduled-tasks'))
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+  const bash = (command: string) => selfPaceDecision('Bash', { command }, { cwd: agentDir, tasksDir }).deny
+  const file = (tool: string, file_path: string) => selfPaceDecision(tool, { file_path, content: '' }, { cwd: agentDir, tasksDir }).deny
+
+  it('denies a Bash write into the directory, by every target shape', () => {
+    for (const cmd of [
+      `echo '{}' > ${T}/x/task-config.json`,
+      `printf x >> ${C}/x/task-config.json`,
+      'cat a.json > .claude-config/scheduled-tasks/x/task-config.json',
+      `mkdir -p ${T}/margo-poll`,
+      `cp /tmp/t.json ${T}/margo-poll/task-config.json`,
+      'mv t.json $HOME/.claude/scheduled-tasks/x/task-config.json',
+      `echo x | tee ${T}/x/task-config.json`,
+      `sed -i 's/false/true/' ${T}/x/task-config.json`,
+      `ln -s /tmp/t ${T}/x`,
+      `sudo cp t ${T}/x/`,
+      `ls t | xargs -I{} cp {} ${T}/x/`,
+      `cd /tmp && cp t.json ${T}/x/`,
+      `cd ${T}/x && cp /tmp/a.md SKILL.md`,
+      `cd ${T}/x && cat /tmp/a.json > task-config.json`,
+      `F=${T}/x/task-config.json; cat new.json > "$F"`,
+      `bash -c "echo x > ${T}/x/task-config.json"`,
+    ]) expect(bash(cmd), cmd).toBe(true)
+  })
+  it('denies an inline interpreter program that writes there (-c, heredoc, $VAR, cd)', () => {
+    for (const cmd of [
+      `python3 -c "import json; json.dump({}, open('${T}/x/task-config.json','w'))"`,
+      `python3 - <<'EOF'\nfrom pathlib import Path\nPath('${T}/x/task-config.json').write_text('{}')\nEOF`,
+      `node -e "require('fs').writeFileSync('${T}/x/task-config.json','{}')"`,
+      `F=${T}/x/SKILL.md; python3 - "$F" <<'PY'\nimport sys\np=sys.argv[1]; t=open(p).read()\nopen(p,'w').write(t+'x')\nPY`,
+      `cd ${T}/x && python3 - <<'PY'\np='SKILL.md'; s=open(p).read()\nopen(p,'w').write(s)\nPY`,
+    ]) expect(bash(cmd), cmd).toBe(true)
+  })
+  it('ALLOWS reads, copies OUT, deletes, and prose that names the directory', () => {
+    for (const cmd of [
+      `ls ${T}/ 2>/dev/null`,
+      `cat ${T}/auto-update/task-config.json 2>&1 | head`,
+      `grep -rn "install" ${T}/`,
+      `grep -l rm ${C}/*/task-config.json`,
+      `ls ${T} | wc -l`,
+      `find ${T} -name task-config.json -mtime -1`,
+      `diff ${T}/a/task-config.json ${T}/b/task-config.json`,
+      `cp ${T}/x/SKILL.md /tmp/bak.md`,
+      `cd ${T}/x && cp SKILL.md /tmp/bak.md`,
+      `cat ${T}/x/task-config.json > /tmp/copy.json`,
+      `stat -c %y ${T}/x/task-config.json 2>/dev/null || echo none`,
+      'rm -rf /home/gabor/.claude/scheduled-tasks/margo-p96-atadas-0700',
+      `find ${T}/x -delete`,
+      'cp x ~/.claude/scheduled-tasks-archive/y',
+      'cp src/web/scheduled-tasks-io.ts /tmp/x.ts',
+      'git log --oneline -- scheduled-tasks/',
+      `python3 -c "import json,glob; [print(json.load(open(p))['schedule']) for p in glob.glob('${T}/*/task-config.json')]"`,
+      `cd ${T} 2>/dev/null && for d in */; do c="$d/task-config.json"; [ -f "$c" ] && python3 -c "import json;print(json.load(open('$c')).get('agent'))"; done`,
+      `ls -d ${T}/x 2>&1; cd /home/me/agents/margo; python3 - <<'EOF'\np='HANDOFF.md'; s=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF`,
+      `curl -s http://localhost:3420/api/kanban/x/comments | python3 -c "import json,sys;[print(c.get('content','').replace('n',' ')) for c in json.load(sys.stdin)]"; ls ${T}/ | grep -i margo`,
+      `cd /x && python3 - <<'PY'\nimport json\nmsg = """A ${T}/x mappaba nem irtam."""\njson.dump({'content': msg}, open('/tmp/m.json','w'))\nPY`,
+    ]) expect(bash(cmd), cmd).toBe(false)
+  })
+  it('native tools: denies Write/Edit into the directory, also through the config symlink', () => {
+    expect(file('Write', '~/.claude/scheduled-tasks/x/task-config.json')).toBe(true)
+    expect(file('Write', join(tasksDir, 'margo-new', 'SKILL.md'))).toBe(true)
+    expect(file('Write', join(agentDir, '.claude-config', 'scheduled-tasks', 'margo-new', 'SKILL.md'))).toBe(true)
+    expect(file('Write', join(tasksDir, 'margo-own', 'SKILL.md'))).toBe(true)
+    expect(file('Edit', join(tasksDir, 'margo-own', 'task-config.json'))).toBe(true)
+    expect(file('Edit', join(tasksDir, 'ariel-other', 'SKILL.md'))).toBe(true)
+  })
+  it('native tools: ALLOWS Edit of the SKILL.md of the caller OWN task, and unrelated files', () => {
+    expect(file('Edit', join(tasksDir, 'margo-own', 'SKILL.md'))).toBe(false)
+    expect(file('Edit', join(agentDir, '.claude-config', 'scheduled-tasks', 'margo-own', 'SKILL.md'))).toBe(false)
+    expect(file('Write', join(agentDir, 'notes-on-scheduled-tasks.md'))).toBe(false)
+    expect(file('Write', join(root, 'scheduled-tasks-archive', 'x.md'))).toBe(false)
   })
 })
 

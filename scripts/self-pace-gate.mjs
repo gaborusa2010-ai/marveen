@@ -129,6 +129,179 @@ const SCHEDULER_READ_RX = new RegExp(String.raw`(^|${SCHED_BOUNDARY}\s*)${SCHED_
 const SCHEDULE_STORE_RX = /scheduled_tasks\.json/i
 // Write-intent shell tokens (redirect / tee / in-place edit / dd / copy-move).
 const WRITE_INTENT_RX = /(>>?|\btee\b|\bsed\b[\s\S]*\s-i|\bdd\b|\bcp\b|\bmv\b)/i
+// THE RUNNER'S OWN TASK DIRECTORY (#630). The schedule runner reads every
+// ~/.claude/scheduled-tasks/<name>/ each minute (src/web/scheduled-tasks-io.ts) and
+// runs it. A `type: "command"` task is a shell command on a cron, and a folder with
+// only a SKILL.md is ALSO a live task (defaults: 09:00 daily, agent = the MAIN
+// agent). SCHEDULE_STORE_RX only covered Claude's scheduled_tasks.json, so a
+// sub-agent could create or re-time a task by writing a file here. Every sub-agent
+// also has a `.claude-config/scheduled-tasks` symlink to this directory, so the
+// mention check is on the directory NAME, not on `.claude/`.
+// `scheduled-tasks-archive` and `scheduled-tasks-io.ts` do not match.
+//
+// What stays open, on purpose: a READ by any route, and the native Edit tool on the
+// SKILL.md of a task whose task-config.json `agent` is the caller itself (prompt
+// upkeep of one's own task -- Ariel's practice since 2026-10), and DELETING (rm,
+// find -delete): removing a task cannot make an agent self-pace, and Margo removes
+// her own one-shot tasks that way. Creating a task and task-config.json
+// (schedule / enabled / command) go through the main agent.
+//
+// Bash is judged TARGET-aware, not with WRITE_INTENT_RX: that one matches ANY `>`,
+// so `ls ~/.claude/scheduled-tasks 2>/dev/null` would be denied (overshoot). Replayed
+// on 60 days of sub-agent transcripts before merging (#630 card comment).
+//
+// BLIND SPOT (accepted, written down): a script FILE that writes the directory
+// (`python3 job.py`), a path built at runtime, and a relative target after a
+// `cd` that does not spell the directory name. The runtime tool-deny and the
+// input-driven rule stay the primary guard; this narrows the casual route.
+const TASKS_DIR_RX = /(?:^|[\/\s'"=~:])scheduled-tasks(?![-\w.])/i
+const TASKS_DIR_CD_RX = /(?:^|[;&|\n(]\s*)cd\s+[^;&|\n]*scheduled-tasks(?![-\w.])/i
+// Commands whose every path argument is a write target.
+const TASKS_DIR_TOUCHERS = new Set(['mkdir', 'touch', 'ln', 'truncate', 'chmod', 'chown', 'tee', 'patch', 'unzip', 'tar'])
+// Commands whose LAST path argument (or -t DIR) is the target; the sources are reads.
+const TASKS_DIR_COPIERS = new Set(['cp', 'mv', 'install', 'rsync', 'dd'])
+const TASKS_DIR_WRAPPERS = new Set(['sudo', 'env', 'nice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'xargs', 'timeout'])
+const TASKS_DIR_INTERPRETER_RX = /^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php)$/
+// Code-level write markers (python / node / ruby / perl).
+const TASKS_DIR_CODE_WRITE_RX = /\bopen\s*\([^)]*['"][wax+]|write_text|write_bytes|\bjson\.dump\b|os\.(?:replace|rename|makedirs|mkdir|symlink|link)|shutil\.(?:copy|move|rmtree)|\.(?:mkdir|touch|symlink_to)\s*\(|(?:write|append)File(?:Sync)?|copyFile|renameSync|mkdirSync|symlinkSync|cpSync/
+// A path to the directory written as a string literal on one line (a program's path
+// argument), as opposed to a prose mention in a message body.
+const TASKS_DIR_LITERAL_RX = /['"](?:~|\/|\$HOME|\$\{HOME\}|\.claude)[^'"\s]*scheduled-tasks\/[^'"\s]*['"]/i
+
+function commandAt(words) {
+  let i = 0
+  for (;;) {
+    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++
+    const w = (words[i] ?? '').replace(/^.*\//, '')
+    if (!TASKS_DIR_WRAPPERS.has(w)) return i
+    i++
+    while (i < words.length && (/^-/.test(words[i]) || (w === 'timeout' && /^\d/.test(words[i])))) i++
+  }
+}
+
+// The commands a segment runs: the one at command position, plus find -exec ones.
+// Each comes with its argument words.
+function segmentCommands(seg) {
+  const words = seg.split(/\s+/).filter(Boolean)
+  const out = []
+  const i = commandAt(words)
+  if (i < words.length) out.push({ cmd: words[i].replace(/^.*\//, ''), args: words.slice(i + 1) })
+  for (let j = 0; j < words.length - 1; j++) {
+    if (/^-(?:exec|execdir|ok|okdir)$/.test(words[j])) {
+      const end = words.findIndex((w, k) => k > j && /^(?:\\?;|\+)$/.test(w))
+      out.push({ cmd: words[j + 1].replace(/^.*\//, ''), args: words.slice(j + 2, end < 0 ? undefined : end) })
+    }
+  }
+  return out
+}
+
+// ctx.inDir: an earlier `cd` in the same command went into the task directory, so
+// a relative target lands there. ctx.vars: shell variables set to a path in it.
+function hitsTasksDir(word, ctx) {
+  const w = word.replace(/^['"]|['"]$/g, '')
+  if (TASKS_DIR_RX.test(w)) return true
+  // `find DIR ... -exec rm {} ;` -- the found paths are in the directory
+  if (w === '{}' && ctx.findInDir) return true
+  for (const v of ctx.vars) if (new RegExp(String.raw`^\$\{?${v}\b`).test(w)) return true
+  return ctx.inDir && !/^[\/~$]/.test(w)
+}
+
+// One shell segment, in the context of the segments before it.
+export function tasksDirBashSegmentAllowed(seg, ctx = { inDir: false, vars: [] }) {
+  const s = String(seg ?? '').trim()
+  if (!ctx.inDir && !ctx.vars.length && !TASKS_DIR_RX.test(s)) return true
+  for (const m of s.matchAll(OUTPUT_REDIRECT_RX)) {
+    const target = m[1]
+    if (/^&?\d+$/.test(target) || target === '/dev/null') continue
+    if (hitsTasksDir(target, ctx)) return false
+  }
+  ctx = { ...ctx, findInDir: /(?:^|\s)find\s/.test(s) && TASKS_DIR_RX.test(s) }
+  for (const { cmd, args } of segmentCommands(s)) {
+    const paths = args.filter((a) => !/^-/.test(a))
+    if (TASKS_DIR_TOUCHERS.has(cmd) && paths.some((a) => hitsTasksDir(a, ctx))) return false
+    if (TASKS_DIR_COPIERS.has(cmd)) {
+      const t = args.indexOf('-t')
+      const target = t >= 0 ? args[t + 1] : (cmd === 'dd' ? (args.find((a) => a.startsWith('of=')) ?? '').slice(3) : paths[paths.length - 1])
+      if (target && hitsTasksDir(target, ctx)) return false
+    }
+    if ((cmd === 'sed' || cmd === 'perl') && /\s-[a-zA-Z]*i/.test(s) && paths.some((a) => hitsTasksDir(a, ctx))) return false
+    // `bash -c "echo x > DIR/..."` -- the redirect is caught above; a copier inside
+    // the quoted body is a separate naive segment once split.
+  }
+  return true
+}
+
+// An inline interpreter program is not one segment: splitSegments is not
+// quote-aware, so `python3 -c "import json; json.dump(...)"` and a heredoc body
+// fall apart into pieces. So the interpreter case is judged on the whole command:
+// an interpreter at command position + a CODE-level write marker + the directory
+// reaching the program as a PATH -- a one-line string literal, a shell variable
+// set to it and passed in, or a `cd` into it. A prose mention in a message body or
+// an unrelated `ls DIR` earlier in the chain is not the program writing there.
+export function tasksDirInlineProgramAllowed(command, segs) {
+  const c = String(command ?? '')
+  if (!TASKS_DIR_RX.test(c) || !TASKS_DIR_CODE_WRITE_RX.test(c)) return true
+  const runsInterpreter = segs.some((seg) => segmentCommands(String(seg).trim()).some(({ cmd }) => TASKS_DIR_INTERPRETER_RX.test(cmd)))
+  if (!runsInterpreter) return true
+  if (TASKS_DIR_LITERAL_RX.test(c) || TASKS_DIR_CD_RX.test(c)) return false
+  for (const m of c.matchAll(/(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=(\S*scheduled-tasks(?![-\w.])\S*)/g)) {
+    if (new RegExp(String.raw`\$\{?${m[1]}\b`).test(c.slice(m.index + m[0].length))) return false
+  }
+  return true
+}
+
+export function tasksDirBashAllowed(command, segs) {
+  const ctx = { inDir: false, vars: [] }
+  for (const seg of segs) {
+    const s = String(seg).trim()
+    if (!tasksDirBashSegmentAllowed(s, ctx)) return false
+    const cd = s.match(/^cd\s+(\S+)/)
+    if (cd) ctx.inDir = TASKS_DIR_RX.test(cd[1]) || (ctx.inDir && !/^[\/~$]/.test(cd[1]))
+    for (const m of s.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S+)/g)) {
+      if (TASKS_DIR_RX.test(m[2])) ctx.vars.push(m[1])
+    }
+  }
+  return tasksDirInlineProgramAllowed(command, segs)
+}
+
+// Native file tools: on the path string (any `scheduled-tasks/` path segment), and
+// on the resolved real path of the nearest existing ancestor, so a new task folder
+// reached through the `.claude-config/scheduled-tasks` symlink is caught too.
+function realpathNearest(p) {
+  let cur = p
+  const rest = []
+  for (;;) {
+    try { return join(realpathSync(cur), ...rest.reverse()) } catch { /* walk up */ }
+    const up = dirname(cur)
+    if (up === cur) return p
+    rest.push(basename(cur))
+    cur = up
+  }
+}
+const DEFAULT_TASKS_DIR = join(homedir(), '.claude', 'scheduled-tasks')
+// The caller's agent name from its working directory (agents/<name>/...).
+function agentFromCwd(cwd) {
+  const m = String(cwd ?? '').match(/\/agents\/([^/]+)/)
+  return m ? m[1] : ''
+}
+
+// null = not a task-dir target; 'own-skill-edit' = the one open route; true = deny.
+export function fileToolTasksDirVerdict(toolName, toolInput, tasksDir = DEFAULT_TASKS_DIR, cwd = process.cwd()) {
+  const raw = String(toolInput?.file_path ?? toolInput?.notebook_path ?? '')
+  if (!raw) return null
+  const real = realpathNearest(resolve(cwd, expandHome(raw)))
+  const root = realOrSelf(tasksDir)
+  const inside = real === root || real.startsWith(root + '/')
+  if (!inside && !/(?:^|\/)scheduled-tasks\//i.test(raw)) return null
+  if (toolName !== 'Edit' || !inside) return true
+  const rel = real.slice(root.length + 1).split('/')
+  if (rel.length !== 2 || rel[1] !== 'SKILL.md') return true
+  let owner = ''
+  try { owner = String(JSON.parse(readFileSync(join(root, rel[0], 'task-config.json'), 'utf-8'))?.agent ?? '') } catch { return true }
+  const me = agentFromCwd(cwd)
+  return me && owner === me ? 'own-skill-edit' : true
+}
+
 // Dashboard schedule API. A WRITE method (POST/PUT/PATCH/DELETE) creates/edits a
 // self-paced cron; a GET (list / pending / agents) is legit diagnostics -> allowed.
 const SCHEDULE_API_RX = /\/api\/schedules\b/i
@@ -518,6 +691,7 @@ export function gateDecision(toolName, toolInput, opts = {}) {
   if (name === 'Write' || name === 'Edit' || name === 'MultiEdit' || name === 'NotebookEdit') {
     const fp = String(toolInput?.file_path ?? toolInput?.notebook_path ?? '')
     if (SCHEDULE_STORE_RX.test(fp)) return { deny: true }
+    if (fileToolTasksDirVerdict(name, toolInput, opts.tasksDir, opts.cwd) === true) return { deny: true }
     if (fileToolTargetsAllowlist(toolInput, opts.allowlistPath, opts.cwd)) return { deny: true, reason: 'egress-allowlist' }
   }
   if (name === 'Bash') {
@@ -545,11 +719,14 @@ export function gateDecision(toolName, toolInput, opts = {}) {
       if (SELF_PACE_BASH_PATTERNS.some((re) => re.test(normalizeShellEvasion(seg)))) return { deny: true }
       // self-schedule store: block WRITE only (a read/grep is legit diagnostics)
       if (SCHEDULE_STORE_RX.test(seg) && WRITE_INTENT_RX.test(seg)) return { deny: true }
+      // the runner's task directory: target-aware write check (#630)
       // dashboard schedule API: block WRITE methods only (GET list/pending is legit)
       if (SCHEDULE_API_RX.test(seg) && HTTP_WRITE_RX.test(seg)) return { deny: true }
       // the egress allowlist: a plain read only (EGRESSSELFEDIT824)
       if (!allowlistBashSegmentAllowed(seg)) return { deny: true, reason: 'egress-allowlist' }
     }
+    // the runner's task directory: target-aware write check (#630)
+    if (!tasksDirBashAllowed(safeCommand, naiveSegs)) return { deny: true }
     // The scheduler check is the ANCHORED one -- it fires on what sits at a
     // segment START -- so it is the one a fake segment boundary can mislead, and
     // the only one that gets quote-aware segments. Null (unresolvable quoting)
@@ -566,10 +743,12 @@ export function gateDecision(toolName, toolInput, opts = {}) {
 const GATE_MSG =
   'Self-pace TILTOTT (governance hard-gate). Sub-agentkent NEM utemezhetsz sajat ' +
   'jovobeli turn-t: se ScheduleWakeup/Cron*/RemoteTrigger, se tmux send-keys, se ' +
-  'scheduled_tasks.json iras, se /api/schedules iras (POST/PUT/PATCH/DELETE; a GET szabad), se /loop self-pace. Input-vezerelt ' +
+  'scheduled_tasks.json vagy ~/.claude/scheduled-tasks/ iras, se /api/schedules iras (POST/PUT/PATCH/DELETE; a GET szabad), se /loop self-pace. Input-vezerelt ' +
   'vagy: csak az operator (channel) vagy egy peer (inter-agent) uzenete inditson. Ha varakozol, ' +
   'maradj idle a prompt-on -- a beerkezo uzenet majd ujrainditja a turn-t. SOHA ne valaszolj ' +
-  'magadnak es SOHA ne dontsd el az operator helyett egy hozza intezett kerdest.'
+  'magadnak es SOHA ne dontsd el az operator helyett egy hozza intezett kerdest. ' +
+  'A ~/.claude/scheduled-tasks/ alatt a SAJAT feladatod SKILL.md-jet az Edit eszkozzel javithatod; ' +
+  'uj feladatot, task-config.json-t (idopont, enabled, command) a fo-agens allit be: kerd tole.'
 
 const ALLOWLIST_GATE_MSG =
   'Egress-engedelylista TILTOTT (governance hard-gate). Sub-agentkent NEM irhatod a ' +
