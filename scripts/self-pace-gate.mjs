@@ -345,7 +345,10 @@ export function fileToolTasksDirVerdict(toolName, toolInput, tasksDir = DEFAULT_
   const real = realpathNearest(resolve(cwd, expandHome(raw)))
   const root = realOrSelf(tasksDir)
   const inside = real === root || real.startsWith(root + '/')
-  if (!inside && !/(?:^|\/)scheduled-tasks\//i.test(raw)) return null
+  // Outside the resolved directory, only the runner's own spellings count (a path
+  // that does not resolve here, e.g. another home): `.claude/` or `.claude-config/`
+  // right before it. A backup folder that merely has the name stays open (Ariel, #630).
+  if (!inside && !/(?:^|\/)\.claude(?:-config)?\/scheduled-tasks\//i.test(raw)) return null
   if (toolName !== 'Edit' || !inside) return true
   const rel = real.slice(root.length + 1).split('/')
   if (rel.length !== 2 || rel[1] !== 'SKILL.md') return true

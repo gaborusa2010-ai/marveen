@@ -266,6 +266,10 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
     expect(file('Edit', join(agentDir, '.claude-config', 'scheduled-tasks', 'margo-own', 'SKILL.md'))).toBe(false)
     expect(file('Write', join(agentDir, 'notes-on-scheduled-tasks.md'))).toBe(false)
     expect(file('Write', join(root, 'scheduled-tasks-archive', 'x.md'))).toBe(false)
+    expect(file('Write', '/tmp/claude-1000/scratch/scheduled-tasks/ariel-arfigyeles-SKILL.md.bak')).toBe(false)
+    expect(file('Write', join(root, 'bak', 'scheduled-tasks', 'x', 'SKILL.md'))).toBe(false)
+    expect(file('Write', '/home/other/.claude/scheduled-tasks/x/task-config.json')).toBe(true)
+    expect(file('Write', '/home/x/agents/y/.claude-config/scheduled-tasks/z/SKILL.md')).toBe(true)
   })
 })
 
