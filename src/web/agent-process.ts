@@ -546,6 +546,14 @@ function provisionMainIsolatedConfigDir(provider?: string): string | null {
   )
 }
 
+// The main agent's channel-less TASK SESSION config dir (#638, see
+// task-session.ts): the same provisioning as the main isolated dir, with every
+// channel plugin disabled (providerType null, no extras) and its own projects/
+// so task transcripts never read as main-session traffic.
+export function ensureMainTaskConfigDir(): string | null {
+  return provisionIsolatedConfigDir(join(PROJECT_ROOT, '.tasks-config'), PROJECT_ROOT, null, MAIN_AGENT_ID, [])
+}
+
 // Same generic isolated dir as ensureMainAgentIsolatedConfigDir, but for a
 // TOKEN-MODE rotated claude-plans entry (ClaudePlan.tokenSecretId): gated
 // only on MAIN_AGENT_ISOLATED_CONFIG=1, NOT on hasFleetOauthToken(). A

@@ -113,6 +113,13 @@ def main_agent_id():
     return "marveen"
 
 
+def task_session_agent_id():
+    """Identity of the main agent's task session: NOT the main agent, so every
+    main-only hook (inbox drain, ledger capture/replay, reply guard) skips it.
+    Same name as TASK_SESSION in src/web/task-session.ts."""
+    return main_agent_id() + "-tasks"
+
+
 def owner_name():
     """The human owner's display name, used to label inbound turns in the
     replayed conversation context. Same resolution order as main_agent_id():
@@ -185,6 +192,15 @@ def _agent_id_from_config_path(path):
             rel = path[len(agents_root) + 1:]
             head = rel.split(os.sep)[0]
             return head or None
+    # 1b. The main agent's channel-less TASK SESSION (#638, task-session.ts)
+    #    runs from the install cwd on <install>/.tasks-config. Without this it
+    #    would read as the main agent (step 2 below) and its first prompt would
+    #    drain the main inbox, replay the owner ledger and ledger its task
+    #    turns into the owner conversation.
+    for install in installs:
+        tasks_root = os.path.join(install, ".tasks-config")
+        if path == tasks_root or path.startswith(tasks_root + os.sep):
+            return task_session_agent_id()
     # 2. Non-isolated config roots (~/.claude and friends) key the project dir
     #    by the session's STARTING cwd, flattened: /a/b -> "-a-b". Every fleet
     #    agent's tmux session runs this way (measured 2026-08-28: the live

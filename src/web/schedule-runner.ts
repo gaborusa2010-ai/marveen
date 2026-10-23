@@ -92,6 +92,7 @@ import {
 import { isRestartInFlight } from './restart-lock.js'
 import { mainRespawnHold } from './main-respawn-hold.js'
 import { MAIN_CHANNELS_SESSION } from './main-agent.js'
+import { TASK_SESSION, TASK_SESSION_PREAMBLE, launchTaskSession, noteTaskSessionDelivery, recycleTaskSession, shouldRecycleTaskSession, taskConfigDir, taskSessionUsable } from './task-session.js'
 import { findTelegramTopic, telegramTopicsEnabled } from './telegram-topics.js'
 import { runCommandTask } from './command-task.js'
 import { trackDetachedGroup } from './detached-groups.js'
@@ -1491,9 +1492,16 @@ export function resolveTaskTarget(
   const isMainAgent = agentName === MAIN_AGENT_ID
   // Allow per-task session override via targetSession config field.
   // Falls back to the standard agent session name derivation.
-  const session = task.targetSession
+  let session = task.targetSession
     ? task.targetSession
     : isMainAgent ? MAIN_CHANNELS_SESSION : agentSessionName(agentName)
+  // #638: the main agent's task session is opt-in per task and never a dead
+  // end -- when it cannot be had (no usable auth, launch backoff), the task
+  // runs in the main session as it did before the move.
+  if (isMainAgent && session === TASK_SESSION && !taskSessionUsable()) {
+    logger.info({ session }, 'target-fallback: task session unavailable, delivering to the main session')
+    session = MAIN_CHANNELS_SESSION
+  }
 
   // A remote sub-agent's session lives on the laptop -- resolve its host so the
   // existence/readiness checks and the send cross the ssh boundary. A custom
@@ -1525,6 +1533,13 @@ async function attemptFireTask(
   if (isRestartInFlight(agentName)) return 'busy'
 
   if (!sessionExistsOnHost(host, session)) {
+    // #638: the task session is ours to start (nothing else owns it). A failed
+    // launch arms the backoff, so the retry resolves to the main session.
+    if (session === TASK_SESSION) {
+      const launch = launchTaskSession(now)
+      logger.info({ task: task.name, agent: agentName, session, ok: launch.ok, error: launch.ok ? undefined : launch.error }, 'Schedule target is the task session, not running; launched it, will deliver on retry')
+      return 'starting'
+    }
     // The main channels session is service-managed (systemd/launchd via
     // channels.sh), not a directory under AGENTS_BASE_DIR -- startAgentProcess
     // below checks existsSync(agentDir(name)) and misreports "Agent not
@@ -1647,6 +1662,13 @@ async function attemptFireTask(
   // MCP). Runs after the busy check so a busy session stays a plain 'busy'.
   // forceSend keeps its "always eventually land" contract: it logs the gap
   // loudly but still delivers.
+  // #638: a fresh task session every few hours / deliveries. Only here, after
+  // the readiness gate, so a task still running is never killed.
+  if (session === TASK_SESSION && shouldRecycleTaskSession(now)) {
+    recycleTaskSession(now)
+    return 'starting'
+  }
+
   if (task.type !== 'command' && task.requires?.mcp_servers?.length) {
     const check = checkTaskMcpRequirements(task.requires.mcp_servers, agentName, session, host)
     if (!check.ok) {
@@ -1752,9 +1774,12 @@ async function attemptFireTask(
     const promptWithMetrics = metricsBlock
       ? `${task.prompt}\n\n${metricsBlock}`
       : task.prompt
-    const taskBody = preCheckPrefix
+    const taskBodyCore = preCheckPrefix
       ? `[Pre-check eredmeny]\n${preCheckPrefix}\n\n[Feladat]\n${promptWithMetrics}`
       : promptWithMetrics
+    // #638: the task session has no channel tool; the note rides inside the
+    // task block so the prompt's head (preamble + marker prefix) is unchanged.
+    const taskBody = session === TASK_SESSION ? `${TASK_SESSION_PREAMBLE}\n\n${taskBodyCore}` : taskBodyCore
     // SCHEDPROMPTREF917: the size-guard measures the SKILL.md body alone
     // (task.prompt, before pre-check/metrics are spliced in) -- those two are
     // runner-generated per fire and the task author has no control over
@@ -1788,6 +1813,7 @@ async function attemptFireTask(
       },
     })
     const submittedAt = Date.now()
+    if (session === TASK_SESSION) noteTaskSessionDelivery()
     // typedAt (PROMPTCSONK923) is the moment the FIRST KEYSTROKE of this prompt
     // was emitted (onEmitStart fires inside the pane's send lock), not when the
     // call above began: before emission sendPromptToSession runs the modal
@@ -1906,6 +1932,9 @@ async function attemptFireTask(
       deliveryPending: true,
     }
     taskInflightMap.set(`${task.name}@${agentName}`, inflightEntry)
+    // #638: the task session writes its transcript under its own config dir
+    // (task-session.ts), never under the main roots.
+    if (session === TASK_SESSION) inflightEntry.configDirs = [taskConfigDir()]
     // Every exit of the resubmit chain below ends the delivery phase, after
     // which an idle pane without a turn is judged by the sweep again.
     const endDelivery = (): void => { inflightEntry.deliveryPending = false }

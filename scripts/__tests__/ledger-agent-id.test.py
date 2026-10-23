@@ -167,6 +167,17 @@ with tempfile.TemporaryDirectory() as tmp:
         failed.append("end-to-end outbound rows")
     print(f"  [{'PASS' if ok else 'FAIL'}] end-to-end outbound rows: got={got_ids!r} want={want_ids!r}")
 
+# #638: the main agent's task session runs from the install cwd on
+# <install>/.tasks-config. It must NOT read as the main agent, or its first
+# prompt drains the main inbox and ledgers task turns into the owner chat.
+TASK_TRANSCRIPT = os.path.join(INSTALL, ".tasks-config", "projects",
+                               INSTALL.replace(os.sep, "-"), "t.jsonl")
+got = ledger_lib.agent_id_from_payload({"transcript_path": TASK_TRANSCRIPT, "cwd": INSTALL})
+ok = got == MAIN + "-tasks" and got != MAIN
+if not ok:
+    failed.append("task session transcript is not the main agent")
+print(f"  [{'PASS' if ok else 'FAIL'}] task session transcript is not the main agent: got={got!r} want={MAIN + '-tasks'!r}")
+
 print()
 if failed:
     print(f"{len(failed)} FAILED: {failed}", file=sys.stderr)

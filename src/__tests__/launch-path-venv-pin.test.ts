@@ -29,6 +29,7 @@ const PINS: Record<string, Pin> = {
   'src/web/agent-process.ts': { venv: 1, exempt: 0, helper: 'ts' },
   'src/web/channel-monitor.ts': { venv: 1, exempt: 0, helper: 'ts' },
   'src/web/routes/background-tasks.ts': { venv: 1, exempt: 0, helper: 'ts' },
+  'src/web/task-session.ts': { venv: 1, exempt: 0, helper: 'ts' },
   // --- not a local claude launch --------------------------------------------
   'src/web/ssh-tmux.ts': { venv: 0, exempt: 1, why: 'remote launch over ssh: a local venv path means nothing on the remote host' },
   'scripts/monitor_agents.sh': { venv: 0, exempt: 1, why: 'tmux viewer: links existing agent windows, launches no claude' },
