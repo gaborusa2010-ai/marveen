@@ -1452,6 +1452,9 @@ SCHED_TARGET_DIR="$HOME/.claude/scheduled-tasks"
 # seed-skills/ source, so a user-authored skill that has no seed-skills/
 # counterpart is never visited -- it stays untouched either way.
 SEED_SKILLS_DIR="$INSTALL_DIR/seed-skills"
+# Owner-retired seeds, one name per line (owner tg 8932, 2026-10-23). Set out
+# here, not in the loop, so the loop also runs where INSTALL_DIR is unset.
+SEED_RETIRED="$INSTALL_DIR/store/seed-skills-retired.txt"
 if [ -d "$SEED_SKILLS_DIR" ]; then
   SEED_NEW=0
   SEED_SKIP=0
@@ -1460,10 +1463,10 @@ if [ -d "$SEED_SKILLS_DIR" ]; then
     [ -d "$skill_dir" ] || continue
     skill_name=$(basename "$skill_dir")
     target="$SKILLS_DIR/$skill_name"
-    # Owner-retired seeds (one name per line): archived or deleted on purpose,
-    # so a missing target here must not be re-seeded (owner tg 8932, 2026-10-23).
-    if [ -f "$INSTALL_DIR/store/seed-skills-retired.txt" ] && \
-       grep -qxF "$skill_name" "$INSTALL_DIR/store/seed-skills-retired.txt"; then
+    # Retired seeds were archived or deleted on purpose: a missing target here
+    # must not be re-seeded.
+    if [ -n "${SEED_RETIRED:-}" ] && [ -f "$SEED_RETIRED" ] && \
+       grep -qxF "$skill_name" "$SEED_RETIRED"; then
       SEED_SKIP=$((SEED_SKIP + 1))
       continue
     fi
