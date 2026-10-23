@@ -1406,6 +1406,31 @@ export function resetPreCheckAnswersForTests(): void {
   preCheckAnswers.clear()
 }
 
+// #638: a run-now never consults the preCheck (an explicit run must not be
+// dropped), so neither may the retry it queues when the target is still
+// starting or busy. Otherwise a manual run against a cold task session is
+// skipped by the very preCheck it was meant to bypass (seen 2026-10-23 15:09).
+// In memory only: after a dashboard restart the retry follows the cron rule.
+const manualRetryKeys = new Set<string>()
+
+function retryKey(taskName: string, agentName: string): string {
+  return `${taskName}@${agentName}`
+}
+
+export function markManualRetry(taskName: string, agentName: string): void {
+  manualRetryKeys.add(retryKey(taskName, agentName))
+}
+
+export function isManualRetry(taskName: string, agentName: string): boolean {
+  return manualRetryKeys.has(retryKey(taskName, agentName))
+}
+
+// Forget the marks whose retry row is gone (fired, cancelled, dropped).
+export function pruneManualRetries(liveKeys: Iterable<string>): void {
+  const live = new Set(liveKeys)
+  for (const k of manualRetryKeys) if (!live.has(k)) manualRetryKeys.delete(k)
+}
+
 // SCHEDRECHECK1007: the task as it is on disk now, or null when it was deleted
 // or disabled since the tick read the list. A fire must act on this, not on the
 // tick's snapshot: an edited prompt or target is the one that goes out, and a
@@ -2143,6 +2168,7 @@ export async function runScheduledTaskNow(
     if (result === 'starting' || result === 'busy' || result === 'mcp-missing' || result === 'first-run' || result === 'respawning') {
       const reason = result === 'mcp-missing' ? mcpMissingReason(task.name, agentName) : result
       insertPendingTaskRetryIfNew(task.name, agentName, now, reason)
+      markManualRetry(task.name, agentName)
     }
     summary.push(`${agentName}: ${result}`)
   }
@@ -2939,6 +2965,7 @@ export function startScheduleRunner(): NodeJS.Timeout {
     // the UI if a retry has become obsolete.
     const pendingRows = listPendingTaskRetries()
     const pendingKeys = new Set<string>()
+    pruneManualRetries(pendingRows.map(r => retryKey(r.task_name, r.agent_name)))
     for (const row of pendingRows) {
       // Locate the task definition. If it was deleted meanwhile, drop the
       // retry silently -- nothing to fire.
@@ -2964,7 +2991,9 @@ export function startScheduleRunner(): NodeJS.Timeout {
       // was first scheduled (e.g. kanban cards already processed). Off the
       // event loop and at most once a minute per task (df2e0d97 2a): the
       // ticks in between reuse the last answer.
-      const retryPc = await retryPreCheck(taskDef, now)
+      const retryPc = isManualRetry(row.task_name, row.agent_name)
+        ? { skip: false }
+        : await retryPreCheck(taskDef, now)
       // TESTFOLLOWUP1007G: a pre-check runs off the event loop for up to its
       // time limit, and the operator may disable or delete the task, or cancel
       // this retry, meanwhile. The checks above saw the state from before the

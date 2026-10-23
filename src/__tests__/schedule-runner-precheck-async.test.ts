@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
 import {
   RETRY_PRECHECK_MIN_INTERVAL_MS,
+  isManualRetry,
+  markManualRetry,
+  pruneManualRetries,
   rememberPreCheckAnswer,
   resetPreCheckAnswersForTests,
   retryPreCheck,
@@ -227,7 +230,7 @@ describe('wiring (source-level)', () => {
   const retryLoop = SRC.slice(SRC.indexOf('for (const row of pendingRows)'), SRC.indexOf('for (const task of tasks)'))
 
   it('the pending-retry loop awaits the thinned pre-check before attemptFireTask, and the synchronous form is gone from it', () => {
-    expect(retryLoop).toMatch(/const retryPc = await retryPreCheck\(taskDef, now\)/)
+    expect(retryLoop).toMatch(/const retryPc = isManualRetry\(row\.task_name, row\.agent_name\)\s*\n\s*\? \{ skip: false \}\s*\n\s*: await retryPreCheck\(taskDef, now\)/)
     expect(retryLoop).not.toMatch(/runPreCheck\(taskDef\)/)
     expect(retryLoop.indexOf('retryPreCheck(taskDef')).toBeLessThan(retryLoop.indexOf('attemptFireTask(current,'))
   })
@@ -244,5 +247,32 @@ describe('wiring (source-level)', () => {
     const fn = SRC.slice(SRC.indexOf('export function runPreCheckAsync'), SRC.indexOf('export const RETRY_PRECHECK_MIN_INTERVAL_MS'))
     expect(fn).toMatch(/spawn\('bash', \[scriptPath\]/)
     expect(fn).not.toMatch(/spawnSync|execSync|execFileSync/)
+  })
+})
+
+// #638: a run-now skips the preCheck, and so must the retry it queues while
+// the target (e.g. a cold task session) is still starting.
+describe('manual run-now retry bypasses the preCheck', () => {
+  afterEach(() => pruneManualRetries([]))
+
+  it('marks a run-now retry and forgets it once the row is gone', () => {
+    expect(isManualRetry('t', 'marveen')).toBe(false)
+    markManualRetry('t', 'marveen')
+    expect(isManualRetry('t', 'marveen')).toBe(true)
+    pruneManualRetries(['t@marveen'])
+    expect(isManualRetry('t', 'marveen')).toBe(true)
+    pruneManualRetries([])
+    expect(isManualRetry('t', 'marveen')).toBe(false)
+  })
+
+  it('runScheduledTaskNow marks the retry it queues', () => {
+    const fn = SRC.slice(SRC.indexOf('export async function runScheduledTaskNow'))
+    expect(fn.slice(0, fn.indexOf('summary.push'))).toMatch(/insertPendingTaskRetryIfNew\([^)]*\)\s*\n\s*markManualRetry\(task\.name, agentName\)/)
+  })
+
+  it('the retry loop skips retryPreCheck for a marked row and prunes dead marks', () => {
+    const retryLoop = SRC.slice(SRC.indexOf('const pendingRows = listPendingTaskRetries()'), SRC.indexOf('for (const task of tasks)'))
+    expect(retryLoop).toMatch(/pruneManualRetries\(pendingRows\.map/)
+    expect(retryLoop).toMatch(/isManualRetry\(row\.task_name, row\.agent_name\)\s*\n\s*\? \{ skip: false \}\s*\n\s*: await retryPreCheck\(taskDef, now\)/)
   })
 })
