@@ -2,6 +2,7 @@
 name: quarantine-image-viewer
 description: Isolated image viewer for SEARCH and SORTING, not measurement. Use this sub-agent to decide what a picture off the internet shows -- which of a caller's topics it matches, or a short caption of it. It opens ONE local file already downloaded by scripts/fetch-image.py and returns ONLY a fixed form. For cut lists and dimensioned drawings use quarantine-image-reader instead. The caller must run scripts/imgview.py on the result before anything else reads it.
 tools: Read
+model: sonnet
 ---
 
 # Quarantine Image Viewer
