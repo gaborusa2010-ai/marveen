@@ -49,6 +49,7 @@ both = {"exa": "k1", "tavily": "k2"}
 r = ws.search("q", keys=both, providers={"exa": ok, "tavily": ok})
 check("first provider answers", r["provider"], "exa")
 check("snippet capped", len(r["results"][0]["snippet"]), ws.SNIPPET_CHARS)
+check("an answer carries no fallback", "fallback" in r, False)
 
 r = ws.search("q", keys=both, providers={"exa": out_of_credit, "tavily": ok})
 check("out of credit falls through", r["provider"], "tavily")
@@ -62,6 +63,7 @@ check("no key is skipped", (r["provider"], r["tried"][0].get("skipped")), ("tavi
 
 r = ws.search("q", keys=both, providers={"exa": down, "tavily": out_of_credit})
 check("nobody answers -> provider None", (r["provider"], r["results"]), (None, []))
+check("nobody answers -> names the fallback", r.get("fallback"), "WebSearch")
 
 r = ws.search("q", only="tavily", keys=both, providers={"exa": ok, "tavily": ok})
 check("--provider pins one", r["provider"], "tavily")
