@@ -6,6 +6,7 @@ import { PROJECT_ROOT, OWNER_NAME, MAIN_AGENT_ID, HEARTBEAT_AGENT_ID, BOT_NAME, 
 import { channelStateDir } from '../channel-provider.js'
 import { runAgent } from '../agent.js'
 import { atomicWriteFileSync } from './atomic-write.js'
+import { mainAgentBlockBody } from './main-compact-blocks.js'
 import { findDuplicateJsonKeys } from './json-dup-keys.js'
 import { logger } from '../logger.js'
 import { filterInheritableMcpServers, readInheritableMcpServerNames, logNotInherited } from './mcp-inheritance.js'
@@ -2704,7 +2705,7 @@ export function ensureEvidenceSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${EVIDENCE_BEGIN}\n${buildEvidenceBody(name === MAIN_AGENT_ID)}\n${EVIDENCE_END}`
+  const block = `${EVIDENCE_BEGIN}\n${mainAgentBlockBody(name, 'evidence-rule', buildEvidenceBody(name === MAIN_AGENT_ID))}\n${EVIDENCE_END}`
 
   let existing: string
   try {
@@ -2737,7 +2738,7 @@ export function ensureMcpListChannelSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${MCPLIST_BEGIN}\n${buildMcpListChannelBody()}\n${MCPLIST_END}`
+  const block = `${MCPLIST_BEGIN}\n${mainAgentBlockBody(name, 'mcp-list-channel', buildMcpListChannelBody())}\n${MCPLIST_END}`
 
   let existing: string
   try {
@@ -2806,7 +2807,7 @@ export function ensureMessageCloseSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${MSGCLOSE_BEGIN}\n${buildMessageCloseBody()}\n${MSGCLOSE_END}`
+  const block = `${MSGCLOSE_BEGIN}\n${mainAgentBlockBody(name, 'message-close', buildMessageCloseBody())}\n${MSGCLOSE_END}`
 
   let existing: string
   try {
@@ -2838,7 +2839,7 @@ export function ensureAutonomySection(name: string): void {
   if (!existsSync(claudeMdPath)) return
 
   const body = buildAutonomyBody(name)
-  const block = `${AUTONOMY_BEGIN}\n${body}\n${AUTONOMY_END}`
+  const block = `${AUTONOMY_BEGIN}\n${mainAgentBlockBody(name, 'autonomy-wiring', body)}\n${AUTONOMY_END}`
 
   let existing: string
   try {
@@ -3031,7 +3032,7 @@ export function ensureSkillsPathTrapSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${SKILLS_TRAP_BEGIN}\n${buildSkillsPathTrapBody()}\n${SKILLS_TRAP_END}`
+  const block = `${SKILLS_TRAP_BEGIN}\n${mainAgentBlockBody(name, 'skills-path-trap', buildSkillsPathTrapBody())}\n${SKILLS_TRAP_END}`
 
   let existing: string
   try {
@@ -3102,7 +3103,7 @@ export function ensureSystemDirectiveAuthSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${SYSTEM_DIRECTIVE_AUTH_BEGIN}\n${buildSystemDirectiveAuthBody(name)}\n${SYSTEM_DIRECTIVE_AUTH_END}`
+  const block = `${SYSTEM_DIRECTIVE_AUTH_BEGIN}\n${mainAgentBlockBody(name, 'system-directive-auth', buildSystemDirectiveAuthBody(name))}\n${SYSTEM_DIRECTIVE_AUTH_END}`
 
   let existing: string
   try {
@@ -3172,7 +3173,7 @@ export function ensureAgentIdHeaderSection(name: string): void {
     : join(agentDir(name), 'CLAUDE.md')
   if (!existsSync(claudeMdPath)) return
 
-  const block = `${AGENT_ID_HEADER_BEGIN}\n${buildAgentIdHeaderBody(name)}\n${AGENT_ID_HEADER_END}`
+  const block = `${AGENT_ID_HEADER_BEGIN}\n${mainAgentBlockBody(name, 'agent-id-header', buildAgentIdHeaderBody(name))}\n${AGENT_ID_HEADER_END}`
 
   let existing: string
   try {
@@ -3540,7 +3541,7 @@ export function ensureMemorySearchLabelSection(name: string): void {
   // context on every session start.
   if (!hasBlock && /x-memory-search/i.test(existing)) return
 
-  const block = `${MEMORY_SEARCH_LABEL_BEGIN}\n${buildMemorySearchLabelBody(name)}\n${MEMORY_SEARCH_LABEL_END}`
+  const block = `${MEMORY_SEARCH_LABEL_BEGIN}\n${mainAgentBlockBody(name, 'memory-search-label', buildMemorySearchLabelBody(name))}\n${MEMORY_SEARCH_LABEL_END}`
   const updated = hasBlock
     ? existing.replace(MEMORY_SEARCH_LABEL_BLOCK_RE, block)
     : existing.trimEnd() + '\n\n' + block + '\n'
@@ -3638,7 +3639,7 @@ export function ensureFleetAuthSection(name: string): void {
   // Hand-written copy already present and no block of ours: leave it alone.
   if (!hasBlock && /AUTH-szabály/i.test(existing)) return
 
-  const block = `${FLEET_AUTH_BEGIN}\n${buildFleetAuthBody()}\n${FLEET_AUTH_END}`
+  const block = `${FLEET_AUTH_BEGIN}\n${mainAgentBlockBody(name, 'fleet-auth', buildFleetAuthBody())}\n${FLEET_AUTH_END}`
   const updated = hasBlock
     ? existing.replace(FLEET_AUTH_BLOCK_RE, block)
     : existing.trimEnd() + '\n\n' + block + '\n'
