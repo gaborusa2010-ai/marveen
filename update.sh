@@ -1460,6 +1460,13 @@ if [ -d "$SEED_SKILLS_DIR" ]; then
     [ -d "$skill_dir" ] || continue
     skill_name=$(basename "$skill_dir")
     target="$SKILLS_DIR/$skill_name"
+    # Owner-retired seeds (one name per line): archived or deleted on purpose,
+    # so a missing target here must not be re-seeded (owner tg 8932, 2026-10-23).
+    if [ -f "$INSTALL_DIR/store/seed-skills-retired.txt" ] && \
+       grep -qxF "$skill_name" "$INSTALL_DIR/store/seed-skills-retired.txt"; then
+      SEED_SKIP=$((SEED_SKIP + 1))
+      continue
+    fi
     forced=0
     if [ -d "$target" ]; then
       if [ "$RESEED_FLEET" = "1" ]; then
