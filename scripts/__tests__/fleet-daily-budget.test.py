@@ -392,6 +392,39 @@ def main():
               .get("used_pct") == 42.0)
 
 
+        print("18a. #619: a heti plafon folott, de az ablak perceken belul nullazodik")
+        # A 2026-10-21 05:50:04-es valos eset: heti 100%, resets_at 06:00, forgacs 60.8M.
+        kozel = dict(heti(100.0, 99.9), hours_left=10 / 60.0)
+        allapot = {}
+        rc, g = fut(dict(MIND, forgacs=60_800_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, kozel)
+        check("10 perccel a nullazas elott NEM allit le", not g.stopped, f"{g.stopped}")
+        check("es nem is szol", not g.sent, f"{g.sent}")
+        allapot = {}
+        rc, g = fut(dict(MIND, forgacs=60_800_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify",
+                     "--weekly-near-reset-min", "0"], allapot, kozel)
+        check("--weekly-near-reset-min 0: a regi viselkedes (negativ kontroll)",
+              g.stopped == ["forgacs"], f"{g.stopped}")
+        allapot = {}
+        rc, g = fut(dict(MIND, forgacs=60_800_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, dict(kozel, hours_left=31 / 60.0))
+        check("31 perccel elotte MEG leallit (a hatar a kuszobon mulik)",
+              g.stopped == ["forgacs"], f"{g.stopped}")
+        check("weekly_verdict: resetting",
+              mod.weekly_verdict(kozel, 95.0, 10.0, 30.0) == "resetting")
+        check("weekly_verdict: a hours_left nelkuli meres stop marad",
+              mod.weekly_verdict({"used_pct": 99.0, "elapsed_pct": 50.0}, 95.0, 10.0, 30.0)
+              == "stop")
+        allapot = {}
+        rc, g = fut(dict(MIND, forgacs=500_000_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, kozel)
+        check("resetting mellett a napi proxy tovabbra is dont",
+              g.stopped == ["forgacs"], f"{g.stopped}")
+
         print("18. window_day: az allapotfajl nap-kulcsa a 06:00-as horgonyhoz igazodik")
         from datetime import datetime as _dt
         # A hamis hajnali riasztas oka: ejfel es 06:00 kozott a naptari datum mar

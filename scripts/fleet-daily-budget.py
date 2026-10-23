@@ -233,17 +233,28 @@ def _read_snapshot(p, max_age_min, now):
     return _with_pace(best, now, age_min)
 
 
-def weekly_verdict(w, hard_stop, lead):
-    """stop | override | neutral | unknown -- mit mond a HETI ablak a napi proxyrol.
+def weekly_verdict(w, hard_stop, lead, near_reset_min=0.0):
+    """stop | resetting | override | neutral | unknown -- mit mond a HETI ablak a napi proxyrol.
 
-    stop     -- a heti ablak onmagaban leallitast indokol (a napi proxy nem szamit)
-    override -- van heti tartalek, a napi proxy tullepese nem ok a leallitasra
-    neutral  -- a heti ablak nem szol bele, a napi proxy dont (a regi viselkedes)
-    unknown  -- nincs merheto heti szam, a napi proxy dont (a regi viselkedes)
+    stop      -- a heti ablak onmagaban leallitast indokol (a napi proxy nem szamit)
+    resetting -- a plafon folott van, de az ablak `near_reset_min` percen belul
+                 nullazodik: a leallitas mar semmit nem nyer (#619)
+    override  -- van heti tartalek, a napi proxy tullepese nem ok a leallitasra
+    neutral   -- a heti ablak nem szol bele, a napi proxy dont (a regi viselkedes)
+    unknown   -- nincs merheto heti szam, a napi proxy dont (a regi viselkedes)
+
+    MIERT A `resetting`. 2026-10-21 05:50:04 a kapu Forgacsot "a nap hatralevo
+    reszere" leallitotta 100%-os heti ablaknal, holott a `resets_at` 06:00 volt
+    (store/budget-notices.log, Anorak retro 10-21, 1. pont). A leallitas tiz perc
+    koltest takaritott meg, cserebe az ujrainditas kezi lett, es a 05:53-as
+    napindito "Agent is already running"-gal elbukott. A plafon kozeleben a
+    Claude sajat fala ugyis megfogja azt a par percet.
     """
     if not w:
         return "unknown"
     if w["used_pct"] >= hard_stop:
+        if near_reset_min > 0 and w.get("hours_left", 999.0) * 60.0 <= near_reset_min:
+            return "resetting"
         return "stop"
     if w["used_pct"] < w["elapsed_pct"] + lead:
         return "override"
@@ -303,6 +314,9 @@ def main(argv=None):
     ap.add_argument("--weekly-lead", type=float, default=10.0,
                     help="mennyi elorefutas megengedett szazalekpontban a heti ablak "
                          "linearis utemtervehez kepest, mielott a napi proxy leallithat")
+    ap.add_argument("--weekly-near-reset-min", type=float, default=30.0,
+                    help="ha a heti ablak ennyi percen belul nullazodik, a heti plafon "
+                         "NEM allit le (#619). 0 = a regi viselkedes.")
     ap.add_argument("--weekly-max-age-min", type=float, default=WEEKLY_MAX_AGE_MIN,
                     help="ennel regebbi pillanatkepet nem veszunk meresnek")
     ap.add_argument("--ignore-weekly", action="store_true",
@@ -337,7 +351,7 @@ def main(argv=None):
 
     pct = total / a.budget * 100 if a.budget else 0
     heti = None if a.ignore_weekly else read_weekly(max_age_min=a.weekly_max_age_min)
-    itelet = weekly_verdict(heti, a.weekly_stop_at, a.weekly_lead)
+    itelet = weekly_verdict(heti, a.weekly_stop_at, a.weekly_lead, a.weekly_near_reset_min)
     print(json.dumps({"total": total, "budget": a.budget, "pct": round(pct, 1),
                       "per_agent": per_agent, "main_excluded": a.exclude_main,
                       "unmeasurable": missing,

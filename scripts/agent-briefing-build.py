@@ -97,7 +97,7 @@ def open_messages(tok, agent):
     for m in msgs:
         if m.get("to_agent") != agent:
             continue
-        if m.get("status") == "done":
+        if m.get("status") in ("done", "failed"):
             continue
         content = (m.get("content") or "").lstrip()
         if content.startswith(RECEIPT_PREFIXES):
