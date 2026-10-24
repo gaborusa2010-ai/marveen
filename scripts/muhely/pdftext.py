@@ -47,13 +47,22 @@ def _ascii85decode(data):
     return bytes(out)
 
 
-def _stream_length(data, header):
+def _integer_objects(data):
+    """(num, gen) -> value for every "N G obj <integer> endobj" in the file.
+
+    Built once per file: a per-stream regex over the whole file made
+    TradingInTheZone.pdf take 34 s instead of 0.1 s (Kiron, msg 12338), past
+    the 10 s timeout of the idea-box upload (src/web/routes/ideas.ts).
+    """
+    return {(int(n), int(g)): int(v) for n, g, v in re.findall(
+        rb"(?<!\d)(\d+)\s+(\d+)\s+obj\s+(\d+)\s+endobj", data)}
+
+
+def _stream_length(header, integers):
     """Return a stream's declared /Length, resolving an indirect reference."""
     ref = re.search(rb"/Length\s+(\d+)\s+(\d+)\s+R", header)
     if ref:
-        target = re.search(rb"(?<!\d)" + ref.group(1) + rb"\s+" + ref.group(2)
-                           + rb"\s+obj\s+(\d+)\s+endobj", data)
-        return int(target.group(1)) if target else None
+        return integers.get((int(ref.group(1)), int(ref.group(2))))
     direct = re.search(rb"/Length\s+(\d+)\b", header)
     return int(direct.group(1)) if direct else None
 
@@ -162,6 +171,7 @@ def _objects(data):
     """obj number -> (header bytes, decompressed stream or None)."""
     objs = {}
     crypt = _Decryptor.from_document(data)
+    integers = _integer_objects(data)
     for m in re.finditer(rb"(\d+)\s+(\d+)\s+obj\b", data):
         num = int(m.group(1))
         start = m.end()
@@ -185,7 +195,7 @@ def _objects(data):
             # refused it and the page fell out.  Measured 2026-10-24 on
             # TradingInTheZone.pdf (#644): 1239 indirect lengths, 6 of 121 pages
             # decoded, 513 words against pypdfium2's 77381.
-            length = _stream_length(data, header)
+            length = _stream_length(header, integers)
             if length is not None:
                 s0 = start + sm.end()
                 raw = data[s0:s0 + length]
@@ -429,11 +439,20 @@ def _unescape(s):
     return bytes(out)
 
 
+_CODE_LENGTHS = {}
+
+
 def _decode_with_cmap(value, cmap):
     """Decode a PDF string using variable-width source codes."""
     if not cmap:
         return value.decode("latin-1", "replace")
-    lengths = sorted({len(code) for code in cmap}, reverse=True)
+    # Cached per CMap: rebuilding the set on every string was 8 of 13 s on a
+    # 121-page book (#644, Kiron msg 12338).
+    cached = _CODE_LENGTHS.get(id(cmap))
+    if cached is None or cached[0] is not cmap:
+        cached = (cmap, sorted({len(code) for code in cmap}, reverse=True))
+        _CODE_LENGTHS[id(cmap)] = cached
+    lengths = cached[1]
     out, pos = [], 0
     while pos < len(value):
         for size in lengths:
