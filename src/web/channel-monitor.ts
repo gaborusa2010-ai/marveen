@@ -36,6 +36,7 @@ import {
   answerFirstRunGates,
   shSingleQuote,
   fleetVenvPathPrefix,
+  dismissAutocompactSuggestionIfPresent,
 } from './agent-process.js'
 import { sendSystemDirective } from './system-directive.js'
 import { isRestartInFlight, beginRestart, endRestart } from './restart-lock.js'
@@ -720,8 +721,9 @@ async function performStuckInputAction(
           // FABLEFALL1: a bare Enter on the model consent dialog confirms its
           // DEFAULT option, which switches the model. Answer the dialog safely
           // first (no-op when absent); an Enter on the then-idle prompt is
-          // harmless.
+          // harmless. #642: the autocompact suggestion's Enter confirms 400k.
           await dismissModelConsentDialogIfPresent(session)
+          await dismissAutocompactSuggestionIfPresent(session)
           execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 5000 })
         }
         submitted = true
@@ -781,8 +783,10 @@ async function performStuckInputAction(
       case 'enter':
         // FABLEFALL1: same guard as the reinject-plain fallback above -- a bare
         // Enter must never reach the model consent dialog (its default SWITCHES
-        // the model). No-op when the dialog is absent.
+        // the model). No-op when the dialog is absent. Same for the #642
+        // autocompact suggestion, whose Enter confirms 400k.
         await dismissModelConsentDialogIfPresent(session)
+        await dismissAutocompactSuggestionIfPresent(session)
         execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 5000 })
         submitted = true
         break

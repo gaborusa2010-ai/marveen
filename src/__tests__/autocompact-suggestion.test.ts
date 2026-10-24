@@ -91,3 +91,22 @@ describe('sendSlashCommand dismisses the suggestion before typing', () => {
     expect(literal).toBeGreaterThan(dismiss)
   })
 })
+
+describe('bare-Enter and /mcp paths dismiss the suggestion first', () => {
+  const MONITOR = readFileSync(join(__dirname, '../web/channel-monitor.ts'), 'utf-8')
+  const UNLOCK = readFileSync(join(__dirname, '../web/channel-plugin-unlock.ts'), 'utf-8')
+
+  it('every consent dismiss before a bare Enter is paired with the autocompact dismiss', () => {
+    const pairs = MONITOR.match(/await dismissModelConsentDialogIfPresent\(session\)\n\s*await dismissAutocompactSuggestionIfPresent\(session\)\n\s*execFileSync\(tmuxBin\(\), \['send-keys', '-t', exactTmuxTarget\(session\), 'Enter'\]/g) ?? []
+    expect(pairs.length).toBe(2)
+  })
+
+  it('the unlock sequence checks for the suggestion before typing /mcp', () => {
+    const start = UNLOCK.indexOf('function sendUnlockKeystrokes(')
+    const body = UNLOCK.slice(start)
+    const check = body.indexOf('detectsAutocompactSuggestion(before)')
+    const mcp = body.indexOf("'/mcp', 'Enter'")
+    expect(check).toBeGreaterThan(0)
+    expect(mcp).toBeGreaterThan(check)
+  })
+})
