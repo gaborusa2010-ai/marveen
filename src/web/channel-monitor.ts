@@ -36,6 +36,7 @@ import {
   answerFirstRunGates,
   shSingleQuote,
   fleetVenvPathPrefix,
+  dismissAutocompactSuggestionIfPresent,
 } from './agent-process.js'
 import { sendSystemDirective } from './system-directive.js'
 import { isRestartInFlight, beginRestart, endRestart } from './restart-lock.js'
@@ -47,7 +48,7 @@ import { probeTelegramConflict } from './channel-conflict-probe.js'
 import { schedulePluginUnlockAfterRespawn, wasPluginConfirmedAbsent, clearPluginAbsent } from './channel-plugin-unlock.js'
 import { getInjectedPrompt, matchesInjectedPrompt } from './injected-prompt-registry.js'
 import {
-  detectPaneState, idleConsideringDimGhost, detectQuotaWall, decidePaneErrorAlert, detectsBlockingMenu, detectsPermissionDialog, detectsFirstRunGate, detectsModelConsentDialog, type PaneErrorAlertState, type PaneState,
+  detectPaneState, idleConsideringDimGhost, detectQuotaWall, decidePaneErrorAlert, detectsBlockingMenu, detectsAutocompactSuggestion, detectsPermissionDialog, detectsFirstRunGate, detectsModelConsentDialog, type PaneErrorAlertState, type PaneState,
   permissionPromptSummary,
   stuckInputSignature, decideStuckInputRecovery, parkedChannelInput,
   parkedInputText, shouldClearTruncatedPreamble,
@@ -720,8 +721,9 @@ async function performStuckInputAction(
           // FABLEFALL1: a bare Enter on the model consent dialog confirms its
           // DEFAULT option, which switches the model. Answer the dialog safely
           // first (no-op when absent); an Enter on the then-idle prompt is
-          // harmless.
+          // harmless. #642: the autocompact suggestion's Enter confirms 400k.
           await dismissModelConsentDialogIfPresent(session)
+          await dismissAutocompactSuggestionIfPresent(session)
           execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 5000 })
         }
         submitted = true
@@ -781,8 +783,10 @@ async function performStuckInputAction(
       case 'enter':
         // FABLEFALL1: same guard as the reinject-plain fallback above -- a bare
         // Enter must never reach the model consent dialog (its default SWITCHES
-        // the model). No-op when the dialog is absent.
+        // the model). No-op when the dialog is absent. Same for the #642
+        // autocompact suggestion, whose Enter confirms 400k.
         await dismissModelConsentDialogIfPresent(session)
+        await dismissAutocompactSuggestionIfPresent(session)
         execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 5000 })
         submitted = true
         break
@@ -2691,7 +2695,7 @@ export function startChannelPluginMonitor(): NodeJS.Timeout | null {
       // panes get the channels.sh-style dialog answers instead; only the
       // login picker is alert-only (nobody can log in on the operator's behalf).
       const firstRunGate = pane != null ? detectsFirstRunGate(pane) : null
-      const inMenu = firstRunGate != null || (!t.gateOnly && pane != null && detectsBlockingMenu(pane))
+      const inMenu = firstRunGate != null || (!t.gateOnly && pane != null && (detectsBlockingMenu(pane) || detectsAutocompactSuggestion(pane)))
       if (firstRunGate != null) menuTargetsFirstRun++
       if (inMenu) menuTargetsInMenu++
       const prev = paneMenuState.get(t.session) ?? { firstSeenAt: null, lastAlertAt: null, lastErrorAt: null }
@@ -2770,6 +2774,13 @@ export function startChannelPluginMonitor(): NodeJS.Timeout | null {
               alertOwner: (text, meta) => sendAlert(text, meta),
             })
             logger.warn({ session: t.session, agent: label, escalation }, 'Blocking "menu" is a tool-permission prompt -- a human decides, NO keystrokes sent')
+          } else if (paneNow != null && detectsAutocompactSuggestion(paneNow)) {
+            // #642: the autocompact suggestion parks a pane that gets no delivery
+            // (the guard in await-handoff only reads it), and detectsBlockingMenu
+            // does not match it. Esc is its "not now": setting unchanged, so this
+            // is routine and the owner is not alerted.
+            const dismissed = await dismissAutocompactSuggestionIfPresent(t.session)
+            logger.info({ session: t.session, agent: label, dismissed }, 'Blocking "menu" is the autocompact suggestion -- answered "not now" (Escape)')
           } else {
             logger.warn({ session: t.session, agent: label }, 'Session parked in a blocking interactive menu -- sending Escape to recover')
             try {

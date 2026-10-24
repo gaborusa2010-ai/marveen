@@ -12,6 +12,7 @@ OCR, so a scanned image-only PDF yields nothing. That is reported, not hidden.
 
 Usage:  pdftext.py <file.pdf> [--raw]
 """
+import hashlib
 import re
 import sys
 import zlib
@@ -46,10 +47,132 @@ def _ascii85decode(data):
     return bytes(out)
 
 
+def _integer_objects(data):
+    """(num, gen) -> value for every "N G obj <integer> endobj" in the file.
+
+    Built once per file: a per-stream regex over the whole file made
+    TradingInTheZone.pdf take 34 s instead of 0.1 s (Kiron, msg 12338), past
+    the 10 s timeout of the idea-box upload (src/web/routes/ideas.ts).
+    """
+    return {(int(n), int(g)): int(v) for n, g, v in re.findall(
+        rb"(?<!\d)(\d+)\s+(\d+)\s+obj\s+(\d+)\s+endobj", data)}
+
+
+def _stream_length(header, integers):
+    """Return a stream's declared /Length, resolving an indirect reference."""
+    ref = re.search(rb"/Length\s+(\d+)\s+(\d+)\s+R", header)
+    if ref:
+        return integers.get((int(ref.group(1)), int(ref.group(2))))
+    direct = re.search(rb"/Length\s+(\d+)\b", header)
+    return int(direct.group(1)) if direct else None
+
+
+def _rc4(key, data):
+    state = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + state[i] + key[i % len(key)]) % 256
+        state[i], state[j] = state[j], state[i]
+    out, i, j = bytearray(), 0, 0
+    for byte in data:
+        i = (i + 1) % 256
+        j = (j + state[i]) % 256
+        state[i], state[j] = state[j], state[i]
+        out.append(byte ^ state[(state[i] + state[j]) % 256])
+    return bytes(out)
+
+
+_PASSWORD_PAD = bytes.fromhex(
+    "28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a")
+
+
+def _pdf_string(token):
+    """Bytes of a <hex> or (literal) PDF string token."""
+    if token.startswith(b"<"):
+        return bytes.fromhex(re.sub(rb"\s", b"", token[1:-1]).decode())
+    return _unescape(token[1:-1])
+
+
+class EncryptedPDFError(Exception):
+    """The document is encrypted in a way this extractor cannot open."""
+
+
+class _Decryptor:
+    """Standard security handler, RC4 (R2-R4) with the EMPTY user password.
+
+    Many e-books are "encrypted" only to set permission flags: anyone can open
+    them, so the key derives from the empty password.  Measured 2026-10-24
+    (#644): "What Self-made Millionaires.pdf" (V4/R4, RC4) gave 0 words and
+    "The One Minute Millionaire" (R2, RC4-40) was in the same state.  AES and a
+    real user password are refused loudly instead of yielding silent garbage.
+    """
+
+    def __init__(self, key, revision):
+        self.key, self.revision = key, revision
+
+    @classmethod
+    def from_document(cls, data):
+        ref = re.search(rb"/Encrypt\s+(\d+)\s+(\d+)\s+R", data)
+        if not ref:
+            if re.search(rb"/Encrypt\s*<<", data):
+                raise EncryptedPDFError("inline /Encrypt dictionary not supported")
+            return None
+        body = re.search(rb"(?<!\d)" + ref.group(1) + rb"\s+" + ref.group(2)
+                         + rb"\s+obj(.*?)endobj", data, re.S)
+        if not body:
+            raise EncryptedPDFError("/Encrypt object not found")
+        enc = body.group(1)
+        if not re.search(rb"/Filter\s*/Standard\b", enc):
+            raise EncryptedPDFError("non-standard security handler")
+        if re.search(rb"/(AESV2|AESV3)\b", enc):
+            raise EncryptedPDFError("AES encryption not supported")
+        number = lambda key, default: int(
+            (re.search(key + rb"\s+(-?\d+)", enc) or [None, default])[1])
+        revision = number(rb"/R", 2)
+        if revision > 4:
+            raise EncryptedPDFError("security handler revision %d" % revision)
+        length = number(rb"/Length", 40) if revision >= 3 else 40
+        cf_length = re.search(rb"/StdCF\s*<<[^>]*/Length\s+(\d+)", enc)
+        if revision == 4 and cf_length:
+            length = int(cf_length.group(1)) * 8
+        n = max(5, min(16, length // 8))
+        string = rb"(<[0-9A-Fa-f\s]*>|\((?:[^()\\]|\\.)*\))"
+        owner = re.search(rb"/O\s*" + string, enc, re.S)
+        user = re.search(rb"/U\s*" + string, enc, re.S)
+        ident = re.search(rb"/ID\s*\[\s*" + string, data, re.S)
+        if not owner or not user:
+            raise EncryptedPDFError("/O or /U entry missing")
+        owner, user = _pdf_string(owner.group(1)), _pdf_string(user.group(1))
+        ident = _pdf_string(ident.group(1)) if ident else b""
+        perms = number(rb"/P", 0) & 0xFFFFFFFF
+        seed = _PASSWORD_PAD + owner[:32] + perms.to_bytes(4, "little") + ident
+        if revision == 4 and re.search(rb"/EncryptMetadata\s+false", enc):
+            seed += b"\xff\xff\xff\xff"
+        key = hashlib.md5(seed).digest()[:n]
+        if revision >= 3:
+            for _ in range(50):
+                key = hashlib.md5(key).digest()[:n]
+            check = hashlib.md5(_PASSWORD_PAD + ident).digest()
+            for i in range(20):
+                check = _rc4(bytes(b ^ i for b in key), check)
+            ok = check[:16] == user[:16]
+        else:
+            ok = _rc4(key, _PASSWORD_PAD) == user[:32]
+        if not ok:
+            raise EncryptedPDFError("a user password is required")
+        return cls(key, revision)
+
+    def decrypt(self, num, gen, stream):
+        seed = self.key + num.to_bytes(4, "little")[:3] + gen.to_bytes(4, "little")[:2]
+        return _rc4(hashlib.md5(seed).digest()[:min(len(self.key) + 5, 16)], stream)
+
+
 def _objects(data):
     """obj number -> (header bytes, decompressed stream or None)."""
     objs = {}
-    for m in re.finditer(rb"(\d+)\s+\d+\s+obj\b", data):
+    crypt = _Decryptor.from_document(data)
+    integers = _integer_objects(data)
+    for m in re.finditer(rb"(\d+)\s+(\d+)\s+obj\b", data):
         num = int(m.group(1))
         start = m.end()
         end = data.find(b"endobj", start)
@@ -66,14 +189,22 @@ def _objects(data):
             # b02-part-drawings.pdf: 11 pages in the file, 10 in the output,
             # and the missing page held four real parts.  Fallback kept for
             # streams that declare no length.
-            length = re.search(rb"/Length\s+(\d+)\b", header)
-            if length:
+            #
+            # The length may itself be an indirect object ("/Length 541 0 R").
+            # Reading "541" as the byte count cut every stream to garbage, zlib
+            # refused it and the page fell out.  Measured 2026-10-24 on
+            # TradingInTheZone.pdf (#644): 1239 indirect lengths, 6 of 121 pages
+            # decoded, 513 words against pypdfium2's 77381.
+            length = _stream_length(header, integers)
+            if length is not None:
                 s0 = start + sm.end()
-                raw = data[s0:s0 + int(length.group(1))]
+                raw = data[s0:s0 + length]
             else:
                 se = body.find(b"endstream", sm.end())
                 raw = body[sm.end():se if se > 0 else len(body)].rstrip(b"\r\n")
             stream = raw
+            if crypt:
+                stream = crypt.decrypt(num, int(m.group(2)), stream)
             filters = re.findall(rb"/(ASCII85Decode|A85|FlateDecode|Fl)",
                                  header)
             try:
@@ -308,11 +439,20 @@ def _unescape(s):
     return bytes(out)
 
 
+_CODE_LENGTHS = {}
+
+
 def _decode_with_cmap(value, cmap):
     """Decode a PDF string using variable-width source codes."""
     if not cmap:
         return value.decode("latin-1", "replace")
-    lengths = sorted({len(code) for code in cmap}, reverse=True)
+    # Cached per CMap: rebuilding the set on every string was 8 of 13 s on a
+    # 121-page book (#644, Kiron msg 12338).
+    cached = _CODE_LENGTHS.get(id(cmap))
+    if cached is None or cached[0] is not cmap:
+        cached = (cmap, sorted({len(code) for code in cmap}, reverse=True))
+        _CODE_LENGTHS[id(cmap)] = cached
+    lengths = cached[1]
     out, pos = [], 0
     while pos < len(value):
         for size in lengths:
@@ -420,7 +560,12 @@ def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
         return 2 if len(argv) < 2 else 0
-    txt = extract(argv[1], raw="--raw" in argv)
+    try:
+        txt = extract(argv[1], raw="--raw" in argv)
+    except EncryptedPDFError as exc:
+        # Said out loud: an empty stdout here used to look like "no text".
+        print("pdftext: encrypted PDF, cannot read: %s" % exc, file=sys.stderr)
+        return 3
     if not txt.strip():
         return 0
     print(txt)
