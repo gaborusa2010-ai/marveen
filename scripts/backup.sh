@@ -882,7 +882,10 @@ if [[ "${missing}" -gt 0 ]]; then
   # re-read .env here: a second, simpler parse took the FIRST definition, kept
   # the quotes, and without `|| true` aborted the script under pipefail on an
   # install with no MAIN_AGENT_ID line (card a95cada0).
-  if [[ -x "${REPO_ROOT}/scripts/agent-msg.sh" ]]; then
+  # -f, not -x: the call below is `bash agent-msg.sh`, which needs no exec bit,
+  # and since 6f7e65d1 (2026-09-16) git stores it as 100644 -- the -x guard
+  # skipped every failure alert from then on without a word (card #578).
+  if [[ -f "${REPO_ROOT}/scripts/agent-msg.sh" ]]; then
     # BACKUPALERT925: the recipient used to be a literal agent name from the
     # author's machine, so on any other fleet the alert went nowhere and the
     # swallowed error hid that too. Address this install's main agent.
@@ -893,6 +896,8 @@ if [[ "${missing}" -gt 0 ]]; then
     bash "${REPO_ROOT}/scripts/agent-msg.sh" "${MAIN_AGENT_ID}" "${MAIN_AGENT_ID}" \
       "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} tetel hianyzik az archivumbol (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
       >/dev/null 2>&1 || echo "backup: WARN could not queue the failure alert for ${MAIN_AGENT_ID}" >&2
+  else
+    echo "backup: WARN no scripts/agent-msg.sh -- the failure alert for ${MAIN_AGENT_ID} was not queued" >&2
   fi
   exit 6
 fi
