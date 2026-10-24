@@ -86,4 +86,15 @@ check("--provider pins one", r["provider"], "tavily")
 u = ws.load_json(ws.USAGE_PATH, {})[ws.month()]
 check("usage counted", (u["exa"]["ok"], u["exa"]["failed"], u["tavily"]["ok"], u["tavily"]["failed"]), (2, 3, 4, 1))
 
+all4 = {"exa": ok, "tavily": ok, "serper": ok, "searxng": ok}
+os.environ["CLAUDE_CONFIG_DIR"] = "/x/marveen/agents/anorak/.claude-config"
+r = ws.search("q", keys={"exa": "k", "serper": "k3"}, providers=all4)
+check("anorak tries Serper first", r["provider"], "serper")
+os.environ["CLAUDE_CONFIG_DIR"] = "/x/marveen/agents/cody/.claude-config"
+r = ws.search("q", keys={"exa": "k", "serper": "k3"}, providers=all4)
+check("other agents never reach Serper", r["provider"], "exa")
+r = ws.search("q", keys={}, providers=all4)
+check("keyless SearXNG answers when nothing has a key", r["provider"], "searxng")
+os.environ.pop("CLAUDE_CONFIG_DIR")
+
 sys.exit(1 if fails else 0)

@@ -6,11 +6,13 @@ without spending model tokens on a search tool call. Providers are tried in
 order; when one is out of free credit (or failing), the next one answers.
 
 Usage:
-  python3 scripts/web-search.py "query" [-n 5] [--provider exa|tavily]
+  python3 scripts/web-search.py "query" [-n 5] [--provider exa|tavily|serper|searxng]
   python3 scripts/web-search.py --status
 
 Keys: store/.search-keys.json (mode 600), e.g. {"exa": "...", "tavily": "tvly-..."}.
-A provider without a key is skipped. Monthly call counts: store/search-usage.json.
+A provider without a key is skipped. SearXNG needs no key: it is the local
+instance (systemd user unit searxng.service, 127.0.0.1:8888); a "searxng" entry
+in the keys file overrides the base URL. Monthly call counts: store/search-usage.json.
 
 Output: {"query", "provider", "results": [{"url", "title", "snippet", "published"}],
 "tried": [...]}. When no provider answers (all out of credit, no key, or down):
@@ -35,15 +37,25 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEYS_PATH = os.path.join(ROOT, "store", ".search-keys.json")
 USAGE_PATH = os.path.join(ROOT, "store", "search-usage.json")
-ORDER = ["exa", "tavily"]
+ORDER = ["exa", "tavily", "searxng"]
+# Per-agent order (owner tg 8990): Serper is Anorak's own key, the rest of the
+# fleet never reaches it. The agent comes from CLAUDE_CONFIG_DIR
+# (<install>/agents/<id>/.claude-config), which is fixed for a session.
+AGENT_ORDER = {"anorak": ["serper", "exa", "tavily", "searxng"]}
+# Providers that need no key, with their default "key" (the base URL).
+KEYLESS = {"searxng": "http://127.0.0.1:8888"}
 # Monthly free allowance per provider (pricing pages, 2026-10-23): Exa $10 credit
 # ~2500 lite searches, Tavily 1000 credits. Used only for --status, not enforced.
 FREE_MONTHLY = {"exa": 2500, "tavily": 1000}
+# Serper: 2500 free queries, no card (serper.dev, 2026-10-23); one-off or monthly
+# the page does not say, so --status shows it as a total.
+FREE_TOTAL = {"serper": 2500}
 SNIPPET_CHARS = 500
 # Security-looking tags a page could forge to break out of the envelope.
 FORGED_TAG = re.compile(r"</?\s*(untrusted|system-reminder|channel|function_results|antml:[a-z_]+)\b[^>]*>", re.I)
@@ -97,7 +109,40 @@ def search_tavily(key, query, n):
              "published": r.get("published_date")} for r in data.get("results", [])]
 
 
-PROVIDERS = {"exa": search_exa, "tavily": search_tavily}
+def search_searxng(base, query, n):
+    url = base.rstrip("/") + "/search?" + urllib.parse.urlencode({"q": query, "format": "json"})
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as e:
+        raise ProviderError(f"HTTP {e.code}")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        raise ProviderError(f"{type(e).__name__}: {e}")
+    if not data.get("results"):
+        # Its upstream engines can all be blocked (CAPTCHA) at once: let the caller fall back.
+        raise ProviderError(f"no results; unresponsive: {data.get('unresponsive_engines')}")
+    return [{"url": r.get("url"), "title": r.get("title"), "snippet": r.get("content"),
+             "published": r.get("publishedDate")} for r in data.get("results", [])[:n]]
+
+
+def search_serper(key, query, n):
+    data = post_json("https://google.serper.dev/search", {"q": query, "num": n},
+                     {"X-API-KEY": key})
+    return [{"url": r.get("link"), "title": r.get("title"), "snippet": r.get("snippet"),
+             "published": r.get("date")} for r in data.get("organic", [])[:n]]
+
+
+PROVIDERS = {"exa": search_exa, "tavily": search_tavily, "serper": search_serper,
+             "searxng": search_searxng}
+
+
+def caller_agent():
+    parts = os.path.normpath(os.environ.get("CLAUDE_CONFIG_DIR", "")).split(os.sep)
+    return parts[parts.index("agents") + 1] if "agents" in parts[:-1] else None
+
+
+def order():
+    return AGENT_ORDER.get(caller_agent(), ORDER)
 
 
 def load_json(path, default):
@@ -128,12 +173,13 @@ def search(query, n=5, only=None, keys=None, providers=None):
     keys = load_json(KEYS_PATH, {}) if keys is None else keys
     providers = PROVIDERS if providers is None else providers
     tried = []
-    for name in ([only] if only else ORDER):
-        if not keys.get(name):
+    for name in ([only] if only else [p for p in order() if p in providers]):
+        key = keys.get(name) or KEYLESS.get(name)
+        if not key:
             tried.append({"provider": name, "skipped": "no key"})
             continue
         try:
-            results = providers[name](keys[name], query, n)
+            results = providers[name](key, query, n)
         except ProviderError as e:
             count_call(name, "exhausted" if e.exhausted else False)
             tried.append({"provider": name, "error": str(e), "exhausted": e.exhausted})
@@ -151,8 +197,9 @@ def status():
     keys = load_json(KEYS_PATH, {})
     usage = load_json(USAGE_PATH, {}).get(month(), {})
     return {"month": month(), "providers": [
-        {"provider": p, "key": bool(keys.get(p)), "free_monthly": FREE_MONTHLY.get(p), **usage.get(p, {})}
-        for p in ORDER]}
+        {"provider": p, "key": bool(keys.get(p) or KEYLESS.get(p)), "free_monthly": FREE_MONTHLY.get(p),
+         "free_total": FREE_TOTAL.get(p), **usage.get(p, {})}
+        for p in PROVIDERS]}
 
 
 def main():
