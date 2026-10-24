@@ -136,7 +136,11 @@ SKIP_SUFFIXES_ANYWHERE = (".pid",)
 #       content is already in the agent_messages table, which IS backed up. It
 #       was a permanent red row (modproba/done, 208 files, grows forever).
 #       pending/ and active/ stay measured: a file stuck there is a real event.
-SKIP_PATHS = (".claude/channels/worksource/*/done",)
+#   */target/{debug,release,tmp} -- added 2026-10-24, the checker's half of the
+#       backup.sh agents-find exclusion: Rust (cargo) build output, 23 GB under
+#       agents/cody/external/solidcraft/target, rebuilt by `cargo build`.
+SKIP_PATHS = (".claude/channels/worksource/*/done",
+              "*/target/debug", "*/target/release", "*/target/tmp")
 
 # Suffixes skipped ONLY under the repo's store/ -- the checker's half of a rule
 # backup.sh already states out loud in its store block:

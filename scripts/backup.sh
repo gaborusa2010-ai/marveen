@@ -385,6 +385,11 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/briefs
 #                               .claude/channels as a permanent gap, and a checker
 #                               that is always red is a checker nobody reads.
 #   __pycache__, node_modules -- build output
+#   target/{debug,release,tmp} -- Rust (cargo) build output. Measured 2026-10-24
+#                               20:2x: agents/cody/external/solidcraft/target was
+#                               23 GB and turned the weekly full archive from
+#                               1.3 GB (10-16) into 9.9 GB. Rebuilt by `cargo
+#                               build` from the sources next to it, which stay in.
 #   .venv                    -- egy agens sajat Python-kornyezete. Margo
 #                               agents/margo/.venv-je MERVE 2026-09-08 20:3x:
 #                               826 MB es 15 080 fajl, vagyis az agents/ alol
@@ -448,6 +453,9 @@ if [[ -d agents ]]; then
     -not -path '*/__pycache__/*' \
     -not -path '*/node_modules/*' \
     -not -path '*/.venv/*' \
+    -not -path '*/target/debug/*' \
+    -not -path '*/target/release/*' \
+    -not -path '*/target/tmp/*' \
     -not -name '*.pid' \
     "${_skip_args[@]}" \
     -print >> "${REPOLIST}"
