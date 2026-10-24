@@ -33,11 +33,18 @@ check("unchanged briefing still lists the cards", "#1" in t_same)
 t_empty = abb.render("x", [], [], unchanged_since="2026-09-26")
 check("empty briefing keeps NINCS KIOSZTOTT MUNKAD even if 'unchanged'", "NINCS KIOSZTOTT MUNKAD" in t_empty and "VALTOZATLAN" not in t_empty)
 
+t_w = abb.render("x", cards, msgs, waits=([{"seq": 7, "waits_on": ["marveen"], "state": "NINCS ETA"}],
+                                        [{"seq": 9, "assignee": "cody", "state": "NINCS ETA", "days": 6.2}]))
+check("waits section names the card I wait on", "#7  te varsz ra: marveen" in t_w)
+check("waits section names who waits on me", "#9  cody var RAD" in t_w)
+check("no waits -> no waits section", "MASIK AGENSRE VARAS" not in abb.render("x", cards, msgs, waits=([], [])))
+
 # build(): two runs in a temp STORE, API stubbed
 tmp = tempfile.mkdtemp()
 abb.STORE = tmp
 abb.open_cards = lambda tok, a: cards
 abb.open_messages = lambda tok, a: msgs
+abb.agent_waits = lambda tok, a: None
 abb.build("x", "tok")
 first = open(os.path.join(tmp, "briefing-x.txt")).read()
 os.remove(os.path.join(tmp, "briefing-x.txt"))

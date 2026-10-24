@@ -107,6 +107,23 @@ def open_messages(tok, agent):
     return out
 
 
+def agent_waits(tok, agent):
+    """Cards where this agent waits on another agent, and cards where others wait
+    on it, from scripts/masikra-var.py (owner tg 9069: #457/#583 sat six days on a
+    free-text "Marveen review" wait that nothing could fire on). Only the rows that
+    need an action: no ETA yet, or an ETA that has passed; every wait on this agent."""
+    import importlib.util
+    import time
+    spec = importlib.util.spec_from_file_location(
+        "masikra_var", os.path.join(REPO, "scripts", "masikra-var.py"))
+    mv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mv)
+    cards = _rows(_get("/api/kanban", tok), "cards", "items")
+    agents = sorted({(a.get("name") or "").lower() for a in _rows(_get("/api/agents", tok), "agents")} | {MAIN})
+    mine, on_me = mv.classify(cards, agents, agent, int(time.time()))
+    return [r for r in mine if not r["state"].startswith("ETA ") or "LEJART" in r["state"]], on_me
+
+
 def digest(cards, msgs):
     """Fingerprint of what the briefing is ABOUT, not of its text: the card set
     with each card's updated_at (a description edit or a comment moves it), and
@@ -117,7 +134,7 @@ def digest(cards, msgs):
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def render(agent, cards, msgs, now=None, unchanged_since=None):
+def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
     now = now or datetime.now()
     L = ["[ELIGAZITAS %s -- gepi, a sajat nyitott munkadbol]" % now.strftime("%Y-%m-%d %H:%M"),
          ""]
@@ -126,6 +143,16 @@ def render(agent, cards, msgs, now=None, unchanged_since=None):
         for c in cards:
             L.append("  #%s  %-11s %-6s  %s" % (c.get("seq"), c.get("status"),
                                                 c.get("priority"), (c.get("title") or "")[:90]))
+        L.append("")
+    if waits and (waits[0] or waits[1]):
+        mine, on_me = waits
+        L.append("MASIK AGENSRE VARAS (skill masik-agensre-var, gazda msg 9069):")
+        for r in mine:
+            L.append("  #%s  te varsz ra: %s, %s -> kerdezd meg, mikor lesz kesz"
+                     % (r["seq"], ",".join(r["waits_on"]), r["state"]))
+        for r in on_me:
+            L.append("  #%s  %s var RAD (%s, %.0f napja) -> valaszolj idoponttal, vagy csinald meg"
+                     % (r["seq"], r["assignee"], r["state"], r["days"]))
         L.append("")
     if msgs:
         # CAP, and the reason is a measurement: cody carried 16 open rows on
@@ -199,6 +226,11 @@ def build(agent, tok, force=False, dry=False, quiet_when_empty=False):
             return 0
     cards = open_cards(tok, agent)
     msgs = open_messages(tok, agent)
+    try:
+        waits = agent_waits(tok, agent)
+    except Exception as e:
+        sys.stderr.write("%s: a varakozas-lista NEM keszult el: %s\n" % (agent, e))
+        waits = None
     dg = digest(cards, msgs)
     dpath = os.path.join(STORE, "briefing-digest-%s.json" % agent)
     prev = {}
@@ -208,7 +240,7 @@ def build(agent, tok, force=False, dry=False, quiet_when_empty=False):
     except Exception:
         pass
     same = (cards or msgs) and prev.get("digest") == dg
-    text = render(agent, cards, msgs, unchanged_since=prev.get("since") if same else None)
+    text = render(agent, cards, msgs, unchanged_since=prev.get("since") if same else None, waits=waits)
     if dry:
         print("--- %s (dry-run, %d kartya, %d uzenet) ---" % (agent, len(cards), len(msgs)))
         print(text)
