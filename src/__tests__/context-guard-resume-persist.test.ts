@@ -183,17 +183,24 @@ describe('context-guard resume obligation across a dashboard restart', () => {
     // Process 1: the saturation net restarts boni (two confirming sweeps).
     h.pane = SATURATED_PANE
     const first = await bootDashboard()
-    await vi.advanceTimersByTimeAsync(INITIAL_DELAY_MS + INTERVAL_MS)
+    // The second confirming sweep is the first interval tick (t=300 s). Stop
+    // right there: a restarted agent is on the 60 s hot sweep from then on, and
+    // the next hot tick (t=360 s) would already deliver the resume.
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
     expect(h.restartAgentProcess).toHaveBeenCalledTimes(1)
     expect(first.getHardGuardPhase('boni')).toBe('await-ready')
     expect(Object.keys(readPending())).toEqual(['boni'])
     expect(resumeCalls()).toHaveLength(0)
 
-    // The dashboard dies before the next sweep could deliver the resume.
-    // (Its initial setTimeout has already fired; clearing the interval is
-    // the whole of its timer state.)
+    // The dashboard dies before the next sweep could deliver the resume. A
+    // dead process takes ALL its timers with it, the hot sweep included --
+    // which now carries the restarted agent, so clearing only the returned
+    // interval would leave process 1 delivering alongside process 2.
     for (const t of timers) clearInterval(t)
     timers = []
+    const diedAt = Date.now()
+    vi.clearAllTimers()
+    vi.setSystemTime(diedAt) // clearAllTimers also drops the faked clock
     h.pane = null
 
     // Process 2: nothing in memory, only the file.

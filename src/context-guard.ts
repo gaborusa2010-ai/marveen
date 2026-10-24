@@ -731,6 +731,10 @@ export interface GuardDecision {
 // longer than an uninterrupted one, but never past the TTL.
 export const READY_TIMEOUT_MS = 20 * 60_000
 
+/** await-ready measures pct only after this long since the restart: earlier,
+ *  the newest transcript may still be the session that was just replaced. */
+export const AWAIT_READY_MEASURE_GRACE_MS = 3 * 60_000
+
 function cooldown(nowMs: number, cfg: ContextGuardConfig, reason: string): GuardDecision {
   return {
     action: 'none',
@@ -784,7 +788,13 @@ export function decideGuard(
 
   switch (state.phase) {
     case 'cooldown': {
-      if (nowMs >= state.cooldownUntilMs) return none('cooldown elapsed', INITIAL_GUARD_STATE)
+      // An elapsed cooldown decides in the SAME sweep. It used to return
+      // 'cooldown elapsed' with no decision, so the first real idle-phase look
+      // came one full sweep later: measured 2026-10-23 (Anorak, flotta-retro),
+      // 13:12:58 resume, 13:17:58 "cooldown elapsed", 13:22:58 hard restart at
+      // 139% with no handoff request -- the fresh session grew through 90-139%
+      // while nothing looked.
+      if (nowMs >= state.cooldownUntilMs) return decideGuard(INITIAL_GUARD_STATE, inputs, cfg)
       return none('cooling down')
     }
 
@@ -939,6 +949,29 @@ export function decideGuard(
             handoffStaleMinutes: null,
           },
         }
+      }
+      // A fresh session that is BUSY never looks ready, so the resume waits --
+      // and the session keeps working meanwhile, unmeasured. Measured
+      // 2026-10-23: a restart at 12:49 got its resume at 13:12 (23 minutes); the
+      // session crossed 90% at 12:59 and 100% at 13:05. Past actPct, ask for the
+      // handoff now: a busy agent reads it after its current turn, and
+      // await-handoff then owns the restart (with its mid-turn deferral). The
+      // grace keeps the first sweeps after a restart from measuring the OLD
+      // session's transcript before the new one has written anything. pct is
+      // read from the newest transcript by mtime, so it is only the fresh
+      // session's reading once that transcript was written AFTER the restart:
+      // a fresh session that has not written yet would otherwise be judged by
+      // the replaced session's ~100%.
+      const restartAtMs = state.deadlineMs - READY_TIMEOUT_MS
+      if (
+        cfg.enabled && inputs.running && inputs.pct !== null && inputs.pct >= cfg.actPct
+        && nowMs - restartAtMs >= AWAIT_READY_MEASURE_GRACE_MS
+        && inputs.idleMs !== null && nowMs - inputs.idleMs > restartAtMs
+      ) {
+        return handoffRequest(
+          nowMs, inputs, cfg,
+          `act threshold (${Math.round(inputs.pct * 100)}% >= ${Math.round(cfg.actPct * 100)}%) while waiting for the restarted session to become ready -- requesting handoff`,
+        )
       }
       if (nowMs >= state.deadlineMs) {
         return cooldown(nowMs, cfg, 'ready timeout -- giving up on resume injection')

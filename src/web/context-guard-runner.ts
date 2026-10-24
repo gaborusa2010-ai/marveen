@@ -73,6 +73,10 @@ const INTERVAL_MS = 300_000
 const HOT_INTERVAL_MS = 60_000
 const HOT_PCT = 0.8
 const lastMeasuredPct = new Map<string, number>()
+// A restarted agent stays on the hot cadence until its fresh session gives a
+// first reading. Deleting its reading instead dropped it to the 5-minute sweep
+// exactly when a busy fresh session grows fastest.
+const hotUntilMeasured = new Set<string>()
 
 // How long the dispatch gate honours one sweep's "this banner is not
 // credible" verdict. Expressed in SWEEPS, not minutes, so it cannot silently
@@ -411,6 +415,7 @@ async function performRestart(name: string): Promise<void> {
     // and writes the shared respawn stamp so the other respawners defer to us.
     const res = hardRestartMarveenChannels()
     if (!res.ok) throw new Error(res.error ?? 'main channels hard restart failed')
+    hotUntilMeasured.add(name)
   } else {
     // DANICTXHUROK906: claim the reconcile grace window BEFORE the stop, so
     // reconcileDesiredAgents() does not see the agent "down" mid-restart and
@@ -425,6 +430,7 @@ async function performRestart(name: string): Promise<void> {
     // 19:41; the second restart WAS the first one's unnoticed failure.
     const res = await restartAgentProcess(name, { fresh: true })
     if (!res.ok) throw new Error(res.error ?? 'agent restart failed')
+    hotUntilMeasured.add(name)
   }
 }
 
@@ -463,7 +469,11 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
     : agentRunState(name) === 'running'
 
   // Only pay for the tmux/transcript probes a decision can actually use.
+  // await-ready and an elapsed cooldown decide on pct too (decideGuard): both
+  // used to be blind windows in which a busy fresh session grew past 100%.
   const needPct = state.phase === 'idle' || state.phase === 'await-handoff'
+    || state.phase === 'await-ready'
+    || (state.phase === 'cooldown' && nowMs >= state.cooldownUntilMs)
   const pane = running && needPct ? capturePane(session) : null
   const sessionReady = running && state.phase === 'await-ready'
     ? await isSessionReadyForPrompt(session)
@@ -494,7 +504,7 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   const measuredPct = running && needPct && (cfg.enabled || needCredibilityProbe)
     ? measurePct(name, cfg.limitTokens)
     : null
-  if (measuredPct !== null) lastMeasuredPct.set(name, measuredPct)
+  if (measuredPct !== null) { lastMeasuredPct.set(name, measuredPct); hotUntilMeasured.delete(name) }
   else if (!running) lastMeasuredPct.delete(name)
   const paneSaturatedTrusted = saturationBannerCredible(paneSaturatedRaw, bannerIsHardError, measuredPct)
   if (paneSaturatedRaw && !paneSaturatedTrusted) {
@@ -609,6 +619,9 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   }
 
   guardStates.set(name, decision.nextState)
+  // Back in idle, the regular sweep owns the agent again: an agent whose pct
+  // never becomes measurable must not stay on the hot cadence for good.
+  if (decision.nextState.phase === 'idle') hotUntilMeasured.delete(name)
   // Leaving await-ready WITHOUT delivering (ready timeout, guard disabled
   // mid-wait) ends the obligation too; delivery clears it in inject-resume.
   if (state.phase === 'await-ready' && decision.nextState.phase !== 'await-ready' && decision.action !== 'inject-resume') {
@@ -932,7 +945,10 @@ export function startContextGuardRunner(): NodeJS.Timeout {
   // the fresh session's next measurement decides whether it is hot again.
   async function hotSweep() {
     if (tickRunning) return
-    const hot = [...lastMeasuredPct].filter(([, pct]) => pct >= HOT_PCT).map(([name]) => name)
+    const hot = [...new Set([
+      ...[...lastMeasuredPct].filter(([, pct]) => pct >= HOT_PCT).map(([name]) => name),
+      ...hotUntilMeasured,
+    ])]
     if (hot.length === 0) return
     tickRunning = true
     try {
