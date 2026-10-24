@@ -25,6 +25,7 @@ import {
   detectsFirstRunGate,
   detectsModelConsentDialog,
   detectsFeedbackDraftModal,
+  detectsAutocompactSuggestion,
   detectsFeedbackOptOutPrompt,
   firstRunAcceptKeys,
   stuckInputSignature,
@@ -3280,21 +3281,41 @@ export async function dismissResumeSummaryModalIfPresent(session: string, host: 
 export async function clearFeedbackModalAndRecheck(session: string, host: string | null = null): Promise<boolean> {
   try {
     const pane = capturePane(session, host)
-    if (pane == null || !detectsFeedbackDraftModal(pane)) return false
+    // The autocompact suggestion blocks the same refusal branch (it replaces
+    // the prompt box), so it is cleared here too.
+    if (pane == null || (!detectsFeedbackDraftModal(pane) && !detectsAutocompactSuggestion(pane))) return false
     const releaseLane = tryAcquireSessionSendLane(session, host)
     if (!releaseLane) {
       logger.info({ session }, 'feedback-draft modal dismissal skipped -- a delivery holds this pane send lane (fail-closed)')
       return false
     }
     try {
-      logger.warn({ session }, 'pane held by a Claude Code feedback-draft modal on the not-ready path, dismissing')
+      logger.warn({ session }, 'pane held by a Claude Code modal (feedback draft or autocompact suggestion) on the not-ready path, dismissing')
       await dismissFeedbackDraftModalIfPresent(session, host)
+      await dismissAutocompactSuggestionIfPresent(session, host)
     } finally {
       releaseLane()
     }
     return await isSessionReadyForPrompt(session, host)
   } catch (err) {
     logger.warn({ err, session }, 'Failed to clear the feedback-draft modal on the not-ready path')
+    return false
+  }
+}
+
+// Answers the autocompact suggestion (see detectsAutocompactSuggestion in
+// pane-state.ts) with Esc, its "not now" option: the agent's compaction
+// setting stays exactly as configured. Enter would confirm the 400k default.
+export async function dismissAutocompactSuggestionIfPresent(session: string, host: string | null = null): Promise<boolean> {
+  try {
+    const pane = captureTmux(host, ['capture-pane', '-t', exactTmuxTarget(session), '-p'])
+    if (!detectsAutocompactSuggestion(pane)) return false
+    runTmux(host, ['send-keys', '-t', exactTmuxTarget(session), 'Escape'], { timeout: 5000 })
+    await delay(300)
+    logger.info({ session }, 'Dismissed Claude Code autocompact suggestion (esc not now, setting unchanged)')
+    return true
+  } catch (err) {
+    logger.warn({ err, session }, 'Failed to probe/dismiss autocompact suggestion')
     return false
   }
 }
@@ -3603,6 +3624,7 @@ export async function scheduleIdentitySetup(session: string, displayName: string
           await dismissResumeSummaryModalIfPresent(session, host)
           await dismissModelConsentDialogIfPresent(session, host)
           await dismissFeedbackDraftModalIfPresent(session, host)
+          await dismissAutocompactSuggestionIfPresent(session, host)
         } catch (err) {
           logger.warn({ err, session }, 'Post-restart modal dismiss failed')
         } finally {
@@ -3981,6 +4003,7 @@ export async function sendPromptToSession(
     await dismissResumeSummaryModalIfPresent(session, host)
     await dismissModelConsentDialogIfPresent(session, host)
     await dismissFeedbackDraftModalIfPresent(session, host)
+    await dismissAutocompactSuggestionIfPresent(session, host)
   } else {
     const releaseDismissLane = tryAcquireSessionSendLane(session, host)
     if (releaseDismissLane) {
@@ -3989,6 +4012,7 @@ export async function sendPromptToSession(
         await dismissResumeSummaryModalIfPresent(session, host)
         await dismissModelConsentDialogIfPresent(session, host)
         await dismissFeedbackDraftModalIfPresent(session, host)
+        await dismissAutocompactSuggestionIfPresent(session, host)
       } finally {
         releaseDismissLane()
       }

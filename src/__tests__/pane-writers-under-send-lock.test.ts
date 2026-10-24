@@ -132,7 +132,7 @@ describe('every unguarded pane writer routes through the send lane', () => {
   it('clearFeedbackModalAndRecheck acquires fail-closed around the dismissal keystrokes', () => {
     const src = read('../web/agent-process.ts')
     expect(src).toMatch(/feedback-draft modal dismissal skipped/)
-    expect(src).toMatch(/await dismissFeedbackDraftModalIfPresent\(session, host\)\s*\} finally \{\s*releaseLane\(\)/)
+    expect(src).toMatch(/await dismissFeedbackDraftModalIfPresent\(session, host\)\s*await dismissAutocompactSuggestionIfPresent\(session, host\)\s*\} finally \{\s*releaseLane\(\)/)
   })
 
   it("schedule-runner's reinject site declares the lane it already holds", () => {
