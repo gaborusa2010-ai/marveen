@@ -2,7 +2,7 @@
 // only, decided before any handler; it must expire; and only the owner (token,
 // session) reads or changes what an operator gets.
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -30,6 +30,7 @@ import { defaultOperatorAccess, normaliseOperatorAccess, readOperatorAccess, typ
 import { tryHandleAuth } from '../web/routes/auth.js'
 import { tryHandleOperatorAccess } from '../web/routes/operator-access.js'
 import type { RouteContext } from '../web/routes/types.js'
+import { enumerateApiPaths } from './helpers/api-paths.js'
 
 beforeAll(() => { initDatabase(':memory:') })
 beforeEach(() => { _clearDeviceKeyCacheForTest() })
@@ -37,29 +38,6 @@ beforeEach(() => { _clearDeviceKeyCacheForTest() })
 const ON: OperatorAccess = { ...defaultOperatorAccess(), enabled: true }
 const OFF: OperatorAccess = defaultOperatorAccess()
 const operator = { kind: 'device', scope: 'operator' }
-
-// Every /api path the server handles, enumerated from the source (not a hand
-// list): literal `path === '/api/...'` checks and `/^\/api\/...$/` matchers,
-// with each capture group / wildcard replaced by a concrete segment.
-function enumerateApiPaths(): string[] {
-  const root = join(__dirname, '..')
-  const files = [join(root, 'web.ts'), ...readdirSync(join(root, 'web', 'routes')).filter(f => f.endsWith('.ts')).map(f => join(root, 'web', 'routes', f))]
-  const out = new Set<string>()
-  for (const f of files) {
-    const src = readFileSync(f, 'utf-8')
-    for (const m of src.matchAll(/'(\/api\/[A-Za-z0-9/_.-]*)'/g)) out.add(m[1]!)
-    // A regex literal on one line, from `/^\/api\/` up to its closing `$/`.
-    for (const m of src.matchAll(/\/\^(\\\/api\\\/[^\n]*?)\$\//g)) {
-      const p = m[1]!
-        .replace(/\([^)]*\)/g, 'x') // capture groups -> one concrete segment
-        .replace(/\[[^\]]*\][+*]?/g, 'x') // character classes
-        .replace(/\\\//g, '/') // unescape slashes
-        .replace(/[?+*\\]/g, '')
-      if (p.startsWith('/api/')) out.add(p)
-    }
-  }
-  return [...out].sort()
-}
 
 describe('operatorGateDecision over every enumerated /api path', () => {
   const paths = enumerateApiPaths()

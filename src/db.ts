@@ -1319,6 +1319,24 @@ export function initDatabase(dbPathOverride?: string): void {
   `)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_team_notes_active ON team_notes(deleted_at, due_date)`)
 
+  // --- Pinterest gallery ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS gallery_items (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      page_url TEXT,
+      file TEXT NOT NULL,
+      sha256 TEXT NOT NULL UNIQUE,
+      bytes INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      created_by TEXT NOT NULL
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_gallery_items_topic_created ON gallery_items(topic, created_at)`)
+
   // --- Owner to-dos ---
   db.exec(`
     CREATE TABLE IF NOT EXISTS owner_todos (
@@ -6143,6 +6161,57 @@ export function softDeleteTeamNote(id: string, by: string, reason: string | null
   return db.prepare(
     'UPDATE team_notes SET deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL'
   ).run(Math.floor(Date.now() / 1000), by, reason, id).changes > 0
+}
+
+// --- Pinterest gallery ---
+
+export interface GalleryItemRow {
+  id: string
+  topic: string
+  image_url: string
+  source_url: string
+  page_url: string | null
+  file: string
+  sha256: string
+  bytes: number
+  type: 'png' | 'jpeg' | 'gif' | 'webp'
+  created_at: number
+  created_by: string
+}
+
+export function listGalleryItems(opts?: { topic?: string }): GalleryItemRow[] {
+  if (opts?.topic !== undefined) {
+    return db.prepare('SELECT * FROM gallery_items WHERE topic = ? ORDER BY created_at DESC, rowid DESC').all(opts.topic) as GalleryItemRow[]
+  }
+  return db.prepare('SELECT * FROM gallery_items ORDER BY created_at DESC, rowid DESC').all() as GalleryItemRow[]
+}
+
+export function getGalleryItem(id: string): GalleryItemRow | undefined {
+  return db.prepare('SELECT * FROM gallery_items WHERE id = ?').get(id) as GalleryItemRow | undefined
+}
+
+export function getGalleryItemBySha(sha: string): GalleryItemRow | undefined {
+  return db.prepare('SELECT * FROM gallery_items WHERE sha256 = ?').get(sha) as GalleryItemRow | undefined
+}
+
+export function createGalleryItem(row: GalleryItemRow): void {
+  db.prepare(`INSERT INTO gallery_items
+    (id, topic, image_url, source_url, page_url, file, sha256, bytes, type, created_at, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(row.id, row.topic, row.image_url, row.source_url, row.page_url, row.file, row.sha256, row.bytes, row.type, row.created_at, row.created_by)
+}
+
+export function updateGalleryItemTopic(id: string, topic: string): boolean {
+  return db.prepare('UPDATE gallery_items SET topic = ? WHERE id = ?').run(topic, id).changes > 0
+}
+
+export function deleteGalleryItem(id: string): boolean {
+  return db.prepare('DELETE FROM gallery_items WHERE id = ?').run(id).changes > 0
+}
+
+export function listGalleryTopics(): Array<{ topic: string; count: number }> {
+  return db.prepare(`SELECT topic, COUNT(*) AS count FROM gallery_items
+    GROUP BY topic ORDER BY MAX(created_at) DESC, MAX(rowid) DESC`).all() as Array<{ topic: string; count: number }>
 }
 
 // --- Owner to-dos ---

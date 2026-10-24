@@ -61,6 +61,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -153,17 +154,18 @@ def gate_allows(url):
     return True, ""
 
 
-def budget_left(url, cap):
+def budget_left(url, cap, source=None):
     """Ask fetch-budget.py. Returns (has_allowance, message)."""
     try:
-        p = subprocess.run([sys.executable, BUDGET, "--budget", url, "--cap", str(cap)],
+        p = subprocess.run([sys.executable, BUDGET, "--budget", url, "--cap", str(cap)]
+                           + (["--source", source] if source else []),
                            capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"a budget-check nem futott: {e}"
     return p.returncode == 0, p.stdout.strip()
 
 
-def log_fetch(url, kind="ALLOWED_IMAGE"):
+def log_fetch(url, kind="ALLOWED_IMAGE", source=None):
     """Write the line fetch-budget.py counts.
 
     Without this an image download is invisible to the per-source rolling 24h count,
@@ -173,9 +175,10 @@ def log_fetch(url, kind="ALLOWED_IMAGE"):
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        label = f' source="{source}"' if source else ""
         with open(LOG, "a", encoding="utf-8") as fh:
             fh.write(f'{ts} {kind} url="{url}" reason="gated image fetch" '
-                     f'agent_type="{QUARANTINE_AGENT_TYPE}"\n')
+                     f'agent_type="{QUARANTINE_AGENT_TYPE}"{label}\n')
     except OSError:
         pass  # never let logging failure stop or crash the caller
 
@@ -189,7 +192,12 @@ def main(argv=None):
     ap.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     ap.add_argument("--skip-budget", action="store_true",
                     help="csak teszthez: a 24 oras plafon ellenorzesenek kihagyasa")
+    ap.add_argument("--source", metavar="NAME",
+                    help="sajat keretu hivo (gallery: a gazda mentesei, #616): a naplosor "
+                         "cimket kap, es a plafon csak a NAME vodret szamolja")
     a = ap.parse_args(argv)
+    if a.source is not None and not re.fullmatch(r"[a-z0-9-]+", a.source):
+        ap.error("--source: csak a-z, 0-9 es kotojel")
 
     allowed, reason = gate_allows(a.url)
     if not allowed:
@@ -197,7 +205,7 @@ def main(argv=None):
         return 2
 
     if not a.skip_budget:
-        ok, msg = budget_left(a.url, a.cap)
+        ok, msg = budget_left(a.url, a.cap, a.source)
         print(msg, file=sys.stderr)
         if not ok:
             return 3
@@ -218,7 +226,7 @@ def main(argv=None):
             ctype = resp.headers.get("Content-Type", "")
     except urllib.error.HTTPError as e:
         loc = e.headers.get("Location") if e.headers else None
-        log_fetch(a.url)  # the request left the machine even though it failed
+        log_fetch(a.url, source=a.source)  # the request left the machine even though it failed
         if loc:
             print(f"ATIRANYITAS ({e.code}) -> {loc}\n"
                   f"Nem kovetem. Futtasd ujra EZZEL az url-lel, es a kapu ujra dont rola.",
@@ -230,7 +238,7 @@ def main(argv=None):
         print(f"A letoltes nem sikerult: {e}", file=sys.stderr)
         return 4
 
-    log_fetch(a.url)
+    log_fetch(a.url, source=a.source)
 
     if len(body) > a.max_bytes:
         print(f"TUL NAGY: tobb mint {a.max_bytes} bajt. Nem mentem el.", file=sys.stderr)

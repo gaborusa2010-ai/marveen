@@ -389,6 +389,7 @@ function switchPage(pageId) {
   if (pageId === 'costs') loadCosts()
   if (pageId === 'ideas') loadIdeasPage()
   if (pageId === 'notes') loadNotesPage()
+  if (pageId === 'gallery') loadGalleryPage()
   if (pageId === 'todo') loadTodoPage()
   if (pageId === 'archived') loadArchivedPage()
   if (pageId === 'naplo') loadNaplo()
@@ -514,7 +515,7 @@ const NAV_I18N = {
   approvals: 'nav.approvals',
   docs: 'nav.docs', research: 'nav.research', status: 'nav.status',
   settings: 'nav.settings', vault: 'nav.vault', tokenUsage: 'nav.tokenUsage',
-  ideas: 'nav.ideas', notes: 'nav.notes', todo: 'nav.todo', federation: 'nav.federation', updates: 'nav.updates', costs: 'nav.costs',
+  ideas: 'nav.ideas', notes: 'nav.notes', gallery: 'nav.gallery', todo: 'nav.todo', federation: 'nav.federation', updates: 'nav.updates', costs: 'nav.costs',
 }
 
 function renderNav() {
@@ -18992,6 +18993,201 @@ function wireNotesPage() {
     }
   })
 }
+
+// ============================================================
+// === Pinterest Gallery ===
+// ============================================================
+let galleryFilter = null
+let galleryObjectUrls = []
+let galleryObserver = null
+
+function galleryEl(tag, className, text) {
+  const el = document.createElement(tag)
+  if (className) el.className = className
+  if (text != null) el.textContent = text
+  return el
+}
+
+function clearGalleryImages() {
+  galleryObserver?.disconnect()
+  galleryObserver = null
+  galleryObjectUrls.forEach(url => URL.revokeObjectURL(url))
+  galleryObjectUrls = []
+}
+
+async function galleryRequest(path, options) {
+  const response = await fetch(path, options)
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+function galleryTopicLabel(topic) {
+  return topic || t('gallery.no_topic')
+}
+
+// The thumbnail endpoint needs the dashboard's auth, so images are fetched
+// as blobs and shown through object URLs, only once they scroll into view.
+async function loadGalleryThumb(img) {
+  try {
+    const response = await fetch(img.dataset.src)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const objectUrl = URL.createObjectURL(await response.blob())
+    galleryObjectUrls.push(objectUrl)
+    img.src = objectUrl
+    img.dataset.objectUrl = objectUrl
+  } catch {
+    img.alt = t('gallery.image_error')
+  }
+}
+
+async function loadGalleryPage() {
+  clearGalleryImages()
+  const filters = document.getElementById('galleryFilters')
+  const content = document.getElementById('galleryContent')
+  const empty = document.getElementById('galleryEmpty')
+  if (!filters || !content || !empty) return
+  filters.replaceChildren()
+  content.replaceChildren()
+  empty.hidden = true
+  try {
+    const [items, topics] = await Promise.all([
+      galleryRequest('/api/gallery/items'),
+      galleryRequest('/api/gallery/topics'),
+    ])
+    const choices = [
+      { value: null, label: t('gallery.all'), count: items.length },
+      ...topics.map(x => ({ value: x.topic, label: galleryTopicLabel(x.topic), count: x.count })),
+    ]
+    choices.forEach(choice => {
+      const active = galleryFilter === choice.value ? ' active' : ''
+      const button = galleryEl('button', `gallery-chip${active}`, `${choice.label} (${choice.count})`)
+      button.type = 'button'
+      button.addEventListener('click', () => {
+        galleryFilter = choice.value
+        loadGalleryPage()
+      })
+      filters.appendChild(button)
+    })
+
+    const visible = galleryFilter === null ? items : items.filter(item => item.topic === galleryFilter)
+    empty.textContent = t('gallery.empty')
+    empty.hidden = visible.length > 0
+    const grouped = new Map()
+    visible.forEach(item => {
+      if (!grouped.has(item.topic)) grouped.set(item.topic, [])
+      grouped.get(item.topic).push(item)
+    })
+    galleryObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return
+        galleryObserver.unobserve(entry.target)
+        loadGalleryThumb(entry.target)
+      })
+    }, { rootMargin: '300px' })
+    grouped.forEach((rows, topic) => {
+      const section = galleryEl('section', 'gallery-section')
+      section.appendChild(galleryEl('h2', 'gallery-section-title', galleryTopicLabel(topic)))
+      const grid = galleryEl('div', 'gallery-grid')
+      rows.forEach(item => grid.appendChild(makeGalleryCard(item, topics)))
+      section.appendChild(grid)
+      content.appendChild(section)
+    })
+  } catch (err) {
+    empty.hidden = false
+    empty.textContent = t('gallery.load_error', { msg: String(err.message || err) })
+  }
+}
+
+function makeGalleryCard(item, topics) {
+  const card = galleryEl('article', 'gallery-card')
+  const imageButton = galleryEl('button', 'gallery-image-button')
+  imageButton.type = 'button'
+  const img = galleryEl('img', 'gallery-thumb')
+  img.alt = galleryTopicLabel(item.topic)
+  img.loading = 'lazy'
+  img.dataset.src = `/api/gallery/items/${encodeURIComponent(item.id)}/image`
+  imageButton.appendChild(img)
+  galleryObserver.observe(img)
+  imageButton.addEventListener('click', () => {
+    const lightbox = document.getElementById('galleryLightbox')
+    const full = document.getElementById('galleryLightboxImage')
+    if (lightbox && full && img.dataset.objectUrl) {
+      full.src = img.dataset.objectUrl
+      lightbox.hidden = false
+    }
+  })
+
+  const controls = galleryEl('div', 'gallery-card-controls')
+  const select = galleryEl('select', 'input gallery-topic-select')
+  select.setAttribute('aria-label', t('gallery.topic'))
+  const values = ['', ...topics.map(x => x.topic).filter(Boolean)]
+  if (item.topic && !values.includes(item.topic)) values.push(item.topic)
+  values.forEach(value => {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = galleryTopicLabel(value)
+    select.appendChild(option)
+  })
+  const fresh = document.createElement('option')
+  fresh.value = '__new__'
+  fresh.textContent = t('gallery.new_topic')
+  select.appendChild(fresh)
+  select.value = item.topic
+  select.addEventListener('change', async () => {
+    let topic = select.value
+    if (topic === '__new__') {
+      const entered = window.prompt(t('gallery.new_topic_prompt'))
+      if (entered === null || !entered.trim()) {
+        select.value = item.topic
+        return
+      }
+      topic = entered.trim()
+    }
+    try {
+      await galleryRequest(`/api/gallery/items/${encodeURIComponent(item.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic }),
+      })
+      loadGalleryPage()
+    } catch (err) {
+      select.value = item.topic
+      showToast(t('gallery.error', { msg: String(err.message || err) }))
+    }
+  })
+
+  const del = galleryEl('button', 'btn-secondary btn-compact', t('gallery.delete'))
+  del.type = 'button'
+  del.addEventListener('click', async () => {
+    if (!window.confirm(t('gallery.delete_confirm'))) return
+    try {
+      await galleryRequest(`/api/gallery/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+      loadGalleryPage()
+    } catch (err) {
+      showToast(t('gallery.error', { msg: String(err.message || err) }))
+    }
+  })
+
+  controls.append(select)
+  const pageUrl = safeHref(item.page_url)
+  if (pageUrl) {
+    const pin = galleryEl('button', 'btn-secondary btn-compact', t('gallery.open_pin'))
+    pin.type = 'button'
+    pin.addEventListener('click', () => window.open(pageUrl, '_blank', 'noopener,noreferrer'))
+    controls.append(pin)
+  }
+  controls.append(del)
+  card.append(imageButton, controls)
+  return card
+}
+
+document.getElementById('galleryLightboxClose')?.addEventListener('click', () => {
+  document.getElementById('galleryLightbox').hidden = true
+})
+document.getElementById('galleryLightbox')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.hidden = true
+})
 
 // ============================================================
 // === Owner To Do ===

@@ -34,9 +34,12 @@ const KEY_PREFIX = 'mvdk_'
  * this field existed and stays the default. 'operator' is the IT operator's
  * key: the gate lets it reach /api/operator/* only (operator-gate.ts), and it
  * must expire -- an operator key without an end date cannot be minted.
+ * 'gallery' is the Pinterest browser extension's key (#616): the gate lets it
+ * save an image and read the topic list, nothing else (gallery-gate.ts). It
+ * may live until revoked, like a full key: the extension must not die silently.
  */
-export type DeviceKeyScope = 'full' | 'operator'
-export const DEVICE_KEY_SCOPES: readonly DeviceKeyScope[] = ['full', 'operator']
+export type DeviceKeyScope = 'full' | 'operator' | 'gallery'
+export const DEVICE_KEY_SCOPES: readonly DeviceKeyScope[] = ['full', 'operator', 'gallery']
 export const OPERATOR_KEY_DEFAULT_EXPIRY_DAYS = 90
 /** An operator key lives at most a year (owner decision 2026-10-05; a full key keeps its own ceiling). */
 export const OPERATOR_KEY_MAX_EXPIRY_DAYS = 365
@@ -73,9 +76,11 @@ interface CachedKey {
 }
 
 // Fail closed: only the literal 'full' (the column default) is a full key. An
-// unexpected stored value reads as the narrowest scope, never the widest.
+// unexpected stored value reads as a fenced scope, never the widest.
 function toScope(value: unknown): DeviceKeyScope {
-  return value === 'full' ? 'full' : 'operator'
+  if (value === 'full') return 'full'
+  if (value === 'gallery') return 'gallery'
+  return 'operator'
 }
 
 const cache = new Map<string, CachedKey>()

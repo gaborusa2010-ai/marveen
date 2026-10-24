@@ -9,6 +9,7 @@ import { watchEgressAllowlistBaseline, queueAllowlistReport } from './web/egress
 import { loadOrCreateDashboardToken } from './web/dashboard-auth.js'
 import { resolveAuth, requiresAuth, isFederationWireEndpoint, type AuthResult } from './web/auth-gate.js'
 import { operatorGateDecision } from './web/operator-gate.js'
+import { galleryGateDecision, isGalleryExtensionWrite } from './web/gallery-gate.js'
 import { readOperatorAccess } from './web/operator-access.js'
 import { tryHandleOperatorAccess } from './web/routes/operator-access.js'
 import { tryHandleOperator } from './web/routes/operator.js'
@@ -97,6 +98,7 @@ import { tryHandleTokenUsage } from './web/routes/token-usage.js'
 import { tryHandleCosts, startCostsSyncTask } from './web/routes/costs.js'
 import { tryHandleIdeas } from './web/routes/ideas.js'
 import { tryHandleNotes } from './web/routes/notes.js'
+import { tryHandleGallery } from './web/routes/gallery.js'
 import { tryHandleTodos } from './web/routes/todos.js'
 import { tryHandleVideoReview } from './web/routes/video-review.js'
 import { tryHandleToolLog } from './web/routes/tool-log.js'
@@ -161,7 +163,10 @@ export function startWebServer(port = 3420): http.Server {
     // Same-origin fetches (Origin absent, allowlisted, or matching the host the
     // server was actually reached on -- e.g. a Tailscale Serve / reverse-proxy
     // hostname) are accepted; a foreign Origin is rejected (the CSRF defence).
-    if (isBlockedCrossOriginWrite(method, origin, req.headers.host, req.headers['x-forwarded-host'] as string | undefined, allowedOrigins)) {
+    // The Pinterest gallery extension (#616) posts from its pinned chrome-extension
+    // origin, on its two paths only; it still needs its bearer key (gallery-gate.ts).
+    if (!isGalleryExtensionWrite(method, path, origin) &&
+        isBlockedCrossOriginWrite(method, origin, req.headers.host, req.headers['x-forwarded-host'] as string | undefined, allowedOrigins)) {
       logger.warn({ method, path, origin, host: req.headers.host, xForwardedHost: req.headers['x-forwarded-host'] }, 'CSRF: blocked write from foreign origin')
       res.writeHead(403, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Origin not allowed' }))
@@ -193,6 +198,13 @@ export function startWebServer(port = 3420): http.Server {
         logger.warn({ path, method, device: auth.kind === 'device' ? auth.device : undefined, reason: operatorDenied }, 'operator gate: denied')
         res.writeHead(403, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Forbidden for this credential', reason: operatorDenied }))
+        return
+      }
+      const galleryDenied = galleryGateDecision(auth, method, path)
+      if (galleryDenied) {
+        logger.warn({ path, method, device: auth.kind === 'device' ? auth.device : undefined, reason: galleryDenied }, 'gallery gate: denied')
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Forbidden for this credential', reason: galleryDenied }))
         return
       }
     }
@@ -287,6 +299,7 @@ export function startWebServer(port = 3420): http.Server {
       if (await tryHandleCosts(routeCtx)) return
       if (await tryHandleIdeas(routeCtx)) return
       if (await tryHandleNotes(routeCtx)) return
+      if (await tryHandleGallery(routeCtx)) return
       if (await tryHandleTodos(routeCtx)) return
       if (await tryHandleVideoReview(routeCtx, WEB_DIR)) return
       if (await tryHandleSpans(routeCtx)) return

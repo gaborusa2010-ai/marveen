@@ -73,6 +73,10 @@ import os
 
 LOG = os.path.join(os.path.dirname(__file__), "..", "store", "egress-blocked.log")
 LINE = re.compile(r'^(\S+) (\w+) url="([^"]+)"')
+# A caller with its own allowance (the owner's gallery saves, #616) labels its
+# lines; --budget counts one label's bucket, unlabelled lines are the agents'.
+SOURCE = re.compile(r' source="([a-z0-9-]+)"')
+SOURCE_NAME = re.compile(r"^[a-z0-9-]+$")
 
 
 # Second-level suffixes where the registrable domain is the LAST THREE labels.
@@ -152,7 +156,8 @@ def read(path):
                     tzinfo=dt.timezone.utc)
             except ValueError:
                 pass
-            rows.append((ts[:10], ts[11:16], host_of(url), when))
+            source = SOURCE.search(line)
+            rows.append((ts[:10], ts[11:16], host_of(url), when, source.group(1) if source else None))
     return rows, skipped
 
 
@@ -170,7 +175,12 @@ def main(argv=None):
                          "ujat. A kapu az allowlist, nem ez a szamlalo.")
     ap.add_argument("--cap", type=int, default=12,
                     help="plafon egy hostra, GORDULO 24 ORAS ablakra (alap 12)")
+    ap.add_argument("--source", metavar="NAME",
+                    help="--budget: a NAME cimkeju sorok sajat vodre (pl. gallery, a gazda "
+                         "mentesei); nelkule a cimke nelkuli, ugynoki sorok")
     a = ap.parse_args(argv)
+    if a.source is not None and not SOURCE_NAME.match(a.source):
+        ap.error("--source: csak a-z, 0-9 es kotojel")
 
     rows, selftest_skipped = read(a.log)
     if selftest_skipped:
@@ -191,9 +201,11 @@ def main(argv=None):
         # A rolling window needs no zone chosen and has no discontinuity to
         # exploit, so it answers both at once.
         since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
-        used = sum(1 for _, _, h, w in rows if h == want and w is not None and w >= since)
+        used = sum(1 for _, _, h, w, s in rows
+                   if h == want and s == a.source and w is not None and w >= since)
         left = a.cap - used
-        print(f"{want}: az elmult 24 oraban {used} letoltes, plafon {a.cap}.")
+        bucket = f" ({a.source} vodor)" if a.source else ""
+        print(f"{want}{bucket}: az elmult 24 oraban {used} letoltes, plafon {a.cap}.")
         if left > 0:
             print(f"MEHET meg {left}.")
             return 0
@@ -215,9 +227,9 @@ def main(argv=None):
         print(f"Nincs talalat az utolso {a.days} napban.")
         return 0
 
-    per_day = collections.Counter((d, h) for d, _, h, _ in rows)
-    per_min = collections.Counter((d, t, h) for d, t, h, _ in rows)
-    totals = collections.Counter(h for _, _, h, _ in rows)
+    per_day = collections.Counter((d, h) for d, _, h, *_ in rows)
+    per_min = collections.Counter((d, t, h) for d, t, h, *_ in rows)
+    totals = collections.Counter(h for _, _, h, *_ in rows)
 
     print(f"LETOLTESEK, utolso {a.days} nap")
     print("  [hatokor] Minden ALLOWED* naplosor: WebFetch, a browser-fetch")
