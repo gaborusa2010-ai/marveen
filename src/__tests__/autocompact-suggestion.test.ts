@@ -77,3 +77,17 @@ describe('emitToPane dismisses the suggestion before typing', () => {
     expect(firstChunk).toBeGreaterThan(dismiss)
   })
 })
+
+describe('sendSlashCommand dismisses the suggestion before typing', () => {
+  const GATE = readFileSync(join(__dirname, '../web/context-restart-gate-runner.ts'), 'utf-8')
+
+  it('calls the dismiss inside the lane before the literal command', () => {
+    const start = GATE.indexOf('export async function sendSlashCommand(')
+    expect(start).toBeGreaterThan(0)
+    const body = GATE.slice(start)
+    const dismiss = body.indexOf('await dismissAutocompactSuggestionIfPresent(session)')
+    const literal = body.indexOf("'-l', protectTrailingSemicolon(command)")
+    expect(dismiss).toBeGreaterThan(0)
+    expect(literal).toBeGreaterThan(dismiss)
+  })
+})

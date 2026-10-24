@@ -9,7 +9,7 @@ import { makeLazyBinResolver } from '../platform.js'
 import { MAIN_AGENT_ID, PROJECT_ROOT } from '../config.js'
 import { listAgentNames } from './agent-config.js'
 import { resolveAgentConfigDirForRead } from './claude-plans.js'
-import { agentSessionName, capturePane } from './agent-process.js'
+import { agentSessionName, capturePane, dismissAutocompactSuggestionIfPresent } from './agent-process.js'
 import { sendSystemDirective } from './system-directive.js'
 import { detectPaneState } from '../pane-state.js'
 import { detectsUsageLimit } from '../model-fallback.js'
@@ -720,6 +720,9 @@ export function diagnoseAgent(name: string, nowMs: number) {
  */
 export async function sendSlashCommand(session: string, command: string): Promise<void> {
   await withSessionSendLock(session, null, 'deliver', async () => {
+    // #642: typed into the autocompact suggestion, the Enter below would
+    // confirm "autocompact at 400k" instead of running the command.
+    await dismissAutocompactSuggestionIfPresent(session)
     execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), '-l', protectTrailingSemicolon(command)], { timeout: 5000 })
     execFileSync(tmuxBin(), ['send-keys', '-t', exactTmuxTarget(session), 'Enter'], { timeout: 5000 })
   })
