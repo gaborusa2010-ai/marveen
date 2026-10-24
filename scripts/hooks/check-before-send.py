@@ -51,6 +51,15 @@ UNVERIFIED_LINE = re.compile(
     r"\[nem ellen|unverified|not\s+verified|not\s+checked",
     re.I)
 
+# The same admission inside the OUTGOING TEXT. Measured 2026-10-22 (owner msg 8813,
+# "ugy adtal valaszt, hogy nem nezted meg"): the 06:57 UTC KDP reply said the fee
+# table was skipped, and passed, because the regex above reads only the Checked
+# block. First person only, so a code fact ("a kapu nem ellenorzi") still goes out.
+UNVERIFIED_REPLY = re.compile(
+    r"nem\s+n[eé]ztem|nem\s+ellen[oő]riztem|nem\s+m[eé]rtem|"
+    r"fejb[oő]l\s+(mondom|[ií]rom|tudom|van)|eml[eé]kezetb[oő]l",
+    re.I)
+
 # A reply that hands the owner a list of OPEN items. Measured 2026-10-11 16:21 BST
 # (owner msg 7355, "megint nem ellenorzod le magad"): the Checked block listed only
 # the two claims I HAD measured; the to-do list (two items already done) was added
@@ -166,6 +175,14 @@ def main() -> int:
                 + "\nA gazda dontese (msg 5856): eloszor megnezed, utana valaszolsz; a "
                 "'nem neztem meg' az uzenetben NEM megoldas, es a kihagyas sem (msg 5859: "
                 "'utana ugyis meg kell nezzed'). Ellenorizd MOST, es frissitsd a Checked: blokkot.")
+        admitted = [m.group(0) for m in UNVERIFIED_REPLY.finditer(reply)]
+        if admitted:
+            log({"outcome": "block-unverified-reply", "hits": admitted[:5], "reply_len": len(reply)})
+            return block(
+                "BLOKKOLVA (check-before-send): a KIMENO uzenet maga mondja, hogy valamit "
+                "nem ellenoriztel (" + ", ".join(admitted[:5]) + "). A gazda dontese (msg 5856, "
+                "megerositve msg 8813, 2026-10-22): eloszor megnezed, utana valaszolsz. "
+                "Ellenorizd MOST, es a mert eredmenyt ird az uzenetbe.")
         if OPEN_LIST.search(reply) and "\x00BOARD_READ" not in texts:
             log({"outcome": "block-open-list-unread", "reply_len": len(reply)})
             return block(
