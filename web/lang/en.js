@@ -2164,6 +2164,9 @@ window._i18n.en = {
   'gallery.close':            'Close image',
   'gallery.image_error':      'Image could not be loaded',
   'gallery.load_error':       'Could not load the gallery: {msg}',
+  'gallery.budget_left':      '{left} more saves left in the 24-hour allowance ({used} / {cap} used).',
+  'gallery.budget_next':      'The next slot frees up at {time}.',
+  'gallery.budget_out':       'The save allowance is used up ({cap} images / 24 hours). Saving resumes at {time}.',
   'gallery.error':            'Gallery operation failed: {msg}',
 
   'auth.card.title':              'Dashboard login',

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Marveen Gallery",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1uXrnxrJ0i2GQZLSX2t7jlDc/uqPm9vqWfYd5ag6VSHPweZ3VtHBn98jyQwomRhMwxNnsVsMBSHYDV4TnAxMvQHzDNutxb+C/EOPOI2lucKQjF0zBaHMvpw2BvtDMNLPOTeRODW0G4+FlndgdtFu5eakJkhJ+L9uZyzEdq649ck1q4qi3vW+PzdZg6LkALJ1IEl50bcy7BBcx5VImKzy2XmkCdHt0jwj/bvYmeT5hQxz819ilXRzPv5qDbjS4NMaVqCKk4W7D8lUYKFTaQt+efL5Qo2Za6iqaSE2/vPYLAlc9/XFyCw4kSmGMcZsmFn8npdIjWJXiubhakkLWYrrvQIDAQAB",
   "permissions": ["contextMenus", "notifications", "storage", "scripting", "activeTab"],
   "host_permissions": ["http://localhost:3420/*", "http://127.0.0.1:3420/*"],

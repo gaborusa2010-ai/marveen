@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm, access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initDatabase, getDb } from '../db.js'
-import { setGalleryDir, setGalleryFetcher, tryHandleGallery, type FetchResult } from '../web/routes/gallery.js'
+import { GALLERY_DAILY_CAP, runFetchBudget, setGalleryBudgetReader, setGalleryDir, setGalleryFetcher, tryHandleGallery, type FetchResult, type GalleryBudget } from '../web/routes/gallery.js'
 import type { RouteContext } from '../web/routes/types.js'
 
 let dir: string
@@ -23,8 +23,9 @@ function fake(sha = 'a'.repeat(64), type: 'png' | 'jpeg' = 'png') {
     return { ok: true, receipt: { path, bytes: 5, type, sha256: sha, url } }
   }
 }
-beforeEach(async () => { initDatabase(':memory:'); dir = await mkdtemp(join(tmpdir(), 'gallery-route-')); setGalleryDir(dir); setGalleryFetcher(fake()) })
-afterEach(async () => { setGalleryFetcher(null); setGalleryDir(null); await rm(dir, { recursive: true, force: true }) })
+const BUDGET: GalleryBudget = { used: 3, cap: 200, left: 197, next_free_at: '2026-10-25T17:25:21Z' }
+beforeEach(async () => { initDatabase(':memory:'); dir = await mkdtemp(join(tmpdir(), 'gallery-route-')); setGalleryDir(dir); setGalleryFetcher(fake()); setGalleryBudgetReader(async () => BUDGET) })
+afterEach(async () => { setGalleryFetcher(null); setGalleryBudgetReader(null); setGalleryDir(null); await rm(dir, { recursive: true, force: true }) })
 
 describe('/api/gallery', () => {
   it.each([
@@ -72,5 +73,48 @@ describe('/api/gallery', () => {
     expect((await call('GET', '/api/gallery/items/bad/image')).status).toBe(404)
     const file = join(dir, `${'a'.repeat(16)}.png`); await rm(file); expect((await call('GET', `/api/gallery/items/${id}/image`)).status).toBe(404); await writeFile(file, 'image')
     expect((await call('DELETE', `/api/gallery/items/${id}`)).status).toBe(200); await expect(access(file)).rejects.toThrow()
+  })
+
+  it('GET /budget returns the counter, 503 when it cannot be read, and takes no input', async () => {
+    expect(await call('GET', '/api/gallery/budget')).toMatchObject({ status: 200, body: BUDGET })
+    setGalleryBudgetReader(async () => null)
+    expect((await call('GET', '/api/gallery/budget')).status).toBe(503)
+    setGalleryBudgetReader(async () => { throw new Error('boom') })
+    expect((await call('GET', '/api/gallery/budget')).status).toBe(503)
+    expect((await call('GET', '/api/gallery/budget?x=1')).status).toBe(400)
+    expect((await call('POST', '/api/gallery/budget', {})).status).toBe(405)
+  })
+  it('every save answer carries the counter, and a failed read does not fail the save', async () => {
+    expect((await call('POST', '/api/gallery/items', { image_url: 'https://i.pinimg.com/originals/a.jpg' })).body.budget).toEqual(BUDGET)
+    setGalleryFetcher(async () => ({ ok: false, outcome: 'budget', detail: '' }))
+    expect((await call('POST', '/api/gallery/items', { image_url: 'https://i.pinimg.com/originals/c.jpg' })).body.budget).toEqual(BUDGET)
+    setGalleryFetcher(fake('b'.repeat(64))); setGalleryBudgetReader(async () => null)
+    const saved = await call('POST', '/api/gallery/items', { image_url: 'https://i.pinimg.com/originals/d.jpg' })
+    expect(saved.status).toBe(201); expect(saved.body.budget).toBeNull()
+  })
+  it('a picture already saved under another size is answered without a download', async () => {
+    const name = 'cf87a61d30486d7d3054e8cf3347198a'
+    let fetched = 0; setGalleryFetcher(async url => { fetched++; return fake()(url) })
+    expect((await call('POST', '/api/gallery/items', { image_url: `https://i.pinimg.com/originals/cf/87/a6/${name}.jpg` })).status).toBe(201)
+    const again = await call('POST', '/api/gallery/items', { image_url: `https://i.pinimg.com/736x/cf/87/a6/${name}.jpg`, topic: 'Más' })
+    expect(again.status).toBe(200); expect(again.body).toMatchObject({ duplicate: true, budget: BUDGET }); expect(fetched).toBe(1)
+    setGalleryFetcher(async url => { fetched++; return fake('c'.repeat(64))(url) })
+    expect((await call('POST', '/api/gallery/items', { image_url: `https://i.pinimg.com/736x/cf/87/a6/${'0'.repeat(32)}.jpg` })).status).toBe(201)
+    expect(fetched).toBe(2)
+  })
+})
+
+describe('runFetchBudget against the real fetch-budget.py', () => {
+  const line = (ago: number, source = ' source="gallery"') =>
+    `${new Date(Date.now() - ago).toISOString()} ALLOWED_IMAGE url="https://i.pinimg.com/a.jpg" reason="t" agent_type="t"${source}\n`
+  it('counts the gallery bucket of the rolling 24h window', async () => {
+    const log = join(dir, 'egress.log')
+    await writeFile(log, line(60_000) + line(3_600_000) + line(25 * 3_600_000) + line(60_000, ''))
+    const budget = await runFetchBudget({ log })
+    expect(budget).toMatchObject({ used: 2, cap: GALLERY_DAILY_CAP, left: GALLERY_DAILY_CAP - 2 })
+    expect(Date.parse(budget!.next_free_at!)).toBeGreaterThan(Date.now() + 22 * 3_600_000)
+  })
+  it('returns null when the script cannot answer', async () => {
+    expect(await runFetchBudget({ script: join(dir, 'missing.py') })).toBeNull()
   })
 })

@@ -66,6 +66,7 @@ Exit code 1 if any host is over a threshold, so it can gate a step.
 """
 import argparse
 import collections
+import json
 import datetime as dt
 import re
 import sys
@@ -178,12 +179,17 @@ def main(argv=None):
     ap.add_argument("--source", metavar="NAME",
                     help="--budget: a NAME cimkeju sorok sajat vodre (pl. gallery, a gazda "
                          "mentesei); nelkule a cimke nelkuli, ugynoki sorok")
+    ap.add_argument("--json", action="store_true",
+                    help="--budget: egyetlen JSON sor a stdout-ra (used, cap, left, next_free_at), "
+                         "a dashboard galeria-szamlalojanak (#616)")
     a = ap.parse_args(argv)
+    if a.json and not a.budget:
+        ap.error("--json csak --budget mellett")
     if a.source is not None and not SOURCE_NAME.match(a.source):
         ap.error("--source: csak a-z, 0-9 es kotojel")
 
     rows, selftest_skipped = read(a.log)
-    if selftest_skipped:
+    if selftest_skipped and not a.json:
         print(f"[selftest] {selftest_skipped} sor kihagyva a naplobol (SELFTEST_, "
               f"halozati keres nem tortent). Ha ez a szam EL, akkor az "
               f"EGRESS_GATE_SELFTEST bent ragadt, es VALODI letoltesek esnek ki "
@@ -201,9 +207,19 @@ def main(argv=None):
         # A rolling window needs no zone chosen and has no discontinuity to
         # exploit, so it answers both at once.
         since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
-        used = sum(1 for _, _, h, w, s in rows
-                   if h == want and s == a.source and w is not None and w >= since)
+        window = sorted(w for _, _, h, w, s in rows
+                        if h == want and s == a.source and w is not None and w >= since)
+        used = len(window)
         left = a.cap - used
+        if a.json:
+            # The oldest fetch in the window is the next one to age out, so it
+            # is when one more slot frees up. The selftest count travels along:
+            # a machine reader must not get a quietly smaller number either.
+            nxt = (window[0] + dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ") if window else None
+            print(json.dumps({"host": want, "source": a.source, "used": used, "cap": a.cap,
+                              "left": max(left, 0), "next_free_at": nxt,
+                              "selftest_skipped": selftest_skipped}))
+            return 0 if left > 0 else 1
         bucket = f" ({a.source} vodor)" if a.source else ""
         print(f"{want}{bucket}: az elmult 24 oraban {used} letoltes, plafon {a.cap}.")
         if left > 0:

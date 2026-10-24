@@ -8445,6 +8445,7 @@ body {
 .notes-row-today .notes-due-tag { background: var(--warning, #d4a52c); }
 .notes-deleted > summary { cursor: pointer; color: var(--text-muted, #888); margin-bottom: 8px; }
 
+.gallery-budget { color: var(--text-muted, #888); margin: -6px 0 16px; }
 .gallery-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
 .gallery-chip { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; background: var(--bg-card); color: var(--text); cursor: pointer; }
 .gallery-chip.active { border-color: var(--accent); background: var(--accent); color: #fff; }

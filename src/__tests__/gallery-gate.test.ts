@@ -20,7 +20,7 @@ beforeEach(() => { _clearDeviceKeyCacheForTest() })
 const gallery = { kind: 'device', scope: 'gallery' }
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 // Literals, not the exported list: a widened list must not move the test with it.
-const EXPECTED_OPEN = ['GET /api/gallery/topics', 'POST /api/gallery/items']
+const EXPECTED_OPEN = ['GET /api/gallery/budget', 'GET /api/gallery/topics', 'POST /api/gallery/items']
 
 describe('galleryGateDecision over every enumerated /api path', () => {
   const paths = enumerateApiPaths()
@@ -29,11 +29,12 @@ describe('galleryGateDecision over every enumerated /api path', () => {
     expect(paths.length).toBeGreaterThan(150)
     expect(paths).toContain('/api/gallery/items')
     expect(paths).toContain('/api/gallery/topics')
+    expect(paths).toContain('/api/gallery/budget')
     expect(paths).toContain('/api/auth/device-keys')
     expect(paths).toContain('/api/memories')
   })
 
-  it('a gallery key is refused everywhere except its two endpoints', () => {
+  it('a gallery key is refused everywhere except its own endpoints', () => {
     const open: string[] = []
     for (const p of paths) for (const m of METHODS) if (galleryGateDecision(gallery, m, p) === null) open.push(`${m} ${p}`)
     expect(open.sort()).toEqual(EXPECTED_OPEN)

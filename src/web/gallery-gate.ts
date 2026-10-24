@@ -20,6 +20,8 @@ export const GALLERY_EXTENSION_ORIGIN = `chrome-extension://${GALLERY_EXTENSION_
 export const GALLERY_EXTENSION_PATHS: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST', path: '/api/gallery/items' },
   { method: 'GET', path: '/api/gallery/topics' },
+  // Read-only: how many saves are left, shown in the right-click menu.
+  { method: 'GET', path: '/api/gallery/budget' },
 ]
 
 export function isGalleryExtensionPath(method: string, path: string): boolean {

@@ -19041,8 +19041,28 @@ async function loadGalleryThumb(img) {
   }
 }
 
+// The rolling 24h save allowance (tg 9147). A counter that cannot be read is
+// hidden, never shown as a guess.
+async function loadGalleryBudget() {
+  const el = document.getElementById('galleryBudget')
+  if (!el) return
+  let budget = null
+  try { budget = await galleryRequest('/api/gallery/budget') } catch {}
+  if (!budget || !Number.isInteger(budget.left) || !Number.isInteger(budget.cap)) { el.hidden = true; return }
+  const next = budget.next_free_at ? new Date(budget.next_free_at) : null
+  const time = next && !Number.isNaN(next.getTime())
+    ? next.toLocaleString((window._lang || 'hu') === 'hu' ? 'hu-HU' : 'en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null
+  const parts = budget.left > 0
+    ? [t('gallery.budget_left', { left: budget.left, used: budget.used, cap: budget.cap }), time ? t('gallery.budget_next', { time }) : '']
+    : [t('gallery.budget_out', { cap: budget.cap, time: time || '?' })]
+  el.textContent = parts.filter(Boolean).join(' ')
+  el.hidden = false
+}
+
 async function loadGalleryPage() {
   clearGalleryImages()
+  loadGalleryBudget()
   const filters = document.getElementById('galleryFilters')
   const content = document.getElementById('galleryContent')
   const empty = document.getElementById('galleryEmpty')

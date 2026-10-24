@@ -164,7 +164,7 @@ export function startWebServer(port = 3420): http.Server {
     // server was actually reached on -- e.g. a Tailscale Serve / reverse-proxy
     // hostname) are accepted; a foreign Origin is rejected (the CSRF defence).
     // The Pinterest gallery extension (#616) posts from its pinned chrome-extension
-    // origin, on its two paths only; it still needs its bearer key (gallery-gate.ts).
+    // origin, on its own paths only; it still needs its bearer key (gallery-gate.ts).
     if (!isGalleryExtensionWrite(method, path, origin) &&
         isBlockedCrossOriginWrite(method, origin, req.headers.host, req.headers['x-forwarded-host'] as string | undefined, allowedOrigins)) {
       logger.warn({ method, path, origin, host: req.headers.host, xForwardedHost: req.headers['x-forwarded-host'] }, 'CSRF: blocked write from foreign origin')

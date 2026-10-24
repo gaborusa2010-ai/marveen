@@ -1,5 +1,5 @@
 import { SERVER, KEY } from './config.js'
-import { candidateFromFacts, notificationText } from './lib.js'
+import { candidateFromFacts, menuTitle, notificationText } from './lib.js'
 
 const PARENT = 'gallery-parent'
 const CONTEXTS = ['image', 'link', 'page']
@@ -10,17 +10,18 @@ function notify(message) {
   chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon-128.png', title: 'Marveen Gallery', message })
 }
 
+async function getJson(path) {
+  try {
+    const response = await fetch(`${SERVER}${path}`, { headers: { Authorization: `Bearer ${KEY}` } })
+    return response.ok ? await response.json() : null
+  } catch { return null }
+}
+
 async function buildMenus() {
+  const [topics, budget] = KEY ? await Promise.all([getJson('/api/gallery/topics'), getJson('/api/gallery/budget')]) : [null, null]
   await chrome.contextMenus.removeAll()
-  chrome.contextMenus.create({ id: PARENT, title: 'Mentés a galériába', contexts: CONTEXTS, documentUrlPatterns: patterns })
-  let topics = []
-  if (KEY) {
-    try {
-      const response = await fetch(`${SERVER}/api/gallery/topics`, { headers: { Authorization: `Bearer ${KEY}` } })
-      if (response.ok) topics = await response.json()
-    } catch {}
-  }
-  topics.filter(x => x.topic).forEach((x, i) => {
+  chrome.contextMenus.create({ id: PARENT, title: menuTitle(budget), contexts: CONTEXTS, documentUrlPatterns: patterns })
+  ;(Array.isArray(topics) ? topics : []).filter(x => x.topic).forEach((x, i) => {
     chrome.contextMenus.create({ id: `topic:${i}:${x.topic}`, parentId: PARENT, title: `${x.topic} (${x.count})`, contexts: CONTEXTS })
   })
   chrome.contextMenus.create({ id: 'topic:none', parentId: PARENT, title: 'Téma nélkül', contexts: CONTEXTS })
@@ -79,7 +80,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     let body = {}
     try { body = await response.json() } catch {}
     notify(notificationText(response.status, body))
-    if (response.ok) await rebuildMenus()
+    // The counter in the menu title moves with every answer, failures included.
+    await rebuildMenus()
   } catch {
     notify('A dashboard nem érhető el (fut a gép?)')
   }

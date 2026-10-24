@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { largestFromSrcset, extractBackgroundUrl, pinPageUrl, notificationText, candidateFromFacts } from '../../extensions/pinterest-gallery/lib.js'
+import { largestFromSrcset, extractBackgroundUrl, pinPageUrl, notificationText, candidateFromFacts, budgetText, menuTitle, clockTime } from '../../extensions/pinterest-gallery/lib.js'
 
 describe('Pinterest gallery extension helpers', () => {
   it('selects the largest valid srcset candidate', () => {
@@ -40,5 +40,25 @@ describe('Pinterest gallery extension helpers', () => {
     expect(notificationText(415, {})).toBe('Ez nem kép')
     expect(notificationText(429, {})).toContain('Túl sok')
     expect(notificationText(502, {})).toContain('nem tölthető')
+  })
+  it('shows the remaining allowance, and nothing at all for a missing or malformed counter', () => {
+    const left = { used: 113, cap: 200, left: 87, next_free_at: '2026-10-25T17:25:21Z' }
+    const out = { used: 200, cap: 200, left: 0, next_free_at: '2026-10-25T17:25:21Z' }
+    const at = clockTime(out.next_free_at)
+    expect(at).toMatch(/^\d\d:\d\d$/)
+    expect(budgetText(left)).toBe('még 87 menthető')
+    expect(budgetText(out)).toBe(`elfogyott, újra ${at}-tól`)
+    expect(budgetText({ ...out, next_free_at: null })).toBe('elfogyott')
+    expect(budgetText({ ...out, next_free_at: 'nonsense' })).toBe('elfogyott')
+    for (const bad of [null, undefined, {}, { used: 1, cap: 2 }, { used: -1, cap: 2, left: 3 }, { used: '1', cap: 2, left: 1 }, { used: 1.5, cap: 2, left: 1 }]) {
+      expect(budgetText(bad)).toBeNull(); expect(menuTitle(bad)).toBe('Mentés a galériába')
+    }
+    expect(menuTitle(left)).toBe('Mentés a galériába (még 87/200)')
+    expect(menuTitle(out)).toBe(`Mentés a galériába (elfogyott, újra ${at}-tól)`)
+    expect(notificationText(201, { item: { topic: 'Kert' }, budget: left })).toBe('Mentve: Kert · még 87 menthető')
+    expect(notificationText(200, { duplicate: true, budget: left })).toBe('Már a galériában van · még 87 menthető')
+    expect(notificationText(429, { outcome: 'budget', budget: out })).toBe(`Elfogyott a mentési keret · elfogyott, újra ${at}-tól`)
+    expect(notificationText(429, { error: 'busy' })).toContain('Túl sok')
+    expect(notificationText(201, { item: { topic: 'Kert' }, budget: null })).toBe('Mentve: Kert')
   })
 })

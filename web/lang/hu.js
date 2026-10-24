@@ -2166,6 +2166,9 @@ window._i18n.hu = {
   'gallery.close':            'Kép bezárása',
   'gallery.image_error':      'A kép nem tölthető be',
   'gallery.load_error':       'A galéria nem tölthető be: {msg}',
+  'gallery.budget_left':      'Még {left} kép menthető a 24 órás keretből ({used} / {cap} felhasználva).',
+  'gallery.budget_next':      'A következő hely {time}-kor szabadul fel.',
+  'gallery.budget_out':       'Elfogyott a mentési keret ({cap} kép / 24 óra). Újra menthetsz: {time}.',
   'gallery.error':            'A galériaművelet nem sikerült: {msg}',
 
   'auth.card.title':              'Dashboard belépés',
