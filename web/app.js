@@ -12767,6 +12767,9 @@ const skillDetailOverlay = document.getElementById('skillDetailOverlay')
 
 let globalSkills = []
 let localAgentSkills = []
+let codexSkills = []
+let subagentDefs = []
+let skillsViewAgent = ''
 let skillsActiveFilter = 'all'
 let skillsSearchQuery = ''
 let skillsActiveCategory = 'all'
@@ -12819,12 +12822,20 @@ async function loadGlobalSkills() {
   skillsGrid.innerHTML = `<div class="connector-loading"><span class="spinner"></span> ${t('skills.loading')}</div>`
   skillsStats.innerHTML = ''
   try {
-    const [globalRes, localRes] = await Promise.all([
+    // Codex and sub-agent lists are extras: if either fails, the page still
+    // shows the Claude skills.
+    const optional = url => fetch(url).then(r => (r.ok ? r.json() : [])).catch(() => [])
+    const [globalRes, localRes, codexList, subagentList] = await Promise.all([
       fetch('/api/skills'),
       fetch('/api/skills/local'),
+      optional('/api/skills/codex'),
+      optional('/api/skills/subagents'),
     ])
     globalSkills = await globalRes.json()
     localAgentSkills = localRes.ok ? await localRes.json() : []
+    codexSkills = Array.isArray(codexList) ? codexList : []
+    subagentDefs = Array.isArray(subagentList) ? subagentList : []
+    renderSkillsAgentSelect()
     renderGlobalSkills()
   } catch (err) {
     console.error('Skills betoltes hiba:', err)
@@ -12857,6 +12868,16 @@ async function loadGlobalSkills() {
     })
   }
 
+  const agentSelect = document.getElementById('skillsAgentSelect')
+  if (agentSelect) {
+    agentSelect.addEventListener('change', () => {
+      skillsViewAgent = agentSelect.value
+      skillsActiveCategory = 'all'
+      renderSkillsSidebar()
+      renderGlobalSkillsGrid()
+    })
+  }
+
   const exportBtn = document.getElementById('skillsExportBtn')
   if (exportBtn) {
     exportBtn.addEventListener('click', () => {
@@ -12882,17 +12903,63 @@ function getSkillIcon(name) {
   return '\u2699\uFE0F'
 }
 
+function renderSkillsAgentSelect() {
+  const select = document.getElementById('skillsAgentSelect')
+  if (!select) return
+  const ids = new Set()
+  for (const s of globalSkills) {
+    const l = s.loading
+    if (l) for (const id of [...l.on, ...l.nameOnly, ...l.off]) ids.add(id)
+  }
+  for (const s of localAgentSkills) if (s.agentId) ids.add(s.agentId)
+  for (const d of subagentDefs) for (const id of d.agents || []) ids.add(id)
+  if (skillsViewAgent && !ids.has(skillsViewAgent)) skillsViewAgent = ''
+  select.innerHTML = `<option value="">${escapeHtml(t('skills.view_agent.all'))}</option>` +
+    [...ids].sort().map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('')
+  select.value = skillsViewAgent
+}
+
+// How one agent sees a skill under the daily allocation (#638): 'on',
+// 'name_only' or 'off'. null when the skill carries no loading data.
+function skillLoadState(skill, agentId) {
+  const l = skill.loading
+  if (!l) return null
+  if (l.off.includes(agentId)) return 'off'
+  if (l.nameOnly.includes(agentId)) return 'name_only'
+  return 'on'
+}
+
+// Everything the active source filter and the "Kinél" agent choose, before
+// category and search. kind: global | local | subagent | codex.
+function skillsSourceItems() {
+  const f = skillsActiveFilter
+  const items = []
+  if (f === 'all' || f === 'user' || f === 'plugin') {
+    for (const s of globalSkills) if (f === 'all' || s.source === f) items.push({ kind: 'global', skill: s })
+  }
+  if (f === 'all' || f === 'agent') for (const s of localAgentSkills) items.push({ kind: 'local', skill: s })
+  if (f === 'all' || f === 'subagent') for (const s of subagentDefs) items.push({ kind: 'subagent', skill: s })
+  if (f === 'all' || f === 'codex') for (const s of codexSkills) items.push({ kind: 'codex', skill: s })
+  if (!skillsViewAgent) return items
+
+  const agent = skillsViewAgent
+  return items.filter(({ kind, skill }) => {
+    // The Claude sessions never load the Codex tree.
+    if (kind === 'codex') return false
+    if (kind === 'subagent') return skill.global || (skill.agents || []).includes(agent)
+    const state = skillLoadState(skill, agent)
+    if (state) return state !== 'off'
+    // A sub-agent's own skill reaches only that agent.
+    if (kind === 'local') return skill.agentId === agent
+    return true
+  })
+}
+
 function renderSkillsSidebar() {
   const sidebar = document.getElementById('skillsCategorySidebar')
   if (!sidebar) return
 
-  // For the 'agent' filter, category counts come from localAgentSkills so the
-  // sidebar stays populated. All other filters draw from globalSkills as before.
-  const sourceFiltered = skillsActiveFilter === 'agent'
-    ? localAgentSkills
-    : skillsActiveFilter === 'all'
-      ? globalSkills
-      : globalSkills.filter(s => s.source === skillsActiveFilter)
+  const sourceFiltered = skillsSourceItems().map(i => i.skill)
 
   const catCounts = new Map()
   for (const s of sourceFiltered) {
@@ -12932,6 +12999,8 @@ function renderGlobalSkills() {
     <div class="stat-card"><div class="stat-value" style="color:var(--info)">${userCount}</div><div class="stat-label">${t('skills.stat.user')}</div></div>
     ${pluginCount ? `<div class="stat-card"><div class="stat-value" style="color:var(--accent)">${pluginCount}</div><div class="stat-label">${t('skills.stat.plugin')}</div></div>` : ''}
     ${localAgentSkills.length ? `<div class="stat-card"><div class="stat-value" style="color:var(--warning)">${localAgentSkills.length}</div><div class="stat-label">${t('skills.stat.agent_local')}</div></div>` : ''}
+    ${subagentDefs.length ? `<div class="stat-card"><div class="stat-value">${subagentDefs.length}</div><div class="stat-label">${t('skills.stat.subagent')}</div></div>` : ''}
+    ${codexSkills.length ? `<div class="stat-card"><div class="stat-value">${codexSkills.length}</div><div class="stat-label">${t('skills.stat.codex')}</div></div>` : ''}
   `
 
   skillsActiveCategory = 'all'
@@ -12942,26 +13011,12 @@ function renderGlobalSkills() {
 function renderGlobalSkillsGrid() {
   skillsGrid.innerHTML = ''
 
-  const isAgentFilter = skillsActiveFilter === 'agent'
-
-  // When 'agent' filter is active, show only local agent skills; otherwise show global/plugin.
-  const filteredGlobal = isAgentFilter ? [] : globalSkills.filter(s => {
-    if (skillsActiveFilter !== 'all' && s.source !== skillsActiveFilter) return false
+  const allFiltered = skillsSourceItems().filter(({ skill: s }) => {
     if (skillsActiveCategory !== 'all' && deriveSkillCategory(s.name) !== skillsActiveCategory) return false
     if (!skillsSearchQuery) return true
-    const haystack = [s.name, s.label, s.description, ...(s.keywords || [])].join(' ').toLowerCase()
+    const haystack = [s.name, s.label, s.description, s.agentId, ...(s.agents || []), ...(s.keywords || [])].join(' ').toLowerCase()
     return haystack.includes(skillsSearchQuery)
   })
-
-  // Local agent skills: always merged in for 'all' or filtered to 'agent'.
-  const filteredLocal = (skillsActiveFilter === 'all' || isAgentFilter) ? localAgentSkills.filter(s => {
-    if (skillsActiveCategory !== 'all' && deriveSkillCategory(s.name) !== skillsActiveCategory) return false
-    if (!skillsSearchQuery) return true
-    const haystack = [s.name, s.label, s.description, s.agentId, ...(s.keywords || [])].join(' ').toLowerCase()
-    return haystack.includes(skillsSearchQuery)
-  }) : []
-
-  const allFiltered = [...filteredGlobal, ...filteredLocal]
 
   if (allFiltered.length === 0) {
     skillsEmpty.hidden = false
@@ -12969,12 +13024,28 @@ function renderGlobalSkillsGrid() {
   }
   skillsEmpty.hidden = true
 
-  const sourceLabels = { user: 'user', plugin: 'plugin', agent: t('skills.filter.agent') }
+  const sourceLabels = { user: 'user', plugin: 'plugin', agent: t('skills.filter.agent'), subagent: t('skills.filter.subagent'), codex: t('skills.filter.codex') }
 
-  const renderCard = (skill, isLocal) => {
+  const loadingBadge = (skill) => {
+    const l = skill.loading
+    if (!l) return ''
+    if (skillsViewAgent) {
+      const state = skillLoadState(skill, skillsViewAgent)
+      return `<span class="skills-load-badge skills-load-badge--${state.replace('_', '-')}" title="${escapeHtml(t('skills.loading.title'))}">${escapeHtml(t('skills.loading.' + state))}</span>`
+    }
+    const parts = [['on', l.on], ['name_only', l.nameOnly], ['off', l.off]].filter(([, ids]) => ids.length)
+    const title = [t('skills.loading.title'), ...parts.map(([k, ids]) => `${t('skills.loading.' + k)}: ${ids.join(', ')}`)].join('\n')
+    return parts.map(([k, ids]) =>
+      `<span class="skills-load-badge skills-load-badge--${k.replace('_', '-')}" title="${escapeHtml(title)}">${escapeHtml(t('skills.loading.' + k))} ${ids.length}</span>`
+    ).join('')
+  }
+
+  const renderCard = (skill, kind) => {
+    const isLocal = kind === 'local'
+    const isStatic = kind === 'subagent' || kind === 'codex'
     const card = document.createElement('div')
-    card.className = isLocal ? 'skills-card skills-card--local' : 'skills-card'
-    const icon = getSkillIcon(skill.name)
+    card.className = 'skills-card' + (isLocal ? ' skills-card--local' : '') + (isStatic ? ' skills-card--static' : '')
+    const icon = kind === 'subagent' ? '\u{1F916}' : getSkillIcon(skill.name)
     const sourceBadge = isLocal
       ? `<span class="connector-source-badge skills-badge--agent">${escapeHtml(skill.agentId)}</span>`
       : (skill.source ? `<span class="connector-source-badge">${escapeHtml(sourceLabels[skill.source] || skill.source)}</span>` : '')
@@ -12984,12 +13055,22 @@ function renderGlobalSkillsGrid() {
     const healthTitle = hasDesc ? t('skills.health.ok') : t('skills.health.nodesc')
 
     const kws = (skill.keywords || []).slice(0, 3)
+    if (kind === 'codex' && skill.system) kws.unshift(t('skills.codex.system'))
+    if (kind === 'subagent' && skill.model) kws.push(skill.model)
     const kwTags = kws.map(k => `<span class="skill-keyword-tag">${escapeHtml(k)}</span>`).join('')
 
     const agents = skill.agents || []
-    const agentBadges = agents.length > 0
-      ? `<span class="skills-agent-badge skill-agent-count" title="${escapeHtml(agents.join(', '))}">&#x1F916; ${agents.length} ${t('skills.agents.count')}</span>`
-      : ''
+    let agentBadges = ''
+    if (kind === 'subagent') {
+      agentBadges = skill.global
+        ? `<span class="skills-agent-badge">${escapeHtml(t('skills.subagent.global'))}</span>`
+        : (agents.length ? `<span class="skills-agent-badge" title="${escapeHtml(agents.join(', '))}">&#x1F916; ${escapeHtml(agents.join(', '))}</span>` : '')
+      if (skill.variants > 1) agentBadges += `<span class="skills-load-badge skills-load-badge--off">${skill.variants} ${escapeHtml(t('skills.subagent.variants'))}</span>`
+    } else if (skill.loading) {
+      agentBadges = loadingBadge(skill)
+    } else if (agents.length > 0) {
+      agentBadges = `<span class="skills-agent-badge skill-agent-count" title="${escapeHtml(agents.join(', '))}">&#x1F916; ${agents.length} ${t('skills.agents.count')}</span>`
+    }
 
     const mtimeStr = skill.mtime ? formatMtime(skill.mtime) : ''
 
@@ -13012,12 +13093,12 @@ function renderGlobalSkillsGrid() {
         ${mtimeStr ? `<span class="skill-card-mtime" title="${t('skills.mtime.title')}">${escapeHtml(mtimeStr)}</span>` : ''}
       </div>` : ''}
     `
-    card.addEventListener('click', () => openSkillDetail(skill.name, skill.label, skill.agentId || null))
+    if (isStatic) card.title = t('skills.readonly.title')
+    else card.addEventListener('click', () => openSkillDetail(skill.name, skill.label, skill.agentId || null))
     skillsGrid.appendChild(card)
   }
 
-  for (const skill of filteredGlobal) renderCard(skill, false)
-  for (const skill of filteredLocal) renderCard(skill, true)
+  for (const { kind, skill } of allFiltered) renderCard(skill, kind)
 }
 
 let _skillDetailCurrentName = null

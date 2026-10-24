@@ -688,7 +688,9 @@
           </div>
         </div>
         <div class="info-box" id="skillsInfoBox">
-          Minden itt listázott skill automatikusan elérhető minden sub-agent számára, mert ugyanabban a HOME-ban futnak, mint a fő session.
+          A közös skillek (user mappa és a fő ágens saját mappája) minden ügynök gépén ott vannak, de hogy ki hogyan látja, azt a napi skill-kiosztás dönti el:
+          teljes (név és leírás), csak név (hívható, de a listában leírás nélkül áll), vagy ki. A kártyán ez látszik, a "Kinél" választóval egy ügynökre szűrhetsz.
+          A segéd-ügynökök (sub-agent definíciók) és a Codex skilljei csak olvashatók itt; a Codex skilljeit a Claude-os ügynökök nem töltik be.
           A Claude CLI beépített slash-parancsai (init, review, security-review, loop, schedule, stb.) mindig elérhetők,
           de itt nem szerepelnek, mert a `claude` binárisban élnek és nem fájlrendszeri források.
           Új skillt a jobb felső "Új skill" gombbal tudsz létrehozni vagy importálni.
@@ -707,7 +709,15 @@
           <button class="skills-filter-btn" data-filter="user" data-i18n="skills.filter.user">User</button>
           <button class="skills-filter-btn" data-filter="plugin" data-i18n="skills.filter.plugin">Plugin</button>
           <button class="skills-filter-btn" data-filter="agent" data-i18n="skills.filter.agent">Ágens</button>
+          <button class="skills-filter-btn" data-filter="subagent" data-i18n="skills.filter.subagent">Segéd-ügynök</button>
+          <button class="skills-filter-btn" data-filter="codex" data-i18n="skills.filter.codex">Codex</button>
         </div>
+        <label class="skills-agent-select-wrap">
+          <span data-i18n="skills.view_agent.label">Kinél:</span>
+          <select id="skillsAgentSelect" class="skills-agent-select">
+            <option value="" data-i18n="skills.view_agent.all">mindenkinél</option>
+          </select>
+        </label>
       </div>
       <div class="skills-body-wrap">
         <nav class="skills-category-sidebar" id="skillsCategorySidebar"></nav>

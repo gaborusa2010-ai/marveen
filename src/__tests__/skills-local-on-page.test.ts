@@ -43,7 +43,7 @@ describe('local agent skills on global Skills page', () => {
   })
 
   it('local skill cards get skills-card--local CSS modifier', () => {
-    expect(APP).toContain("'skills-card skills-card--local'")
+    expect(APP).toMatch(/isLocal \? ' skills-card--local' : ''/)
   })
 
   it('CSS defines .skills-card--local with distinct border/background', () => {
@@ -69,7 +69,9 @@ describe('local agent skills on global Skills page', () => {
   it('sidebar uses localAgentSkills for agent filter (categories stay populated)', () => {
     // When the 'agent' filter is active, renderSkillsSidebar must draw from
     // localAgentSkills -- not globalSkills -- so category labels don't disappear.
-    expect(APP).toMatch(/skillsActiveFilter === 'agent'[\s\S]{0,100}localAgentSkills/)
+    // Both the sidebar and the grid draw from skillsSourceItems().
+    expect(APP).toMatch(/f === 'agent'\) for \(const s of localAgentSkills\)/)
+    expect(APP).toMatch(/function renderSkillsSidebar[\s\S]{0,200}skillsSourceItems\(\)/)
   })
 
   it('documented stat card and dead code removed', () => {

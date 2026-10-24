@@ -50,6 +50,57 @@ function getSkillAgents(skillDirName: string): string[] {
   return agents
 }
 
+function fleetAgentIds(): string[] {
+  const names = listAgentNames()
+  return names.includes(MAIN_AGENT_ID) ? names : [MAIN_AGENT_ID, ...names]
+}
+
+function agentClaudeDir(agentId: string): string {
+  return agentId === MAIN_AGENT_ID ? join(PROJECT_ROOT, '.claude') : join(agentDir(agentId), '.claude')
+}
+
+type SkillLoading = { on: string[]; nameOnly: string[]; off: string[] }
+
+// The skillOverrides scripts/skill-valasztas.py writes into each agent's
+// .claude/settings.local.json (#638). This reads what is APPLIED, not the
+// allocation in store/skill-kiosztas.json, because the file is what Claude
+// Code obeys. No file, or a skill missing from it, means the default: listed in full.
+function readSkillOverrides(): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>()
+  for (const agentId of fleetAgentIds()) {
+    const raw = readFileOr(join(agentClaudeDir(agentId), 'settings.local.json'), '')
+    if (!raw) { out.set(agentId, {}); continue }
+    try {
+      const parsed = JSON.parse(raw) as { skillOverrides?: unknown }
+      const ov = parsed.skillOverrides
+      out.set(agentId, ov && typeof ov === 'object' && !Array.isArray(ov) ? ov as Record<string, unknown> : {})
+    } catch {
+      out.set(agentId, {})
+    }
+  }
+  return out
+}
+
+function skillLoading(skillName: string, overrides: Map<string, Record<string, unknown>>): SkillLoading {
+  const loading: SkillLoading = { on: [], nameOnly: [], off: [] }
+  for (const [agentId, ov] of overrides) {
+    const state = ov[skillName]
+    if (state === 'off') loading.off.push(agentId)
+    else if (state === 'name-only') loading.nameOnly.push(agentId)
+    else loading.on.push(agentId)
+  }
+  return loading
+}
+
+function listSkillDirs(root: string): string[] {
+  let entries: string[] = []
+  try { entries = readdirSync(root) } catch { return [] }
+  return entries.filter(e => {
+    if (e.startsWith('.')) return false
+    try { return statSync(join(root, e)).isDirectory() && existsSync(join(root, e, 'SKILL.md')) } catch { return false }
+  })
+}
+
 export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
   const { req, res, path, method } = ctx
 
@@ -59,6 +110,7 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
       label: string
       description: string
       agents: string[]
+      loading?: SkillLoading
       keywords: string[]
       path: string
       mtime: number
@@ -76,8 +128,10 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
         try { return statSync(join(USER_SKILLS_DIR, f)).isDirectory() } catch { return false }
       })
       // Global user skills are available to every agent via shared HOME --
-      // no per-agent copy exists. Show all fleet agent names as coverage.
+      // no per-agent copy exists. Show all fleet agent names as coverage;
+      // `loading` says how each agent actually sees the skill (#638).
       const allAgents = listAgentNames()
+      const overrides = readSkillOverrides()
       for (const dir of dirs) {
         const skillMdPath = join(USER_SKILLS_DIR, dir, 'SKILL.md')
         if (!existsSync(skillMdPath)) continue
@@ -90,6 +144,7 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
           description: parseSkillDescription(content),
           keywords: parseSkillKeywords(content),
           agents: allAgents,
+          loading: skillLoading(dir, overrides),
           path: join(USER_SKILLS_DIR, dir),
           mtime,
           source: 'user',
@@ -171,8 +226,13 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
       keywords: string[]
       mtime: number
       source: 'agent'
+      loading?: SkillLoading
     }
     const result: LocalSkillEntry[] = []
+    // The repo-root skills (the main agent's own) load into every session
+    // started under PROJECT_ROOT, sub-agents included, so the overrides
+    // decide them too. A sub-agent's own skills reach only that agent.
+    const overrides = readSkillOverrides()
     // Prepend MAIN_AGENT_ID explicitly: listAgentNames() scans AGENTS_BASE_DIR
     // subdirectories, so the main agent (which lives in PROJECT_ROOT, not under
     // agents/<id>/) is never returned by that call.
@@ -207,10 +267,90 @@ export async function tryHandleSkills(ctx: RouteContext): Promise<boolean> {
           keywords: parseSkillKeywords(content),
           mtime,
           source: 'agent',
+          ...(agentName === MAIN_AGENT_ID ? { loading: skillLoading(entry, overrides) } : {}),
         })
       }
     }
     result.sort((a, b) => a.agentId.localeCompare(b.agentId) || a.name.localeCompare(b.name))
+    json(res, result)
+    return true
+  }
+
+  // Codex CLI skills: a separate tree the Claude sessions never load. Read-only:
+  // nothing on this page writes there.
+  if (path === '/api/skills/codex' && method === 'GET') {
+    const codexSkillsDir = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'skills')
+    const result: Array<{ name: string; label: string; description: string; keywords: string[]; mtime: number; source: 'codex'; system: boolean }> = []
+    for (const [root, system] of [[codexSkillsDir, false], [join(codexSkillsDir, '.system'), true]] as const) {
+      for (const dir of listSkillDirs(root)) {
+        const skillMdPath = join(root, dir, 'SKILL.md')
+        const content = readFileOr(skillMdPath, '')
+        let mtime = 0
+        try { mtime = statSync(skillMdPath).mtimeMs } catch { /* no-op */ }
+        result.push({
+          name: dir,
+          label: dir,
+          description: parseSkillDescription(content),
+          keywords: parseSkillKeywords(content),
+          mtime,
+          source: 'codex',
+          system,
+        })
+      }
+    }
+    result.sort((a, b) => Number(a.system) - Number(b.system) || a.name.localeCompare(b.name))
+    json(res, result)
+    return true
+  }
+
+  // Sub-agent definitions (.claude/agents/*.md): the global ones reach every
+  // agent through the shared ~/.claude/agents, the rest only the agent whose
+  // folder holds them. One entry per name; `variants` > 1 means the copies differ.
+  if (path === '/api/skills/subagents' && method === 'GET') {
+    type SubagentEntry = {
+      name: string
+      description: string
+      tools: string
+      model: string
+      global: boolean
+      agents: string[]
+      variants: number
+      source: 'subagent'
+    }
+    const byName = new Map<string, SubagentEntry & { contents: Set<string> }>()
+    const scan = (dir: string, owner: string | null): void => {
+      let files: string[] = []
+      try { files = readdirSync(dir) } catch { return }
+      for (const f of files) {
+        if (!f.endsWith('.md') || f.startsWith('.')) continue
+        const content = readFileOr(join(dir, f), '')
+        if (!content) continue
+        const name = parseFrontmatterField(content, 'name') || basename(f, '.md')
+        let entry = byName.get(name)
+        if (!entry) {
+          entry = {
+            name,
+            description: parseFrontmatterField(content, 'description'),
+            tools: parseFrontmatterField(content, 'tools'),
+            model: parseFrontmatterField(content, 'model'),
+            global: false,
+            agents: [],
+            variants: 0,
+            source: 'subagent',
+            contents: new Set(),
+          }
+          byName.set(name, entry)
+        }
+        entry.contents.add(content)
+        if (owner === null) entry.global = true
+        else if (!entry.agents.includes(owner)) entry.agents.push(owner)
+      }
+    }
+    scan(join(homedir(), '.claude', 'agents'), null)
+    for (const agentId of fleetAgentIds()) scan(join(agentClaudeDir(agentId), 'agents'), agentId)
+    const result: SubagentEntry[] = [...byName.values()]
+      .map(({ contents, ...e }) => ({ ...e, variants: contents.size }))
+      .sort((a, b) => a.name.localeCompare(b.name))
     json(res, result)
     return true
   }

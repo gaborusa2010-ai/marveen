@@ -6002,6 +6002,29 @@ main.kanban-active { padding-left: 16px; padding-right: 16px; }
 .skills-filter-btns {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+}
+
+.skills-agent-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.skills-agent-select {
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.skills-agent-select:focus {
+  border-color: var(--accent);
 }
 
 .skills-filter-btn {
@@ -6324,6 +6347,41 @@ main.kanban-active { padding-left: 16px; padding-right: 16px; }
   background: var(--bg-input);
   color: var(--text-muted);
   font-style: italic;
+}
+
+.skills-load-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.skills-load-badge--on {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.skills-load-badge--name-only {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.skills-load-badge--off {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Codex skills and sub-agent definitions: listed, not opened or edited here. */
+.skills-card--static {
+  cursor: default;
+}
+
+.skills-card--static:hover {
+  border-color: var(--border);
+  box-shadow: none;
+  transform: none;
 }
 
 .skills-empty {
