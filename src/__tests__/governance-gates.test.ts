@@ -731,7 +731,10 @@ describe('telegram copy gate wiring', () => {
     injectTelegramCopyGate(settings)
     const ptu = (settings.hooks as Record<string, unknown>).PreToolUse as unknown[]
     expect(JSON.stringify(ptu)).toContain('egress-gate.mjs')
-    expect(ptu).toHaveLength(2)
+    // WebFetch entry kept, plus the telegram copy-gate entry and the
+    // closed-topic Bash entry (tg-valasztas.py button questions).
+    expect(ptu).toHaveLength(3)
+    expect(ptu[0]).toEqual({ matcher: 'WebFetch', hooks: [{ type: 'command', command: 'node "/x/egress-gate.mjs"' }] })
   })
 })
 

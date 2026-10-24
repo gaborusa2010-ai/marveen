@@ -79,6 +79,9 @@ const EXPECTED: Record<string, string[]> = {
   ],
   PreToolUse: [
     'outgoing-copy-gate.py @ Bash',
+    // closed-topic-gate.py on Bash: tg-valasztas.py sends the button question through
+    // the Bot API, which the Telegram channel matcher never sees (Prospero, msg 11849).
+    'closed-topic-gate.py @ Bash',
     'outgoing-copy-gate.py @ .*send_email.*',
     'outgoing-copy-gate.py @ .*manage_email.*',
     'outgoing-copy-gate.py @ .*[Gg]mail.*__.*',
@@ -97,10 +100,12 @@ const EXPECTED: Record<string, string[]> = {
     // Bash command reaches for; global-skill-write-gate.mjs stops a write aimed at the
     // shared skill tree; check-before-send.py (owner, Telegram msg 5850) needs the
     // Checked block BEFORE a Telegram reply leaves; line-cap-gate.py (owner, msg 7441)
-    // denies a SKILL.md or hand-written CLAUDE.md past 500 lines.
+    // denies a SKILL.md or hand-written CLAUDE.md past 500 lines; closed-topic-gate.py
+    // (owner, Telegram msg 8816) stops a reply that reopens a closed topic without a new fact.
     'bash-egress-gate.mjs @ Bash', 'global-skill-write-gate.mjs @ Bash',
     'global-skill-write-gate.mjs @ Write|Edit|MultiEdit|NotebookEdit',
     'check-before-send.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
+    'closed-topic-gate.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
     'line-cap-gate.py @ Write|Edit|MultiEdit',
   ],
   // Local additions on this install: ledger-midturn-capture.py backfills mid-turn

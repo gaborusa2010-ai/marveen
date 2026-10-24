@@ -1524,6 +1524,15 @@ export function agentGetsTelegramCopyGate(name: string): boolean {
   return name !== MAIN_AGENT_ID
 }
 
+// The closed-topic gate rides the same Telegram entry (owner, Telegram msg 8813 +
+// 8816, 2026-10-22: already-discussed topics keep coming back). It reads the
+// shared store/lezart-ugyek.json and fails open, so a sub-agent with its own bot
+// is held to the same list as the main agent, which wires it in its own
+// project settings.
+export function closedTopicGateCommand(): string {
+  return `python3 "${join(PROJECT_ROOT, 'scripts', 'hooks', 'closed-topic-gate.py')}"`
+}
+
 // Idempotently wire the outgoing-copy-gate PreToolUse hook onto the Telegram
 // send tools. Same shape + dedupe discipline as injectEmailSendGate, with one
 // deliberate difference: the dedupe filter is scoped to entries that carry BOTH
@@ -1535,21 +1544,41 @@ export function injectTelegramCopyGate(existing: Record<string, unknown>): void 
     ? existing.hooks
     : (existing.hooks = {})) as Record<string, unknown>
   const command = pythonHookCommand(join(PROJECT_ROOT, 'scripts', 'hooks', 'outgoing-copy-gate.py'))
+  const closedTopic = closedTopicGateCommand()
   // Registration guard: a /tmp or missing path must never enter shared settings.
   if (isUnsafeHookCommand(command)) return
   const entry = {
     matcher: TELEGRAM_COPY_GATE_MATCHER,
-    hooks: [{ type: 'command', command, timeout: 10 }],
+    hooks: [
+      { type: 'command', command, timeout: 10 },
+      ...(isUnsafeHookCommand(closedTopic) ? [] : [{ type: 'command', command: closedTopic, timeout: 10 }]),
+    ],
   }
+  // The button question (scripts/tg-valasztas.py) goes out through the Bot API
+  // from Bash, which the Telegram matcher never sees; sub-agents send it too
+  // (Prospero, msg 11852: tg 8794). The gate itself only acts on a Bash call
+  // that runs that script.
+  const bashEntry = isUnsafeHookCommand(closedTopic)
+    ? []
+    : [{ matcher: 'Bash', hooks: [{ type: 'command', command: closedTopic, timeout: 10 }] }]
   const prev = Array.isArray(hooks.PreToolUse) ? (hooks.PreToolUse as unknown[]) : []
   hooks.PreToolUse = [
     ...prev.filter((e) => {
       const j = JSON.stringify(e)
+      const matcher = (e as { matcher?: unknown })?.matcher
+      if (matcher === 'Bash' && isClosedTopicBashEntry(e)) return false
       if (!j.includes('outgoing-copy-gate.py')) return true
-      return (e as { matcher?: unknown })?.matcher !== TELEGRAM_COPY_GATE_MATCHER
+      return matcher !== TELEGRAM_COPY_GATE_MATCHER
     }),
     entry,
+    ...bashEntry,
   ]
+}
+
+function isClosedTopicBashEntry(e: unknown): boolean {
+  const list = (e as { matcher?: unknown; hooks?: unknown })?.hooks
+  return (e as { matcher?: unknown })?.matcher === 'Bash' && Array.isArray(list) && list.length > 0
+    && list.every((h) => String((h as { command?: unknown })?.command ?? '').includes('closed-topic-gate.py'))
 }
 
 // Which tools the destructive-gate inspects. Bash carries the banned commands
@@ -1745,7 +1774,9 @@ export function ensureTelegramCopyGate(name: string): boolean {
     return j.includes('outgoing-copy-gate.py')
       && (e as { matcher?: unknown })?.matcher === TELEGRAM_COPY_GATE_MATCHER
   })
-  if (wiredHere && hookCommandWired(JSON.stringify(ptu), command)) return false
+  if (wiredHere && hookCommandWired(JSON.stringify(ptu), command)
+    && JSON.stringify(ptu).includes('closed-topic-gate.py')
+    && ptu.some(isClosedTopicBashEntry)) return false
   injectTelegramCopyGate(settings)
   atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
   return true
@@ -3490,8 +3521,8 @@ export function buildMemorySearchLabelBody(name: string): string {
   return [
     '## Memória-keresés: a FEJLÉCET is olvasd el (KÖTELEZŐ)',
     '',
-    'A keresés alapból ENGEDÉKENY: ha egyetlen valódi szavad sem talál, eldobja őket, és a',
-    'maradék töltelékszavakra hozott sorokat adja vissza. A body ilyenkor UGYANÚGY néz ki, mint',
+    'A keresés alapból ENGEDÉKENY: ha a szavaid EGYÜTT nem találnak semmit, a töltelékszavakat',
+    'eldobja, és azokat a sorokat adja vissza, amikben a többi szó közül LEGALÁBB EGY szerepel. A body ilyenkor UGYANÚGY néz ki, mint',
     'egy valódi találat -- a különbség KIZÁRÓLAG az `X-Memory-Search` fejlécben utazik. Ezért a',
     'keresés receptje `-D`-vel megy, és a `grep` NEM opcionális:',
     '',
@@ -3502,7 +3533,7 @@ export function buildMemorySearchLabelBody(name: string): string {
     '```',
     '',
     '- `relaxed=true` -- semmi nem illeszkedett ÚGY, AHOGY KÉRTED; amit látsz, az mentett',
-    '  közelítés, NEM bizonyíték. Egy sosem létezett minta így ötven sorral válaszol.',
+    '  közelítés, NEM bizonyíték. Egy sosem létezett szó egy létező mellett így ötven sorral válaszol.',
     '- `relaxed=false` -- a kérdés úgy illeszkedett, ahogy kérted. NEM jelenti azt, hogy ez',
     '  MINDEN, és azt sem, hogy van találat: a `relaxed=false; hits=0` létező válasz.',
     '',
@@ -3743,7 +3774,7 @@ Keresés (mielőtt válaszolsz, nézd meg van-e releváns emlék):
 curl -s -D /tmp/mem-fejlec-AGENT_NAME.txt -H "Authorization: Bearer $(cat ${tokenPath})" "${dashboardOrigin}/api/memories?agent=AGENT_NAME&q=KULCSSZO&category=warm"
 grep -i '^x-memory-search' /tmp/mem-fejlec-AGENT_NAME.txt
 
-A -D NEM dísz, és a fejlécet KÖTELEZŐ elolvasni. A keresés alapból ENGEDÉKENY: ha egyetlen valódi szavad sem talál, eldobja őket, és a maradék töltelékszavakra hozott sorokat adja vissza. A body ilyenkor UGYANÚGY néz ki, mint egy valódi találat -- a különbség KIZÁRÓLAG az X-Memory-Search fejlécben utazik.
+A -D NEM dísz, és a fejlécet KÖTELEZŐ elolvasni. A keresés alapból ENGEDÉKENY: ha a szavaid EGYÜTT nem találnak semmit, a töltelékszavakat eldobja, és azokat a sorokat adja vissza, amikben a többi szó közül LEGALÁBB EGY szerepel. A body ilyenkor UGYANÚGY néz ki, mint egy valódi találat -- a különbség KIZÁRÓLAG az X-Memory-Search fejlécben utazik.
 relaxed=true  -> semmi nem illeszkedett ÚGY, AHOGY KÉRTED; amit látsz, az mentett közelítés, NEM bizonyíték.
 relaxed=false -> a kérdés úgy illeszkedett, ahogy kérted. NEM jelenti azt, hogy ez MINDEN, és azt sem, hogy van találat (hits=0 is lehet mellette).
 Ha a kérdés az, hogy VAN-E EGYÁLTALÁN emlékünk valamiről (hiány-állítás), tedd hozzá a &strict=1-et: ott az üres válasz pontosan azt jelenti, aminek látszik.
