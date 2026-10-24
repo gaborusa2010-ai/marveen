@@ -146,7 +146,7 @@ def backlog(tok, agent):
     """(open cards, open messages) -- so the notice can say whether it is worth
     starting the agent at all."""
     cards = [c for c in _rows(_get("/api/kanban", tok), "cards", "items")
-             if c.get("assignee") == agent
+             if (c.get("assignee") or "").lower() == agent.lower()
              and c.get("status") in ("planned", "in_progress", "waiting")
              and not c.get("archived_at")]
     msgs = [m for m in _rows(_get("/api/messages?agent=%s&limit=200" % agent, tok),

@@ -80,7 +80,7 @@ def open_cards(tok, agent):
     # 400, not a narrower list), so the filtering happens on this side.
     cards = _rows(_get("/api/kanban", tok), "cards", "items")
     mine = [c for c in cards
-            if c.get("assignee") == agent
+            if (c.get("assignee") or "").lower() == agent.lower()
             and c.get("status") in OPEN_CARD_STATUSES
             and not c.get("archived_at")]
     order = {s: i for i, s in enumerate(("in_progress", "waiting", "planned"))}
