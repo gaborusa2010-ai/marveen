@@ -66,6 +66,9 @@ const EXPECTED: Record<string, string[]> = {
     // the capped files (SKILL.md, hand-written CLAUDE.md) after a Bash call,
     // because a shell write cannot be predicted by the PreToolUse half.
     'line-cap-gate.py @ Bash',
+    // Local: limit-cut-notice.py flags a Bash output whose line count equals its
+    // own head/tail limit, so a cut list is not read as the total.
+    'limit-cut-notice.py @ Bash',
   ],
   // A failed tool call fires PostToolUseFailure, never PostToolUse
   // (TOOLLOGVAKSIKER921): without this entry tool_call_log cannot hold a 0.
