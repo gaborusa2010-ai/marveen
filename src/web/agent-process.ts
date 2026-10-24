@@ -4094,6 +4094,11 @@ export async function sendPromptToSession(
   } catch (err) {
     logger.warn({ err, session }, 'sendPromptToSession: onEmitStart callback threw; ignored (delivery continues)')
   }
+  // #642: the autocompact suggestion comes up when a turn ENDS, so it can appear
+  // during the idle wait, after the dismiss above ran (or was skipped on a busy
+  // lane). A busy-timeout 'send' would then type into it and its Enter confirms
+  // 400k. The lane is held here, so this check adds no lock.
+  await dismissAutocompactSuggestionIfPresent(session, host)
   // Pre-flight buffer-clear when a stale preamble is detected. Reading
   // the pane is best-effort: a capture failure here means we cannot
   // prove the buffer is clean, but proceeding without the clear is no

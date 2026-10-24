@@ -1260,11 +1260,12 @@ export function detectsFeedbackOptOutPrompt(pane: string): boolean {
 // Claude Code 2.1.303 shows a full-width "We recommend compacting earlier"
 // suggestion once a session grows large: "Want to autocompact at 400k tokens
 // instead?", footer "... enter confirm · esc not now". It REPLACES the prompt
-// box, so every injection refuses the pane as not-ready. Measured twice, and
-// both times it cost a handoff: anorak 2026-10-22 23:07 and cody 2026-10-24
-// 07:05 (store/context-guard-last-pane-*.txt) sat on it while the guard's
-// handoff directive waited, until the hard threshold restarted them with no
-// handoff written.
+// box, so every injection refuses the pane as not-ready. Measured twice:
+// anorak 2026-10-22 23:07 and cody 2026-10-24 07:05
+// (store/context-guard-last-pane-*.txt) both sat on it after a finished turn
+// until the hard threshold restarted them. Cody's handoff had already been
+// written (HANDOFF.md 07:05:30); for anorak it is not decided. Its Enter
+// confirms "autocompact at 400k", so nothing may type into it.
 //
 // Quoted-text discipline: the footer must be the LAST non-empty line of the
 // pane and the headline must sit within the live region above it. A quote of
