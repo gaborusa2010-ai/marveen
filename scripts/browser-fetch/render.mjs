@@ -10,9 +10,10 @@
 // BEFORE this file is ever started. Keep it that way -- a renderer that also
 // authorises itself is a renderer nobody can audit.
 import { chromium, request } from 'playwright'
+import { closeSync, copyFileSync, openSync, readSync, statSync, writeFileSync } from 'node:fs'
 
 const url = process.argv[2]
-if (!url) { console.error('usage: render.mjs <url> [--shots <outPrefix> <label1|label2|...>] [--source] [--actions <outPrefix> <json>] [--user-agent <ua>]'); process.exit(2) }
+if (!url) { console.error('usage: render.mjs <url> [--shots <outPrefix> <label1|label2|...>] [--source] [--actions <outPrefix> <json>] [--user-agent <ua>] [--download <outPath> <maxBytes>]'); process.exit(2) }
 // Screenshot mode (owner, 2026-09-30, Telegram 5005: "lássák a funkciókat és a
 // lehetőségeket"). A client-rendered app shows its features only after clicks,
 // and its 3D/2D views are canvas or SVG, which innerText never carries. So: click
@@ -50,6 +51,20 @@ if (actions && (!actions.prefix || !Array.isArray(actions.steps) || !actions.ste
 if (actions && (actions.steps.length > 80 || actions.steps.filter(s => s.shot).length > 30)) {
   console.error('--actions: at most 80 steps and 30 shots'); process.exit(2)
 }
+// Download mode (#629; owner, tg 1186 on Margo's bot: factory PDFs too). A PDF URL
+// does not render: headless Chromium starts a download and goto throws "Download
+// is starting" (Margo measured it on a Hettich PDF, msg 11792). So the ONE
+// navigation's download is caught and saved to the path the caller claimed.
+// browser_fetch.py judges the result (final host, %PDF magic, size); the cap is
+// repeated here so this file cannot be driven past it directly.
+const dlAt = process.argv.indexOf('--download')
+const download = dlAt > 0
+  ? { path: process.argv[dlAt + 1], max: Number(process.argv[dlAt + 2]) }
+  : null
+if (download && (!download.path || !Number.isInteger(download.max) || download.max < 1)) {
+  console.error('--download needs <outPath> <maxBytes>'); process.exit(2)
+}
+if (download && download.max > 50 * 1024 * 1024) { console.error('--download: at most 50 MB'); process.exit(2) }
 
 // A declared-UA host (the SEC) is a data API, not a page, and headless Chromium
 // leaks "HeadlessChrome" in its sec-ch-ua client hint whatever the UA says
@@ -81,6 +96,62 @@ try {
                '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'),
   })
   const page = await ctx.newPage()
+  if (download) {
+    const dlEvent = page.waitForEvent('download', { timeout: 45000 }).catch(() => null)
+    let navRes = null, navError = null
+    try { navRes = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }) }
+    catch (e) { navError = String(e.message || e) }
+    const out = { status: navRes ? navRes.status() : null, finalUrl: navRes ? navRes.url() : null,
+      contentType: navRes ? (navRes.headers()['content-type'] || null) : null, download: null }
+    // Keep at most `max` bytes, and only ever in the claimed path; the first bytes
+    // go back as printable ASCII so the caller can say what came instead of a PDF.
+    const keep = (bytes, save) => {
+      const dl = { bytes, saved: false, head: null }
+      if (bytes <= download.max) { save(); dl.saved = true }
+      return dl
+    }
+    let dl = null
+    if (navError && !/Download is starting/i.test(navError)) {
+      out.error = navError.slice(0, 200)
+    } else if (navError || !navRes) {
+      dl = await dlEvent
+    } else {
+      // A page that answered: either an inline file (a PDF, or a DXF/STEP served as
+      // text/plain, which Chromium shows instead of downloading) or an HTML landing
+      // page. A landing page may still start the download itself.
+      if (!/text\/html|application\/xhtml\+xml/i.test(out.contentType || 'text/html')) {
+        const declared = Number(navRes.headers()['content-length'])
+        if (declared > download.max) {
+          out.download = { url: navRes.url(), name: null, bytes: declared, saved: false, head: null }
+        } else {
+          const body = await navRes.body()
+          out.download = { url: navRes.url(), name: null, ...keep(body.length, () => writeFileSync(download.path, body)) }
+        }
+      } else {
+        dl = await Promise.race([dlEvent, new Promise(r => setTimeout(() => r(null), 3000))])
+      }
+    }
+    // The size is known only once the browser holds the whole file in its own temp
+    // dir, which browser.close() deletes; an oversize file is never copied out.
+    if (dl) {
+      const failure = await dl.failure()
+      if (failure) out.error = `download failed: ${failure}`.slice(0, 200)
+      else {
+        const tmp = await dl.path()
+        out.download = { url: dl.url(), name: dl.suggestedFilename().slice(0, 200),
+          ...keep(statSync(tmp).size, () => copyFileSync(tmp, download.path)) }
+      }
+    }
+    if (out.download?.saved) {
+      const buf = Buffer.alloc(8), fd = openSync(download.path, 'r')
+      const n = readSync(fd, buf, 0, 8, 0)
+      closeSync(fd)
+      out.download.head = buf.subarray(0, n).toString('latin1').replace(/[^\x20-\x7e]/g, '.')
+    }
+    await new Promise(r => process.stdout.write(JSON.stringify(out), r))
+    await browser.close()
+    process.exit(0)
+  }
   const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 })
   // Give client-rendered content a moment, but never wait on networkidle: these
   // pages hold long-lived connections and would time out while fully rendered.
