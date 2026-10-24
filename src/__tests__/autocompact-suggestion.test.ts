@@ -110,3 +110,16 @@ describe('bare-Enter and /mcp paths dismiss the suggestion first', () => {
     expect(mcp).toBeGreaterThan(check)
   })
 })
+
+describe('the blocking-menu pass answers the suggestion on a pane with no delivery', () => {
+  const MONITOR = readFileSync(join(__dirname, '../web/channel-monitor.ts'), 'utf-8')
+
+  it('counts the suggestion as in-menu and dismisses it in its own branch', () => {
+    expect(MONITOR).toMatch(/const inMenu = [^\n]*detectsAutocompactSuggestion\(pane\)/)
+    const branch = MONITOR.indexOf('else if (paneNow != null && detectsAutocompactSuggestion(paneNow))')
+    const generic = MONITOR.indexOf("'Session parked in a blocking interactive menu -- sending Escape to recover'")
+    expect(branch).toBeGreaterThan(0)
+    expect(generic).toBeGreaterThan(branch)
+    expect(MONITOR.slice(branch, generic)).toContain('await dismissAutocompactSuggestionIfPresent(t.session)')
+  })
+})
