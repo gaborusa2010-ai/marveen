@@ -46,13 +46,14 @@ STORE = os.path.join(REPO, "store")
 DASH = os.environ.get("MARVEEN_DASHBOARD_URL", "http://localhost:3420")
 SUBS = ("anorak", "cody", "forgacs", "margo", "roxy")
 MAIN = "marveen"
-OPEN_CARD_STATUSES = ("planned", "in_progress", "waiting")
+OPEN_CARD_STATUSES = ("planned", "in_progress", "testing", "waiting")
 # A receipt is not work. The drain that surfaces real questions already handles
 # those; listing them here would bury the two cards that matter under twenty
 # "[Eredmeny] msg_id:N status:done" lines.
 RECEIPT_PREFIXES = ("[Eredmeny]", "[Eredmény]")
 # How many open rows a briefing may list. See the comment at the cap itself.
 MESSAGE_CAP = 8
+SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
 
 
 def _token():
@@ -83,7 +84,7 @@ def open_cards(tok, agent):
             if (c.get("assignee") or "").lower() == agent.lower()
             and c.get("status") in OPEN_CARD_STATUSES
             and not c.get("archived_at")]
-    order = {s: i for i, s in enumerate(("in_progress", "waiting", "planned"))}
+    order = {s: i for i, s in enumerate(("in_progress", "testing", "waiting", "planned"))}
     prio = {p: i for i, p in enumerate(("urgent", "high", "normal", "low"))}
     mine.sort(key=lambda c: (order.get(c.get("status"), 9),
                              prio.get(c.get("priority"), 9),
@@ -138,6 +139,16 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
     now = now or datetime.now()
     L = ["[ELIGAZITAS %s -- gepi, a sajat nyitott munkadbol]" % now.strftime("%Y-%m-%d %H:%M"),
          ""]
+    # #663, owner tg 9180: the order is cards and new tasks -> skill choice and
+    # loading -> work. Until 10-25 the skill choice came at 07:35, after an hour
+    # and a half of work done with yesterday's skills.
+    L += ["SORREND (gazda tg 9180):",
+          "  1. Olvasd el az alabbi kartyaidat es uzeneteidet (a kozben jott uj feladat is uzenet).",
+          "  2. Valassz skillt a mai munkahoz: %s lista %s, aztan valaszt %s <skill>..."
+          % (SKILL_CMD, agent, agent),
+          "     A kivalasztottat a Skill toollal toltsd be, mielott hozzakezdesz.",
+          "  3. Utana a munka, prioritas szerint.",
+          ""]
     if cards:
         L.append("NYITOTT KARTYAID (%d). A SORSZAMOT hasznald, ha rajuk hivatkozol:" % len(cards))
         for c in cards:
