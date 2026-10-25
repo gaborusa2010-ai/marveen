@@ -306,7 +306,7 @@ A tokenszám közelítő: az ágens teljes tokenforgalmát összesíti a futtat�
 |---------|-------|----------|-------|--------|
 | `reggeli-napindito` | jarvis | `30 7 * * *` | task | Napi reggeli összefoglaló (email, naptár, AI hírek) |
 | `memoria-heartbeat` | jarvis | `*/15 * * * *` | heartbeat | Memória-audit és skill reflexió 15 percenként |
-| `kanban-audit` | jarvis | `0 8,12,16,20 * * *` | heartbeat | Kanban-tábla ellenőrzése naponta 4-szer |
+| `kanban-audit` | jarvis | `0 6,12,18 * * *` | heartbeat | Kanban-tábla ellenőrzése naponta 3-szor (#663, gazda 2026-10-25) |
 | `dream-engine` | jarvis | `7 2 * * *` | dream-engine | Éjszakai analízis és javaslatgenerálás |
 | `bumblebee-hygiene-scan` | jarvis | `0 9 * * 1` | heartbeat | Heti higiénia-ellenőrzés hétfőnként |
 | `folyamatos-ellenorzes` | jarvis | `*/30 * * * *` | heartbeat | Általános ellenőrzés (jelenleg disabled) |
