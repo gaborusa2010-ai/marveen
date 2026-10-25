@@ -2206,6 +2206,11 @@ function createCardEl(card, embeddedChildren = []) {
     const overdue = d < now && card.status !== 'done'
     const label = d.toLocaleDateString('hu-HU', { month: 'short', day: 'numeric' })
     dueHtml = `<span class="kanban-card-due ${overdue ? 'overdue' : ''}">${label}</span>`
+  } else if (card.estimate_date) {
+    // Estimated finish (owner msg 9294): not a deadline, so never "overdue"; muted, with a "~".
+    const d = new Date(card.estimate_date * 1000)
+    const label = d.toLocaleDateString('hu-HU', { month: 'short', day: 'numeric' })
+    dueHtml = `<span class="kanban-card-due estimate" title="${escapeHtml(t('kanban.modal.estimate_label'))}">~${label}</span>`
   }
 
   const projectHtml = card.project
@@ -2240,6 +2245,11 @@ function createCardEl(card, embeddedChildren = []) {
     : []
   const blockedHtml = openBlockers.length > 0
     ? `<span class="kanban-card-blocked" title="${escapeHtml(t('kanban.blocker.card_tooltip', { n: openBlockers.length }))}">${t('kanban.blocker.card_badge')}${openBlockers.length > 1 ? ' ' + openBlockers.length : ''}</span>`
+    : ''
+  // Description behind its comments (owner msg 9298): the MOSTANI ALLAPOT block
+  // needs a rewrite. state_stale comes from the board GET (src/db.ts).
+  const stateStaleHtml = card.state_stale
+    ? `<span class="kanban-card-state-stale" title="${escapeHtml(t('kanban.state_stale.tooltip', { n: card.stale_comments ?? 0 }))}">${escapeHtml(t('kanban.state_stale.badge'))}</span>`
     : ''
   // Feature badges (cards #452-#454): recurrence, checklist progress and the
   // attachment count. Each is hidden while its Settings switch is off; the
@@ -2310,7 +2320,7 @@ function createCardEl(card, embeddedChildren = []) {
   el.innerHTML = `
     ${projectHtml}
     <div class="kanban-card-title">${seqHtml}${escapeHtml(card.title)}</div>
-    <div class="kanban-card-footer">${assigneeHtml}${kanbanAgentLiveBadge(card)}${dueHtml}${featureBadgesHtml}${waitHtml}${blockedHtml}</div>
+    <div class="kanban-card-footer">${assigneeHtml}${kanbanAgentLiveBadge(card)}${dueHtml}${featureBadgesHtml}${waitHtml}${stateStaleHtml}${blockedHtml}</div>
     ${labelsHtml}
     <div class="kanban-card-actions">
       <button class="card-breakdown-btn" title="${t('kanban.btn.breakdown')}" aria-label="${t('kanban.btn.breakdown')}">⚡</button>
@@ -2715,6 +2725,7 @@ function openNewCardModal(status) {
   document.getElementById('cardLocation').value = ''
   document.getElementById('cardDue').value = ''
   document.getElementById('cardStart').value = ''
+  document.getElementById('cardEstimate').value = ''
   document.getElementById('cardEditId').value = ''
   document.getElementById('cardEditStatus').value = status || 'planned'
   populateAssigneeSelect('cardAssignee')
@@ -2753,6 +2764,9 @@ document.getElementById('saveCardBtn').addEventListener('click', async () => {
       : null,
     start_date: document.getElementById('cardStart').value
       ? Math.floor(new Date(document.getElementById('cardStart').value).getTime() / 1000)
+      : null,
+    estimate_date: document.getElementById('cardEstimate').value
+      ? Math.floor(new Date(document.getElementById('cardEstimate').value).getTime() / 1000)
       : null,
   }
 
@@ -3550,6 +3564,10 @@ async function showCardDetail(card) {
       <span class="meta-value">${card.due_date ? new Date(card.due_date * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU') : t('kanban.meta.none')}</span>
     </div>
     <div class="meta-item">
+      <span class="meta-label">${t('kanban.meta.estimate')}</span>
+      <span class="meta-value">${card.estimate_date ? '~' + new Date(card.estimate_date * 1000).toLocaleDateString(_lang === 'en' ? 'en-US' : 'hu-HU') : t('kanban.meta.none')}</span>
+    </div>
+    <div class="meta-item">
       <span class="meta-label">${t('kanban.meta.active')}</span>
       <span class="meta-value" title="${escapeHtml(formatActiveTime(card.active_seconds) ? t('kanban.active.tooltip') : t('kanban.active.tooltip_none'))}">${escapeHtml(formatActiveTime(card.active_seconds) ?? t('kanban.active.none'))}</span>
     </div>
@@ -3856,6 +3874,9 @@ async function showCardDetail(card) {
       : ''
     document.getElementById('cardStart').value = card.start_date
       ? new Date(card.start_date * 1000).toISOString().split('T')[0]
+      : ''
+    document.getElementById('cardEstimate').value = card.estimate_date
+      ? new Date(card.estimate_date * 1000).toISOString().split('T')[0]
       : ''
     document.getElementById('cardEditId').value = card.id
     document.getElementById('cardEditStatus').value = card.status
@@ -21141,6 +21162,18 @@ async function openResearchDoc(agent, name) {
     in_progress: { bg: '#4f8ef7',        border: '#3a7be0' },
     waiting:     { bg: '#e8a838',        border: '#c88c20' },
     done:        { bg: '#3dbf79',        border: '#28a560' },
+    testing:     { bg: '#8e6cf0',        border: '#7353d6' },
+  }
+  // Cards being worked on show even without a due date (owner tg 9288: the projects we
+  // work on were missing, only 6 of 171 open cards had one). Their bar runs to today.
+  const ACTIVE_NO_DUE = new Set(['in_progress', 'testing'])
+  // End = fixed deadline, else the estimated finish (owner msg 9294), else today
+  // for an active card that has neither.
+  const barEndOf = (c, nowMs) => c.due_date ? c.due_date * 1000 : c.estimate_date ? c.estimate_date * 1000 : nowMs
+  const barStartOf = (c, rangeStartMs, nowMs) => {
+    const s = c.start_date ? c.start_date * 1000 : c.created_at ? c.created_at * 1000 : rangeStartMs
+    // A start after the end (e.g. created after the estimate) is clamped onto the end.
+    return Math.min(s, barEndOf(c, nowMs))
   }
 
   // Period window: returns { rangeStart: Date, rangeEnd: Date } (midnight boundaries)
@@ -21213,20 +21246,22 @@ async function openResearchDoc(agent, name) {
     const nowMs = Date.now()
     const todayPct = Math.max(0, Math.min(100, (nowMs - rangeStart) / totalMs * 100))
 
-    // Filter: cards that have a due_date
+    // Filter: cards that have a due_date or an estimate_date (msg 9294), plus active
+    // cards with neither (ACTIVE_NO_DUE).
     // Standing tasks have no end, so they never go on the timeline (owner, msg 5611).
-    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date && !kanbanIsOngoing(c))
+    let cards = (Array.isArray(kanbanCards) ? kanbanCards : [])
+      .filter(c => (c.due_date || c.estimate_date || ACTIVE_NO_DUE.has(c.status)) && !kanbanIsOngoing(c))
 
     if (ganttOverdueOnly) {
       // Keep cards that are overdue OR due within 7 days
       const cutoff = (nowMs + 7 * 86400000) / 1000
-      cards = cards.filter(c => c.due_date <= cutoff / 1 && c.status !== 'done')
+      cards = cards.filter(c => c.due_date && c.due_date <= cutoff / 1 && c.status !== 'done')
     }
 
     // Exclude cards whose entire bar lies outside the window
     cards = cards.filter(c => {
-      const barStart = c.start_date ? c.start_date * 1000 : c.created_at ? c.created_at * 1000 : rangeStart.getTime()
-      const barEnd   = c.due_date * 1000
+      const barStart = barStartOf(c, rangeStart.getTime(), nowMs)
+      const barEnd   = barEndOf(c, nowMs)
       return barEnd >= rangeStart && barStart <= rangeEnd
     })
 
@@ -21290,9 +21325,12 @@ async function openResearchDoc(agent, name) {
       for (const card of projCards) {
         // Planned start first (msg 4832): created_at is when the card was filed,
         // not when the work is meant to begin.
-        const barStartMs = card.start_date ? card.start_date * 1000 : card.created_at ? card.created_at * 1000 : rangeStart.getTime()
-        const barEndMs   = card.due_date * 1000
-        const isOverdue  = card.status !== 'done' && barEndMs < nowMs
+        const barStartMs = barStartOf(card, rangeStart.getTime(), nowMs)
+        const barEndMs   = barEndOf(card, nowMs)
+        // An estimate is not a deadline: it never turns the bar red.
+        const isEstimate = !card.due_date && !!card.estimate_date
+        const noDue      = !card.due_date && !card.estimate_date
+        const isOverdue  = !!card.due_date && card.status !== 'done' && barEndMs < nowMs
 
         // Clamp to window
         const clampedStart = Math.max(barStartMs, rangeStart.getTime())
@@ -21345,8 +21383,13 @@ async function openResearchDoc(agent, name) {
           `cursor:pointer`,
           `z-index:2`,
           isOverdue ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.12) 0px,rgba(0,0,0,.12) 4px,transparent 4px,transparent 8px)' : '',
+          noDue ? 'opacity:0.6;border-style:dashed;border-right-width:0' : '',
+          isEstimate ? 'opacity:0.75;border-style:dotted;border-width:2px' : '',
         ].filter(Boolean).join(';')
-        bar.title = `${seqLabel} ${card.title}\n${fmtDateShort(new Date(barStartMs))} - ${fmtDateShort(new Date(barEndMs))}`
+        const endLabel = noDue ? t('kanban.gantt.no_due')
+          : isEstimate ? `~${fmtDateShort(new Date(barEndMs))} (${t('kanban.gantt.legend.estimate')})`
+          : fmtDateShort(new Date(barEndMs))
+        bar.title = `${seqLabel} ${card.title}\n${fmtDateShort(new Date(barStartMs))} - ${endLabel}`
         bar.textContent = `${seqLabel} ${card.title}`
         bar.addEventListener('click', () => { if (typeof openCardDetail === 'function') openCardDetail(card.id) })
         rowTrack.appendChild(bar)
@@ -21365,8 +21408,11 @@ async function openResearchDoc(agent, name) {
       { key: 'planned',     color: STATUS_COLOR.planned.bg },
       { key: 'in_progress', color: STATUS_COLOR.in_progress.bg },
       { key: 'waiting',     color: STATUS_COLOR.waiting.bg },
+      { key: 'testing',     color: STATUS_COLOR.testing.bg },
       { key: 'done',        color: STATUS_COLOR.done.bg },
       { key: 'overdue',     color: 'var(--danger,#e05252)' },
+      { key: 'estimate',    color: 'transparent;border:2px dotted var(--text-muted)' },
+      { key: 'no_due',      color: 'transparent;border:1px dashed var(--text-muted)' },
     ]
     for (const item of legendItems) {
       const dot = document.createElement('span')

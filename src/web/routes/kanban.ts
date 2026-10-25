@@ -29,6 +29,7 @@ import {
   getKanbanAttachmentCountsForAllCards, type KanbanAttachmentRow,
   spawnKanbanRecurrence,
   KANBAN_REVIEW_LABEL_NAME, findKanbanLabelByName, kanbanCardHasLabel,
+  listKanbanStateStaleCounts, kanbanStateStaleness, kanbanCommentCountsForState,
 } from '../../db.js'
 import { parseKanbanRecurrence, serializeKanbanRecurrence } from '../../kanban-recurrence.js'
 import { kanbanFeatureEnabled, KANBAN_FEATURE_DISABLED_BODY, type KanbanFeature } from '../kanban-features.js'
@@ -77,6 +78,9 @@ const KANBAN_READONLY_FIELDS = new Set<string>([
   // Recurrence link and the GET-embedded board counts (cards #452-#454): echoed
   // back by the whole-card send, never written by a PUT.
   'recurrence_spawned_id', 'checklist_total', 'checklist_done', 'attachment_count',
+  // msg 9298: the description stamp is set by the write path itself; the two derived
+  // staleness fields ride along on every GET.
+  'description_updated_at', 'state_stale', 'stale_comments',
 ])
 
 // A write to a switched-off feature answers 403 (owner msg 6475). Reads stay
@@ -209,6 +213,8 @@ export function kanbanMoveInstructions(id: string, target: string): string {
     `    ${auth} \\`,
     `    -H 'Content-Type: application/json' \\`,
     `    -d '{"author":"${target}","content":"AZ EREDMENY ROVIDEN"}'`,
+    // msg 9298 (owner, 2026-10-25): the description carries the state, not the comments.
+    `  Minden megjegyzés után, amely a kártya állapotát változtatja (eredmény, döntés, akadály), ugyanabban a lépésben írd át a leírás tetején a MOSTANI ALLAPOT blokkot is (PUT ${cardUrl}, "description" mezővel): amíg a leírás régebbi a megjegyzésnél, a tábla ${isMainAgent ? 'a kártyát frissítendőnek jelöli' : 'a testing-et és az új kártya kezdését elutasítja (state_update_first)'}.`,
     '',
     // #663 (owner tg 9204, 9211): a sub-agent's card is reviewed by the main agent before it
     // closes, and the board refuses a sub-agent's done (review_required). So a sub-agent is
@@ -329,10 +335,41 @@ function subAgentActor(actor: unknown, auth: RouteContext['auth']): string | und
 }
 
 type ReviewGateRefusal = { status: 409; body: Record<string, unknown> }
+type KanbanCardStatus = Parameters<typeof kanbanStateStaleness>[0]['status']
+
+// msg 9298 (owner, 2026-10-25): the description is the card's state, comments are its history.
+// The PUT that rewrites the MOSTANI ALLAPOT block, as a runnable shape. The body goes through a
+// file: card text is full of quotes and backticks, which an inline -d "..." would let the shell eat.
+function stateUpdateCall(cardId: string, agent: string): string {
+  const tokenPath = join(STORE_DIR, '.dashboard-token')
+  const base = `http://${WEB_HOST}:${WEB_PORT}`
+  return 'A leírás TELJES új szövege kell (a PUT felülírja): felül "MOSTANI ALLAPOT (frissitve EEEE-HH-NN): ...", ' +
+    'alatta egy "---" sor, alatta a régi szöveg. A JSON-t python3 json.dumps írja fájlba ' +
+    `({"description": "<teljes szöveg>", "actor": "${agent}"}), és azt küldd: ` +
+    `curl -s -X PUT ${base}/api/kanban/${cardId} -H "Authorization: Bearer $(cat ${tokenPath})" ` +
+    `-H "X-Agent-Id: ${agent}" -H 'Content-Type: application/json' --data-binary @/a/json/fajl. ` +
+    `Ellenőrzés: GET ${base}/api/kanban/${cardId} -> "state_stale": false.`
+}
+
+// The comment POST's nudge: a comment that counts toward state_stale gets told, in the
+// response it reads anyway, to rewrite the description now. Notices and closed cards do not.
+function stateUpdateHint(
+  card: { id: string; status: string; archived_at: number | null },
+  author: string, content: string, automated: boolean,
+): Record<string, unknown> {
+  if (card.status === 'done' || card.archived_at != null) return {}
+  if (!kanbanCommentCountsForState(author, content, automated)) return {}
+  return {
+    state_stale: true,
+    hint: 'Ha ez a megjegyzés döntést, eredményt vagy állapotváltozást hoz, MOST írd át a kártya leírásának ' +
+      'tetején a MOSTANI ALLAPOT blokkot, ugyanebben a lépésben: a leírásból olvassák ki a kártya állapotát, ' +
+      'a megjegyzéseket nem mindenki olvassa végig. ' + stateUpdateCall(card.id, author.trim().toLowerCase()),
+  }
+}
 
 // Gates 1-3 of #663. `card` is the card BEFORE the write; a write that does not change the status
 // (a reorder inside a column) is never refused.
-function reviewFlowGate(card: { id: string; status: string }, status: unknown, agent: string): ReviewGateRefusal | null {
+function reviewFlowGate(card: { id: string; status: string; seq?: number; archived_at: number | null }, status: unknown, agent: string): ReviewGateRefusal | null {
   if (status === card.status) return null
   const tokenPath = join(STORE_DIR, '.dashboard-token')
   const base = `http://${WEB_HOST}:${WEB_PORT}`
@@ -349,6 +386,23 @@ function reviewFlowGate(card: { id: string; status: string }, status: unknown, a
       },
     }
   }
+  if (status === 'testing') {
+    const own = kanbanStateStaleness({ ...card, status: card.status as KanbanCardStatus })
+    if (own.state_stale) {
+      return {
+        status: 409,
+        body: {
+          error: 'state_update_first',
+          card: `#${card.seq ?? '?'}`,
+          stale_comments: own.stale_comments,
+          hint: `Ennek a kártyának a leírása régebbi, mint ${own.stale_comments} megjegyzése: a MOSTANI ALLAPOT blokk nem a mostani állapotot mondja. ` +
+            'Előbb írd át a leírás tetején a MOSTANI ALLAPOT blokkot (az eredmény, a döntések, ami nyitva maradt), aztán tedd testing-re. ' +
+            stateUpdateCall(card.id, agent),
+        },
+      }
+    }
+    return null
+  }
   if (status !== 'in_progress') return null
   // Only a testing card carrying the review label waits for the main agent; an unlabelled one
   // is in testing for another reason (the owner testing an app, #66) and blocks nothing.
@@ -364,6 +418,25 @@ function reviewFlowGate(card: { id: string; status: string }, status: unknown, a
         card: `#${pending.seq}`,
         hint: `A(z) #${pending.seq} kártyád ellenőrzésre vár (testing). Amíg ${MAIN_AGENT_ID} nem mondta rá, hogy rendben ` +
           '(done), vagy vissza nem adta javítással (in_progress), új kártyát nem kezdhetsz.',
+      },
+    }
+  }
+  // msg 9298: the agent's own open card whose description is behind its comments is
+  // updated before a NEW card is started; resuming that same card is not refused here.
+  const staleCounts = listKanbanStateStaleCounts()
+  const stale = listKanbanCards().find((c) =>
+    c.id !== card.id && String(c.assignee ?? '').trim().toLowerCase() === agent &&
+    kanbanStateStaleness(c, staleCounts).state_stale)
+  if (stale) {
+    return {
+      status: 409,
+      body: {
+        error: 'state_update_first',
+        card: `#${stale.seq}`,
+        stale_comments: staleCounts.get(stale.id) ?? 0,
+        hint: `A(z) #${stale.seq} kártyád leírása régebbi, mint a megjegyzései: a MOSTANI ALLAPOT blokk elavult. ` +
+          'Előbb azt írd át (az utolsó megjegyzések eredménye, döntései), aztán kezdj új kártyát. ' +
+          stateUpdateCall(stale.id, agent),
       },
     }
   }
@@ -768,8 +841,11 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // grouped query each, never a per-card fetch.
     const checklistByCard = getKanbanChecklistCountsForAllCards()
     const attachmentsByCard = getKanbanAttachmentCountsForAllCards()
+    // msg 9298: state_stale / stale_comments, one grouped query for the whole board.
+    const staleCounts = listKanbanStateStaleCounts()
     const cards = listKanbanCards({ includeArchived, agent }).map((card) => ({
       ...card,
+      ...kanbanStateStaleness(card, staleCounts),
       labels: labelsByCard.get(card.id) ?? [],
       blockers: blockersByCard.get(card.id) ?? [],
       checklist_total: checklistByCard.get(card.id)?.total ?? 0,
@@ -1505,7 +1581,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const comment = automated === true
       ? addKanbanComment(cardId, author, normalizedContent, { automated: true })
       : addKanbanComment(cardId, author, normalizedContent)
-    json(res, { ...comment, ...archivedNote(card) })
+    json(res, { ...comment, ...archivedNote(card), ...stateUpdateHint(card, author, normalizedContent, automated === true) })
     return true
   }
 
@@ -1770,7 +1846,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     if (!card) { json(res, { error: `Kártya nem található: ${id}` }, 404); return true }
     // #663: the full read the in_progress gate asks for. Only a token caller's agent claim counts.
     if (ctx.auth?.kind === 'token' && ctx.auth.agent) recordKanbanCardRead(ctx.auth.agent, card.id)
-    json(res, card)
+    json(res, { ...card, ...kanbanStateStaleness(card) })
     return true
   }
 

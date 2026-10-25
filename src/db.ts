@@ -243,6 +243,49 @@ export function initDatabase(dbPathOverride?: string): void {
   } catch {
     // column already exists
   }
+  // Estimated finish (owner, Telegram msg 9294, 2026-10-25): a card with no fixed
+  // deadline still gets a date the timeline can draw. Same unix-seconds shape as
+  // due_date, but it is NOT a deadline: overdue, due alerts and calendar export
+  // stay on due_date only.
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN estimate_date INTEGER')
+  } catch {
+    // column already exists
+  }
+  // When the card's DESCRIPTION last changed, unix seconds (owner, Telegram msg
+  // 9298, 2026-10-25). Decisions and results used to land only in comments while
+  // the description went stale, and owner-facing questions were built from it.
+  // A comment newer than this stamp means the description no longer carries the
+  // card's state (state_stale, see listKanbanStateStaleCounts). Backfilled to the
+  // migration time: every open card's description was rewritten the same day.
+  try {
+    db.exec('ALTER TABLE kanban_cards ADD COLUMN description_updated_at INTEGER')
+    db.prepare('UPDATE kanban_cards SET description_updated_at = ? WHERE description_updated_at IS NULL')
+      .run(Math.floor(Date.now() / 1000))
+  } catch {
+    // column already exists
+  }
+  // Every write path stamps it, not only updateKanbanCard: agents and scripts
+  // also write kanban_cards with raw SQL (scripts/kartya-es-ertesites.py). A
+  // writer that sets the stamp itself is left alone (the WHEN clause), so the
+  // API path keeps its own, test-controllable clock.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS kanban_cards_description_stamp_insert
+    AFTER INSERT ON kanban_cards
+    WHEN NEW.description_updated_at IS NULL
+    BEGIN
+      UPDATE kanban_cards SET description_updated_at = NEW.created_at WHERE id = NEW.id;
+    END
+  `)
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS kanban_cards_description_stamp_update
+    AFTER UPDATE OF description ON kanban_cards
+    WHEN OLD.description IS NOT NEW.description
+      AND NEW.description_updated_at IS OLD.description_updated_at
+    BEGIN
+      UPDATE kanban_cards SET description_updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE id = NEW.id;
+    END
+  `)
   try {
     db.exec('ALTER TABLE kanban_cards ADD COLUMN wait_kind TEXT')
   } catch {
@@ -2758,6 +2801,11 @@ export interface KanbanCard {
   // Planned start of the work, unix seconds; NULL = not planned (the timeline
   // then falls back to created_at).
   start_date?: number | null
+  // Estimated finish, unix seconds; NULL = none. Never a deadline (msg 9294).
+  estimate_date?: number | null
+  // When the description last changed, unix seconds (msg 9298). Comments newer
+  // than this are not yet reflected in the description (state_stale).
+  description_updated_at?: number | null
   // Why a waiting card is parked; nullable for legacy and agent-created waits.
   wait_kind?: 'owner' | 'external' | 'card' | 'date' | null
   wait_note?: string | null
@@ -3147,7 +3195,7 @@ export function parentWouldCycle(cardId: string, parentId: string): boolean {
 // returned 200, stored `archived_at=null` and `sort_order=0`, logged nothing).
 export const KANBAN_CREATE_FIELDS = [
   'title', 'description', 'test_steps', 'status', 'assignee', 'priority', 'project', 'location', 'parent_id', 'due_date',
-  'start_date', 'recurrence',
+  'start_date', 'estimate_date', 'recurrence',
 ] as const
 
 export function createKanbanCard(card: {
@@ -3163,6 +3211,7 @@ export function createKanbanCard(card: {
   parent_id?: string
   due_date?: number
   start_date?: number
+  estimate_date?: number
   // Canonical rule text; the HTTP boundary validates and serialises it
   // (parseKanbanRecurrence) before it gets here.
   recurrence?: string | null
@@ -3175,12 +3224,13 @@ export function createKanbanCard(card: {
   const sortOrder = (maxRow?.m ?? -1) + 1
 
   db.prepare(
-    `INSERT INTO kanban_cards (id, title, description, test_steps, status, assignee, priority, project, location, parent_id, due_date, start_date, recurrence, sort_order, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO kanban_cards (id, title, description, test_steps, status, assignee, priority, project, location, parent_id, due_date, start_date, estimate_date, recurrence, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     card.id, card.title, card.description ?? null, card.test_steps ?? null, status,
     card.assignee ?? null, card.priority ?? 'normal',
     card.project ?? null, card.location?.trim() || null, card.parent_id ?? null, normaliseDueDate(card.due_date), normaliseDueDate(card.start_date),
+    normaliseDueDate(card.estimate_date),
     card.recurrence ?? null, sortOrder, now, now
   )
   // A card BORN in a status other than 'planned' gets its opening event row
@@ -3213,7 +3263,7 @@ export function createKanbanCard(card: {
 // was writing one (e.g. `description_append`).
 export const KANBAN_WRITABLE_FIELDS = [
   'title', 'description', 'test_steps', 'status', 'assignee', 'priority', 'project', 'location',
-  'parent_id', 'due_date', 'start_date', 'sort_order', 'archived_at', 'recurrence',
+  'parent_id', 'due_date', 'start_date', 'estimate_date', 'sort_order', 'archived_at', 'recurrence',
 ] as const
 
 // The columns whose changes updateKanbanCard records in kanban_card_field_events
@@ -3249,6 +3299,7 @@ export function updateKanbanCard(
   const incoming = { ...fields }
   if ('due_date' in incoming) incoming.due_date = normaliseDueDate(incoming.due_date)
   if ('start_date' in incoming) incoming.start_date = normaliseDueDate(incoming.start_date)
+  if ('estimate_date' in incoming) incoming.estimate_date = normaliseDueDate(incoming.estimate_date)
   if ('location' in incoming) incoming.location = typeof incoming.location === 'string' ? incoming.location.trim() || null : incoming.location
   const f = { ...card, ...incoming, updated_at: now }
   // #1023: bump updated_at ONLY when a writable column actually changes. The
@@ -3266,9 +3317,12 @@ export function updateKanbanCard(
   // left the card changed with no row saying who changed it.
   return db.transaction((): boolean => {
     const changed = db.prepare(
-      `UPDATE kanban_cards SET title=?, description=?, test_steps=?, status=?, assignee=?, priority=?, project=?, location=?, parent_id=?, due_date=?, start_date=?, sort_order=?, updated_at=?, archived_at=?, recurrence=?
+      `UPDATE kanban_cards SET title=?, description=?, test_steps=?, status=?, assignee=?, priority=?, project=?, location=?, parent_id=?, due_date=?, start_date=?, estimate_date=?, sort_order=?, updated_at=?, archived_at=?, recurrence=?, description_updated_at=?
        WHERE id=?`
-    ).run(f.title, f.description, f.test_steps, f.status, f.assignee, f.priority, f.project, f.location, f.parent_id, f.due_date, f.start_date ?? null, f.sort_order, f.updated_at, f.archived_at, f.recurrence ?? null, id).changes > 0
+    ).run(f.title, f.description, f.test_steps, f.status, f.assignee, f.priority, f.project, f.location, f.parent_id, f.due_date, f.start_date ?? null, f.estimate_date ?? null, f.sort_order, f.updated_at, f.archived_at, f.recurrence ?? null,
+      // msg 9298: only a REAL description change moves the stamp; any other edit keeps it.
+      (f.description ?? null) !== (card.description ?? null) ? now : (card.description_updated_at ?? null),
+      id).changes > 0
     // Same dispatched_at rule as moveKanbanCard (kanbanWriteClearsDispatch). Before,
     // a card the PUT took out of in_progress kept its stamp, and the next /move to
     // in_progress woke nobody. The PUT only clears: it never dispatches.
@@ -3726,6 +3780,73 @@ export function addKanbanComment(cardId: string, author: string, content: string
     { parent_id: string | null } | undefined)?.parent_id
   touchAncestorChain(parentId, now, cardId)
   return { id: Number(info.lastInsertRowid), card_id: cardId, author, content, created_at: now, automated }
+}
+
+// --- Kanban state staleness (owner, Telegram msg 9298, 2026-10-25) ---
+//
+// A card is "state stale" when someone commented after its description last
+// changed: the decision or result sits in a comment, and a reader of the
+// description alone (an owner-facing question, a briefing) sees the old state.
+//
+// Comments that never carry card state do not count. Chosen from the authors and
+// prefixes actually on the board (2026-10-25): machine-marked rows (automated=1,
+// e.g. kartya-es-ertesites), the dashboard's own notices (author "system": "A(z)
+// #N kártya kész lett ... Folytatható."), the card script's field-move log
+// (author "kartya-es-ertesites"), and the weekly stale-review record written in
+// the owner's name ("[Heti átnézés] ... döntése: marad"), which only resets a
+// counter. Done and archived cards are never stale: their state is the column.
+export const KANBAN_STATE_EXCLUDED_AUTHORS = ['system', 'kartya-es-ertesites'] as const
+export const KANBAN_STATE_EXCLUDED_PREFIXES = ['[Heti átnézés]'] as const
+
+const STATE_COMMENT_SQL =
+  `m.automated = 0 AND lower(m.author) NOT IN (${KANBAN_STATE_EXCLUDED_AUTHORS.map(() => '?').join(', ')})` +
+  KANBAN_STATE_EXCLUDED_PREFIXES.map(() => ' AND substr(m.content, 1, ?) != ?').join('')
+
+function stateCommentParams(): unknown[] {
+  return [
+    ...KANBAN_STATE_EXCLUDED_AUTHORS,
+    ...KANBAN_STATE_EXCLUDED_PREFIXES.flatMap((p) => [p.length, p]),
+  ]
+}
+
+// Per card: how many counting comments are newer than description_updated_at.
+// Cards with none are absent from the map.
+export function listKanbanStateStaleCounts(): Map<string, number> {
+  const rows = db.prepare(`
+    SELECT m.card_id AS id, COUNT(*) AS n
+    FROM kanban_comments m JOIN kanban_cards c ON c.id = m.card_id
+    WHERE m.created_at > COALESCE(c.description_updated_at, 0) AND ${STATE_COMMENT_SQL}
+    GROUP BY m.card_id
+  `).all(...stateCommentParams()) as Array<{ id: string; n: number }>
+  return new Map(rows.map((r) => [r.id, r.n]))
+}
+
+export interface KanbanStateStaleness {
+  state_stale: boolean
+  stale_comments: number
+}
+
+export function kanbanStateStaleness(
+  card: Pick<KanbanCard, 'id' | 'status' | 'archived_at'>,
+  counts?: Map<string, number>,
+): KanbanStateStaleness {
+  let n: number
+  if (counts) {
+    n = counts.get(card.id) ?? 0
+  } else {
+    n = (db.prepare(`
+      SELECT COUNT(*) AS n FROM kanban_comments m JOIN kanban_cards c ON c.id = m.card_id
+      WHERE m.card_id = ? AND m.created_at > COALESCE(c.description_updated_at, 0) AND ${STATE_COMMENT_SQL}
+    `).get(card.id, ...stateCommentParams()) as { n: number }).n
+  }
+  return { state_stale: n > 0 && card.status !== 'done' && card.archived_at == null, stale_comments: n }
+}
+
+// Whether a comment by `author` with `content` would count toward state_stale.
+export function kanbanCommentCountsForState(author: string, content: string, automated = false): boolean {
+  if (automated) return false
+  if ((KANBAN_STATE_EXCLUDED_AUTHORS as readonly string[]).includes(author.trim().toLowerCase())) return false
+  return !KANBAN_STATE_EXCLUDED_PREFIXES.some((p) => content.startsWith(p))
 }
 
 // --- Kanban checklist (card #453) ---

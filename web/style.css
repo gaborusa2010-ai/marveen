@@ -1251,6 +1251,8 @@ main {
   margin-left: auto;
 }
 .kanban-card-due.overdue { color: var(--danger); font-weight: 600; }
+/* Estimated finish (msg 9294): not a deadline, kept visibly softer than a due date. */
+.kanban-card-due.estimate { font-style: italic; opacity: 0.8; }
 
 .kanban-card-labels {
   display: flex;
@@ -8183,6 +8185,20 @@ body {
   color: #b45309;
   background: color-mix(in srgb, #f59e0b 18%, transparent);
   border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
+}
+
+/* Description behind its comments (msg 9298). Accent tokens, quieter than the
+   blocked badge: a chore for the assignee, not a stop. */
+.kanban-card-state-stale {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
 }
 
 .kanban-card-wait {

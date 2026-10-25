@@ -13,6 +13,9 @@ const addKanbanComment = vi.fn(() => ({ id: 1, card_id: 'CARD0001' }))
 
 vi.mock('../db.js', () => ({
   listKanbanCards: vi.fn(() => []),
+  kanbanCommentCountsForState: vi.fn(() => false),
+  listKanbanStateStaleCounts: vi.fn(() => new Map()),
+  kanbanStateStaleness: vi.fn(() => ({ state_stale: false, stale_comments: 0 })),
   createKanbanCard: vi.fn(),
   updateKanbanCard: vi.fn(),
   deleteKanbanCard: vi.fn(),
