@@ -183,10 +183,12 @@ describe('context-guard resume obligation across a dashboard restart', () => {
     // Process 1: the saturation net restarts boni (two confirming sweeps).
     h.pane = SATURATED_PANE
     const first = await bootDashboard()
-    // The second confirming sweep is the first interval tick (t=300 s). Stop
-    // right there: a restarted agent is on the 60 s hot sweep from then on, and
-    // the next hot tick (t=360 s) would already deliver the resume.
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    // Every idle agent is on the 60 s hot sweep from boot (#641), so the
+    // confirming sweeps come earlier than the first interval tick. Stop at the
+    // restart: the next hot tick would already deliver the resume.
+    for (let i = 0; i < INTERVAL_MS / 10_000 && h.restartAgentProcess.mock.calls.length === 0; i++) {
+      await vi.advanceTimersByTimeAsync(10_000)
+    }
     expect(h.restartAgentProcess).toHaveBeenCalledTimes(1)
     expect(first.getHardGuardPhase('boni')).toBe('await-ready')
     expect(Object.keys(readPending())).toEqual(['boni'])

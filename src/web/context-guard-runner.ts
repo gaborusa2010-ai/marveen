@@ -72,7 +72,22 @@ const INTERVAL_MS = 300_000
 // sessions that are close to a decision.
 const HOT_INTERVAL_MS = 60_000
 const HOT_PCT = 0.8
+// #641: a fixed 80% is a token band that shrinks with the window. On marveen's
+// pinned 150k the whole 80% -> 97% band is ~25k tokens, and one busy stretch
+// crossed it between two 5-minute sweeps: 2026-10-25 07:29 measured ~109k
+// (73%, not hot), 07:34 restarted at 98% with no handoff request (109k -> 147k
+// in 3.5 minutes). So an agent is also hot once it is within this many tokens
+// of its hard tier.
+const HOT_HEADROOM_TOKENS = 60_000
 const lastMeasuredPct = new Map<string, number>()
+// The pct at which each agent counts as hot, set from its config at measurement.
+const hotPctFor = new Map<string, number>()
+
+/** The pct from which an agent is re-checked on the hot cadence. */
+export function hotThresholdPct(limitTokens: number | null, hardPct: number): number {
+  if (!limitTokens || limitTokens <= 0) return HOT_PCT
+  return Math.max(0, Math.min(HOT_PCT, hardPct - HOT_HEADROOM_TOKENS / limitTokens))
+}
 // A restarted agent stays on the hot cadence until its fresh session gives a
 // first reading. Deleting its reading instead dropped it to the 5-minute sweep
 // exactly when a busy fresh session grows fastest.
@@ -504,7 +519,11 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   const measuredPct = running && needPct && (cfg.enabled || needCredibilityProbe)
     ? measurePct(name, cfg.limitTokens)
     : null
-  if (measuredPct !== null) { lastMeasuredPct.set(name, measuredPct); hotUntilMeasured.delete(name) }
+  if (measuredPct !== null) {
+    lastMeasuredPct.set(name, measuredPct)
+    hotPctFor.set(name, hotThresholdPct(cfg.limitTokens, cfg.hardPct))
+    hotUntilMeasured.delete(name)
+  }
   else if (!running) lastMeasuredPct.delete(name)
   const paneSaturatedTrusted = saturationBannerCredible(paneSaturatedRaw, bannerIsHardError, measuredPct)
   if (paneSaturatedRaw && !paneSaturatedTrusted) {
@@ -919,6 +938,19 @@ export function startContextGuardRunner(): NodeJS.Timeout {
   // resume prompt.
   try { restorePendingResumes(Date.now()) }
   catch (err) { logger.warn({ err }, 'context-guard: pending-resume restore failed') }
+  // #641: a fresh dashboard process has no readings, so nobody was hot and the
+  // first measurement waited for INITIAL_DELAY_MS. Measured 2026-10-25: the
+  // dashboard restarted 06:14:01, marveen crossed 97% at ~06:16 and the first
+  // sweep (06:18:31) found 104% -- a hard restart with no handoff request.
+  // Every idle agent gets its first reading on the first hot tick instead. An
+  // agent restored into await-ready keeps the regular cadence: its resume
+  // injection must not be retried every minute.
+  try {
+    for (const name of guardSweepAgentNames()) {
+      if ((guardStates.get(name) ?? INITIAL_GUARD_STATE).phase === 'idle') hotUntilMeasured.add(name)
+    }
+  }
+  catch (err) { logger.warn({ err }, 'context-guard: initial hot seed failed') }
   let tickRunning = false
   async function sweep() {
     // Re-entrancy guard: checkAgent's 'restart' action now awaits a real
@@ -946,7 +978,7 @@ export function startContextGuardRunner(): NodeJS.Timeout {
   async function hotSweep() {
     if (tickRunning) return
     const hot = [...new Set([
-      ...[...lastMeasuredPct].filter(([, pct]) => pct >= HOT_PCT).map(([name]) => name),
+      ...[...lastMeasuredPct].filter(([name, pct]) => pct >= (hotPctFor.get(name) ?? HOT_PCT)).map(([name]) => name),
       ...hotUntilMeasured,
     ])]
     if (hot.length === 0) return
