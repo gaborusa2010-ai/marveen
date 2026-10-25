@@ -7,6 +7,8 @@
 //   3. in_progress is refused while another card of the agent is in testing (review_pending);
 //   4. a card entering testing tells the main agent once, with no card text in the message.
 // The owner's browser session, the main agent and an actor-less caller are never affected.
+// "In review" is the "Ellenőrzésre vár" label, not the testing status alone: the owner tests apps
+// on testing too (#66), and such a card must not block its agent.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { Readable } from 'node:stream'
@@ -40,7 +42,10 @@ vi.mock('../web/agent-process.js', async (importOriginal) => ({
   isAgentRunning: () => true,
 }))
 
-import { initDatabase, createKanbanCard, getKanbanCard, getKanbanCardEvents } from '../db.js'
+import {
+  initDatabase, createKanbanCard, getKanbanCard, getKanbanCardEvents, getLabelsForCard, listLabels, createLabel,
+  addLabelToCard, KANBAN_REVIEW_LABEL_NAME,
+} from '../db.js'
 import {
   tryHandleKanban, recordKanbanCardRead, resetKanbanCardReads, CARD_READ_TTL_MS,
 } from '../web/routes/kanban.js'
@@ -155,9 +160,13 @@ describe('gate 2: read the card fully before in_progress', () => {
   })
 })
 
+const hasReviewLabel = (id: string) => getLabelsForCard(id).some((l) => l.name === KANBAN_REVIEW_LABEL_NAME)
+
 describe('gate 3: no new card while one is in review', () => {
   beforeEach(async () => {
-    createKanbanCard({ id: 'c-t', title: 'Under review', assignee: 'dex', status: 'testing' })
+    // Into testing the way a sub-agent puts it there, so it carries the review label.
+    createKanbanCard({ id: 'c-t', title: 'Under review', assignee: 'dex', status: 'in_progress' })
+    expect((await move('c-t', { status: 'testing', actor: 'dex' })).status).toBe(200)
     recordKanbanCardRead('dex', 'c-2')
   })
 
@@ -171,6 +180,13 @@ describe('gate 3: no new card while one is in review', () => {
 
   it('opens again once the main agent closes the reviewed card', async () => {
     expect((await move('c-t', { status: 'done', actor: 'orin' })).status).toBe(200)
+    expect((await move('c-2', { status: 'in_progress', actor: 'dex' })).status).toBe(200)
+  })
+
+  it('an unlabelled testing card (e.g. the owner testing an app) does not block', async () => {
+    createKanbanCard({ id: 'c-o', title: 'Owner tests it', assignee: 'dex', status: 'testing' })
+    expect((await move('c-t', { status: 'done', actor: 'orin' })).status).toBe(200)
+    expect(getKanbanCard('c-o')?.status).toBe('testing')
     expect((await move('c-2', { status: 'in_progress', actor: 'dex' })).status).toBe(200)
   })
 
@@ -204,5 +220,58 @@ describe('gate 4: testing tells the main agent', () => {
     await move('c-1', { status: 'testing', actor: 'orin' })
     await move('c-2', { status: 'testing' })
     expect(reviewNotices()).toHaveLength(0)
+  })
+})
+
+describe('the review label', () => {
+  it('a sub-agent moving to testing attaches it, creating the label once', async () => {
+    expect(listLabels().some((l) => l.name === KANBAN_REVIEW_LABEL_NAME)).toBe(false)
+    await move('c-1', { status: 'testing', actor: 'dex' })
+    expect(hasReviewLabel('c-1')).toBe(true)
+    createKanbanCard({ id: 'c-4', title: 'Fourth', assignee: 'zara', status: 'in_progress' })
+    await put('c-4', { status: 'testing', actor: 'zara' })
+    expect(hasReviewLabel('c-4')).toBe(true)
+    expect(listLabels().filter((l) => l.name === KANBAN_REVIEW_LABEL_NAME)).toHaveLength(1)
+  })
+
+  it('an existing label with folded accents and case is reused, not duplicated', async () => {
+    const existing = createLabel({ id: 'lbl-r', name: 'ellenorzesre var', color: '#64748b' })
+    await move('c-1', { status: 'testing', actor: 'dex' })
+    expect(getLabelsForCard('c-1').map((l) => l.id)).toEqual([existing.id])
+    expect(listLabels()).toHaveLength(1)
+  })
+
+  it('the main agent or an actor-less caller moving to testing attaches nothing', async () => {
+    await move('c-1', { status: 'testing', actor: 'orin' })
+    await move('c-2', { status: 'testing' })
+    expect(hasReviewLabel('c-1')).toBe(false)
+    expect(hasReviewLabel('c-2')).toBe(false)
+  })
+
+  for (const to of ['done', 'in_progress', 'waiting', 'planned'] as const) {
+    it(`leaves with the card when it leaves testing for ${to} (move)`, async () => {
+      await move('c-1', { status: 'testing', actor: 'dex' })
+      expect(hasReviewLabel('c-1')).toBe(true)
+      const body: Record<string, unknown> = { status: to, actor: 'orin' }
+      if (to === 'waiting') body.wait = { kind: 'external', note: 'x' }
+      expect((await move('c-1', body)).status).toBe(200)
+      expect(hasReviewLabel('c-1')).toBe(false)
+    })
+  }
+
+  it('leaves with the card on a PUT too, and stays on a reorder inside testing', async () => {
+    await move('c-1', { status: 'testing', actor: 'dex' })
+    await move('c-1', { status: 'testing', actor: 'orin', sort_order: 3 })
+    expect(hasReviewLabel('c-1')).toBe(true)
+    expect((await put('c-1', { status: 'in_progress', actor: 'orin' })).status).toBe(200)
+    expect(hasReviewLabel('c-1')).toBe(false)
+  })
+
+  it('other labels on the card are untouched when it leaves testing', async () => {
+    createLabel({ id: 'lbl-x', name: 'Folyamatos', color: '#64748b' })
+    addLabelToCard('c-1', 'lbl-x')
+    await move('c-1', { status: 'testing', actor: 'dex' })
+    await move('c-1', { status: 'done', actor: 'orin' })
+    expect(getLabelsForCard('c-1').map((l) => l.id)).toEqual(['lbl-x'])
   })
 })

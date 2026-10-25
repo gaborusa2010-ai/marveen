@@ -3289,6 +3289,7 @@ export function updateKanbanCard(
     // TWO INDEPENDENT CONDITIONS, not one: the ancestor stamp is owed on ANY change
     // (a retitled subcard is still activity on the thread), the event only on a real
     // status transition. Folding them together would silence one of the two.
+    if (changed) clearReviewLabelOnLeavingTesting(id, card.status, f.status)
     if (changed && f.status !== card.status) {
       db.prepare(
         'INSERT INTO kanban_card_events (card_id, from_status, to_status, actor, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -3380,6 +3381,7 @@ export function moveKanbanCard(
       const ownerLabel = listLabels().find((label) => normalizeKanbanLabelName(label.name) === normalizeKanbanLabelName('Rád vár'))
       if (ownerLabel) removeLabelFromCard(id, ownerLabel.id)
     }
+    if (changed) clearReviewLabelOnLeavingTesting(id, expected ?? prev, status)
     if (changed) touchAncestorChain(row?.parent_id, now, id)
     // With the guard, a successful UPDATE proves the status WAS `expected` at
     // the write, which is a stronger fact than the read above.
@@ -4046,6 +4048,30 @@ export function validateKanbanWaitReason(raw: unknown): KanbanWaitReasonValidati
 
 function normalizeKanbanLabelName(value: unknown): string {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+}
+
+// #663: the label that says "this testing card waits for the main agent's review". testing alone
+// does not say that -- the owner tests apps on testing too (#66) -- so the review gate and the
+// briefing key on this label, which the /move and the PUT put on a sub-agent's card entering
+// testing and which leaves with the card whenever it leaves testing (moveKanbanCard,
+// updateKanbanCard). Matched by name like "Rád vár", accents and case folded.
+export const KANBAN_REVIEW_LABEL_NAME = 'Ellenőrzésre vár'
+
+export function findKanbanLabelByName(name: string): Label | undefined {
+  const want = normalizeKanbanLabelName(name)
+  return listLabels().find((label) => normalizeKanbanLabelName(label.name) === want)
+}
+
+export function kanbanCardHasLabel(cardId: string, labelName: string): boolean {
+  const want = normalizeKanbanLabelName(labelName)
+  return getLabelsForCard(cardId).some((label) => normalizeKanbanLabelName(label.name) === want)
+}
+
+// Inside the status writers' transactions: a card leaving testing loses the review label.
+function clearReviewLabelOnLeavingTesting(id: string, from: string | undefined, to: string): void {
+  if (from !== 'testing' || to === 'testing') return
+  const label = findKanbanLabelByName(KANBAN_REVIEW_LABEL_NAME)
+  if (label) removeLabelFromCard(id, label.id)
 }
 
 export function setKanbanWaitReason(id: string, reason: KanbanWaitReason | null): void {

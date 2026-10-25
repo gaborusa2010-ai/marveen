@@ -5,6 +5,7 @@ that read it fully, then skill -> work -> testing (not done) -> wait for the
 review. Waiting cards stay one line with the reason; system notices are not
 listed as open messages."""
 import importlib.util, os
+REV = "Ellenőrzésre vár"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("abb", os.path.join(HERE, "..", "agent-briefing-build.py"))
@@ -20,7 +21,10 @@ long_desc = "LEIRASJEL a feladatrol.\n\n" + "x" * 1000
 # open_cards() order: in_progress, testing, waiting, planned; then priority.
 cards = [
     {"id": "a1", "seq": 1, "status": "in_progress", "priority": "high", "title": "Dolgozz", "description": long_desc},
-    {"id": "a6", "seq": 6, "status": "testing", "priority": "normal", "title": "Atnezesre"},
+    {"id": "a6", "seq": 6, "status": "testing", "priority": "normal", "title": "Atnezesre",
+     "labels": [{"id": "l1", "name": "Ellenőrzésre vár"}, {"id": "l2", "name": "Folyamatos"}]},
+    {"id": "a7", "seq": 7, "status": "testing", "priority": "normal", "title": "Gazda probalja",
+     "labels": [{"id": "l2", "name": "Folyamatos"}]},
     {"id": "a3", "seq": 3, "status": "waiting", "priority": "normal", "title": "Var", "wait_kind": "owner",
      "wait_note": "jovahagyasra var"},
     {"id": "a4", "seq": 4, "status": "waiting", "priority": "normal", "title": "Ok nelkul"},
@@ -56,9 +60,24 @@ t2 = abb.render("x", [{"id": "p1", "seq": 11, "status": "planned", "priority": "
                       {"id": "p2", "seq": 12, "status": "planned", "priority": "low", "title": "B"}], [])
 check("planned only: the first listed planned card is named", "Az elso dolgozhato kartyad: #11 (id p1)" in t2)
 
-# testing is the reviewer's turn: its own block, not workable
-check("testing card in its own review block", "ELLENORZESRE VAR (1)" in t and "  #6  Atnezesre  (id a6)" in t)
+# testing: "Marveen nezi at" only with the review label; an unlabelled testing card
+# (the owner testing an app, #66) has its own wording; neither is workable.
+rv = t[t.index("ELLENORZESRE VAR"):].split("\n\n")[0]
+check("labelled testing card in the review block", "ELLENORZESRE VAR (1): Marveen nezi at" in t and "#6  Atnezesre  (id a6)" in rv)
+check("unlabelled testing card NOT in the review block", "Gazda probalja" not in rv)
+ts = t[t.index("TESZTELESEN"):].split("\n\n")[0] if "TESZTELESEN" in t else ""
+check("unlabelled testing card in its own block, not Marveen review",
+      ts.startswith("TESZTELESEN (1), nem Marveen-ellenorzes") and "#7  Gazda probalja  (id a7)" in ts)
+check("label match folds accents and case",
+      abb.in_review({"status": "testing", "labels": [{"name": "ELLENORZESRE VAR"}]}))
+check("the label alone (not testing) is not review", not abb.in_review({"status": "planned", "labels": [{"name": REV}]}))
 check("workable count excludes testing and waiting", "DOLGOZHATO KARTYAID (2)" in t)
+
+# the "#seq" column has one width across the sheet
+ta = abb.render("x", [{"id": "b1", "seq": 463, "status": "in_progress", "priority": "high", "title": "Hosszu"},
+                      {"id": "b2", "seq": 81, "status": "planned", "priority": "low", "title": "Rovid"}], [])
+la = [l for l in ta.splitlines() if l.startswith("  #463") or l.startswith("  #81")]
+check("#81 and #463 line up", len(la) == 2 and la[0].index("in_progress") == la[1].index("planned"))
 
 # waiting block kept from b40a02ed
 check("waiting card in its own section, with kind and note", "#3  Var: var a gazdara -- jovahagyasra var" in t)
@@ -66,7 +85,7 @@ check("waiting card without a reason says so", "#4  Ok nelkul: NINCS OK a kartya
 check("date wait shows the date", "#5  Datum: var datumra -- 10-26-ig" in t)
 
 # Negative control: no workable card -> no steps block, no invented card id.
-t3 = abb.render("x", cards[1:5], [])
+t3 = abb.render("x", cards[1:6], [])
 check("no workable card -> no SORREND and no DOLGOZHATO", "SORREND" not in t3 and "DOLGOZHATO" not in t3)
 check("no workable card -> no read call with an empty id", "/api/kanban/\n" not in t3 and "X-Agent-Id" not in t3)
 

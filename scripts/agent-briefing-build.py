@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import sys
+import unicodedata
 import urllib.request
 from datetime import datetime
 
@@ -61,8 +62,13 @@ SYSTEM_SENDERS = ("system",)
 # and the last comment, and the owner rejected that shape).
 WAIT_KIND_LABEL = {"owner": "a gazdara", "date": "datumra", "card": "masik kartyara",
                    "external": "kulso felre", "agent": "masik agensre"}
-# testing is the main agent's turn (review), so it is not workable for the agent.
+# testing is never workable for the agent: either the main agent reviews it (the
+# review label, below) or somebody else tests it (the owner testing an app, #66).
 WORKABLE = ("in_progress", "planned")
+# The board label the server puts on a sub-agent's card entering testing and takes
+# off when it leaves (src/db.ts KANBAN_REVIEW_LABEL_NAME). Compared accent- and
+# case-folded, like the server does.
+REVIEW_LABEL = "Ellenőrzésre vár"
 # How many open rows a briefing may list. See the comment at the cap itself.
 MESSAGE_CAP = 8
 SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
@@ -122,6 +128,17 @@ def open_messages(tok, agent):
     return out
 
 
+def _fold(text):
+    t = unicodedata.normalize("NFD", text or "")
+    return "".join(ch for ch in t if not unicodedata.combining(ch)).strip().lower()
+
+
+def in_review(card):
+    """True when the card waits for the main agent's review: testing AND the label."""
+    return card.get("status") == "testing" and any(
+        _fold(l.get("name")) == _fold(REVIEW_LABEL) for l in (card.get("labels") or []) if isinstance(l, dict))
+
+
 def _flat(text, n):
     t = " ".join((text or "").split())
     return t if len(t) <= n else t[:n].rstrip() + "..."
@@ -159,8 +176,11 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
     L = ["[ELIGAZITAS %s -- gepi, a sajat nyitott munkadbol]" % now.strftime("%Y-%m-%d %H:%M"),
          ""]
     work = [c for c in cards if c.get("status") in WORKABLE]
-    review = [c for c in cards if c.get("status") == "testing"]
+    review = [c for c in cards if in_review(c)]
+    tested = [c for c in cards if c.get("status") == "testing" and not in_review(c)]
     parked = [c for c in cards if c.get("status") not in WORKABLE and c.get("status") != "testing"]
+    # One width for the "#seq" column, so #81 and #463 line up.
+    seqw = max([len("#%s" % c.get("seq")) for c in cards] or [0])
     # #663, owner tg 9204/9211: read the first card fully -> choose the skill for it
     # -> work -> testing, the main agent reviews -> only then the next card. The board
     # refuses the steps out of order (read_card_first, review_pending, review_required),
@@ -188,14 +208,22 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
     if work:
         L.append("DOLGOZHATO KARTYAID (%d). A SORSZAMOT hasznald, ha rajuk hivatkozol." % len(work))
         for c in work:
-            L.append("  #%s  %-11s %-6s  %s  (id %s)" % (c.get("seq"), c.get("status"),
-                                                       c.get("priority"), _flat(c.get("title"), 120),
-                                                       c.get("id")))
+            L.append("  %-*s  %-11s %-6s  %s  (id %s)" % (seqw, "#%s" % c.get("seq"), c.get("status"),
+                                                        c.get("priority"), _flat(c.get("title"), 120),
+                                                        c.get("id")))
         L.append("")
     if review:
         L.append("ELLENORZESRE VAR (%d): %s nezi at, addig uj kartyat nem kezdhetsz." % (len(review), MAIN.capitalize()))
         for c in review:
-            L.append("  #%s  %s  (id %s)" % (c.get("seq"), _flat(c.get("title"), 120), c.get("id")))
+            L.append("  %-*s  %s  (id %s)" % (seqw, "#%s" % c.get("seq"), _flat(c.get("title"), 120), c.get("id")))
+        L.append("")
+    if tested:
+        # #663: testing without the review label is somebody else's test (the owner
+        # trying an app, #66); it is not the agent's work and does not block a new card.
+        L.append("TESZTELESEN (%d), nem %s-ellenorzes: nincs vele teendod, uj kartyat kezdhetsz."
+                 % (len(tested), MAIN.capitalize()))
+        for c in tested:
+            L.append("  %-*s  %s  (id %s)" % (seqw, "#%s" % c.get("seq"), _flat(c.get("title"), 120), c.get("id")))
         L.append("")
     if parked:
         L.append("VARO KARTYAID (%d): addig nincs veluk teendod, amig az ok fennall." % len(parked))
@@ -205,11 +233,11 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
             if isinstance(c.get("wait_until"), (int, float)):
                 why = ("%s-ig; " % datetime.fromtimestamp(c["wait_until"]).strftime("%m-%d")) + why
             if kind or why:
-                L.append("  #%s  %s: var %s%s" % (c.get("seq"), _flat(c.get("title"), 60),
-                                                  kind or "", (" -- " + why) if why else ""))
+                L.append("  %-*s  %s: var %s%s" % (seqw, "#%s" % c.get("seq"), _flat(c.get("title"), 60),
+                                                   kind or "", (" -- " + why) if why else ""))
             else:
-                L.append("  #%s  %s: NINCS OK a kartyan -> ird ra, mire var"
-                         % (c.get("seq"), _flat(c.get("title"), 60)))
+                L.append("  %-*s  %s: NINCS OK a kartyan -> ird ra, mire var"
+                         % (seqw, "#%s" % c.get("seq"), _flat(c.get("title"), 60)))
         L.append("")
     if waits and (waits[0] or waits[1]):
         mine, on_me = waits

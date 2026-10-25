@@ -28,6 +28,7 @@ import {
   listKanbanAttachments, getKanbanAttachment, addKanbanAttachment, deleteKanbanAttachment,
   getKanbanAttachmentCountsForAllCards, type KanbanAttachmentRow,
   spawnKanbanRecurrence,
+  KANBAN_REVIEW_LABEL_NAME, findKanbanLabelByName, kanbanCardHasLabel,
 } from '../../db.js'
 import { parseKanbanRecurrence, serializeKanbanRecurrence } from '../../kanban-recurrence.js'
 import { kanbanFeatureEnabled, KANBAN_FEATURE_DISABLED_BODY, type KanbanFeature } from '../kanban-features.js'
@@ -349,9 +350,12 @@ function reviewFlowGate(card: { id: string; status: string }, status: unknown, a
     }
   }
   if (status !== 'in_progress') return null
+  // Only a testing card carrying the review label waits for the main agent; an unlabelled one
+  // is in testing for another reason (the owner testing an app, #66) and blocks nothing.
   const pending = listKanbanCards().find((c) =>
     c.id !== card.id && c.status === 'testing' && c.archived_at == null &&
-    String(c.assignee ?? '').trim().toLowerCase() === agent)
+    String(c.assignee ?? '').trim().toLowerCase() === agent &&
+    kanbanCardHasLabel(c.id, KANBAN_REVIEW_LABEL_NAME))
   if (pending) {
     return {
       status: 409,
@@ -380,10 +384,22 @@ function reviewFlowGate(card: { id: string; status: string }, status: unknown, a
   return null
 }
 
-// Gate 4 of #663: a sub-agent's card entering testing tells the main agent once. No card text in
-// the message (KANBANASSIGNFRAME1008): the seq, the id (only in the safe shape) and the agent name.
-// Best-effort, like every other side effect of a move that already happened.
+// Gate 4 of #663: a sub-agent's card entering testing gets the review label (created on first
+// use, in the palette's first colour like a label POST without a colour) and tells the main agent
+// once. No card text in the message (KANBANASSIGNFRAME1008): the seq, the id (only in the safe
+// shape) and the agent name. Best-effort, like every other side effect of a move that already
+// happened; the label and the notice fail independently.
 function notifyReviewRequested(id: string, agent: string): void {
+  try {
+    const label = findKanbanLabelByName(KANBAN_REVIEW_LABEL_NAME) ?? createLabel({
+      id: randomUUID().slice(0, 8),
+      name: KANBAN_REVIEW_LABEL_NAME,
+      color: resolveLabelColor(undefined, KANBAN_LABEL_COLORS).color,
+    })
+    addLabelToCard(id, label.id)
+  } catch (err) {
+    logger.warn({ err, id, agent }, 'Review label attach failed (card move still succeeded)')
+  }
   try {
     const card = getKanbanCard(id)
     const ref = card?.seq ? `#${card.seq}` : '#?'
