@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, lstatSync, symlinkSync, rmSync, realpathSync, renameSync, statSync, chmodSync, mkdtempSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, lstatSync, symlinkSync, readlinkSync, rmSync, realpathSync, renameSync, statSync, chmodSync, mkdtempSync, unlinkSync } from 'node:fs'
 import { encodeClaudeProjectDir } from '../claude-project-dir.js'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
@@ -469,6 +469,40 @@ function maybeAlertSharedConfigCollision(name: string): void {
 // Consequence for a fresh agent: no `projects` entry is provisioned, and Claude Code
 // creates its own inside the isolated config dir. That is the intended end state.
 const ISOLATED_CONFIG_SKIP = new Set(['settings.json', 'plugins', '.credentials.json', 'projects'])
+
+// A sub-agent does not load the repo root CLAUDE.md (it speaks to the main agent
+// only; owner decision, Telegram msg 7844, 2026-10-15). It loads the fleet rulebook
+// instead, through a CLAUDE.md symlink in its isolated config dir. Both halves used to
+// be made by hand: on 2026-10-21 Brigid's dir was rebuilt without the link, and with
+// the root excluded she loaded no rulebook at all for three days (#647).
+export const FLEET_RULEBOOK = join(PROJECT_ROOT, 'docs', 'flotta', 'kozos-szabalyok.md')
+const ROOT_CLAUDE_MD = join(PROJECT_ROOT, 'CLAUDE.md')
+
+export function ensureFleetRulebookLink(cfg: string, name: string, rulebook: string = FLEET_RULEBOOK): void {
+  const link = join(cfg, 'CLAUDE.md')
+  let stat: ReturnType<typeof lstatSync> | null = null
+  try { stat = lstatSync(link) } catch { /* absent */ }
+  if (stat && !stat.isSymbolicLink()) {
+    // An agent's own CLAUDE.md written in place of the link is a decision, not ours to overwrite.
+    logger.warn({ name, link }, 'isolated-config: CLAUDE.md is a regular file, not the fleet rulebook link; left as is')
+    return
+  }
+  if (stat && existsSync(link)) {
+    if (readlinkSync(link) !== rulebook) {
+      logger.warn({ name, link, target: readlinkSync(link) }, 'isolated-config: CLAUDE.md links elsewhere than the fleet rulebook; left as is')
+    }
+    return
+  }
+  if (!existsSync(rulebook)) {
+    // A dangling link would load nothing as silently as no link: say it instead.
+    logger.warn({ name, rulebook }, 'isolated-config: fleet rulebook missing, CLAUDE.md link not created; the agent loads no rulebook')
+    return
+  }
+  try {
+    if (stat) rmSync(link, { force: true })
+    symlinkSync(rulebook, link)
+  } catch (err) { logger.warn({ err, name }, 'isolated-config: CLAUDE.md rulebook symlink failed') }
+}
 
 export function ensureIsolatedChannelConfigDir(
   name: string,
@@ -1067,7 +1101,8 @@ function provisionIsolatedConfigDir(
     // (measured on korall, 2026-08-19). It needs a REAL file of its own here.
     const perUserAgent = readAgentRunAsUser(name) != null
     for (const entry of readdirSync(realClaude)) {
-      if (ISOLATED_CONFIG_SKIP.has(entry) || (perUserAgent && entry === '.claude.json')) {
+      // A sub-agent's CLAUDE.md is the fleet rulebook (1b), never the user-global one.
+      if (ISOLATED_CONFIG_SKIP.has(entry) || (perUserAgent && entry === '.claude.json') || (name !== MAIN_AGENT_ID && entry === 'CLAUDE.md')) {
         // Defensively drop a real .credentials.json that an older build may have
         // symlinked/copied here, so the env-var token is the only auth source.
         const stale = join(cfg, entry)
@@ -1090,6 +1125,9 @@ function provisionIsolatedConfigDir(
         catch (err) { logger.warn({ err, entry, name }, 'isolated-config: symlink failed') }
       }
     }
+
+    // 1b. A sub-agent's rulebook link (see FLEET_RULEBOOK).
+    if (name !== MAIN_AGENT_ID) ensureFleetRulebookLink(cfg, name)
 
     // 2. Own settings.json: copy the shared one (keeps hooks etc.) but force
     //    enabledPlugins to this agent's own provider only (all other channel
@@ -1192,6 +1230,15 @@ function provisionIsolatedConfigDir(
       if (enforceStrictPermissionMode(settings, permissionMode)) {
         logger.info({ name }, 'isolated-config: strict profile, permissions.defaultMode pinned to dontAsk (#1837)')
       }
+    }
+    // The other half of the rulebook switch: the root CLAUDE.md stays out of a
+    // sub-agent. It used to live here only as a hand-added, target-only key, so a
+    // rebuilt dir would have loaded the main agent's rules again (#647).
+    if (name !== MAIN_AGENT_ID) {
+      const excludes = Array.isArray(settings.claudeMdExcludes)
+        ? settings.claudeMdExcludes.filter((x): x is string => typeof x === 'string')
+        : []
+      if (!excludes.includes(ROOT_CLAUDE_MD)) settings.claudeMdExcludes = [...excludes, ROOT_CLAUDE_MD]
     }
     // Atomic: the file's CONTENT now depends on reading its own previous
     // content back. A torn write would fail the parse on the next start, the
