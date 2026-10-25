@@ -55,17 +55,14 @@ RECEIPT_PREFIXES = ("[Eredmeny]", "[Eredmény]")
 # notices as open work. They are about the agent's own session or about a card
 # that is already on the sheet, so they are dropped here; they stay in the inbox.
 SYSTEM_SENDERS = ("system",)
-# #663, owner tg 9197: until 10-25 the sheet carried only the card TITLE, cut at
-# 90 characters. Measured 06:00-07:00 that morning: cody 36 tool calls, roxy 4,
-# forgacs 3, none opened a card; margo opened one. So the agents worked from the
-# title and their memory. The head of the description and the last comment now
-# ride along for every card the agent can work on.
-DESC_HEAD = 300
-COMMENT_HEAD = 200
+# #663, owner tg 9204/9211: one line per card, no description excerpt. The sheet
+# names the card to start with and hands over the two calls that read it FULLY;
+# an excerpt here was a reason not to make them (b40a02ed carried a 300-char head
+# and the last comment, and the owner rejected that shape).
 WAIT_KIND_LABEL = {"owner": "a gazdara", "date": "datumra", "card": "masik kartyara",
                    "external": "kulso felre", "agent": "masik agensre"}
-WORKABLE = ("in_progress", "testing", "planned")
-REVIEW_STAMPS = ("[Heti átnézés]", "[Heti atnezes]")
+# testing is the main agent's turn (review), so it is not workable for the agent.
+WORKABLE = ("in_progress", "planned")
 # How many open rows a briefing may list. See the comment at the cap itself.
 MESSAGE_CAP = 8
 SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
@@ -125,30 +122,6 @@ def open_messages(tok, agent):
     return out
 
 
-def last_comments(tok, cards):
-    """Last comment per workable card, keyed by card id. A human (agent) comment
-    beats an automated one; a card whose comments cannot be fetched simply gets
-    none -- the briefing must still go out."""
-    out = {}
-    for c in cards:
-        if c.get("status") not in WORKABLE:
-            continue
-        try:
-            rows = _rows(_get("/api/kanban/%s/comments" % c.get("id"), tok), "comments", "items")
-        except Exception as e:
-            sys.stderr.write("#%s: a megjegyzesek NEM jottek le: %s\n" % (c.get("seq"), e))
-            continue
-        rows = sorted(rows, key=lambda r: (r.get("created_at") or 0, r.get("id") or 0))
-        # The weekly review stamps "[Heti átnézés] ... marad" on every kept card; on
-        # roxy's 10-25 sheet it was the "last comment" of three cards out of five and
-        # said nothing about the work. It is used only when nothing else exists.
-        human = [r for r in rows if not r.get("automated")
-                 and not (r.get("content") or "").lstrip().startswith(REVIEW_STAMPS)]
-        if human or rows:
-            out[c.get("id")] = (human or rows)[-1]
-    return out
-
-
 def _flat(text, n):
     t = " ".join((text or "").split())
     return t if len(t) <= n else t[:n].rstrip() + "..."
@@ -181,39 +154,48 @@ def digest(cards, msgs):
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None, comments=None):
+def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
     now = now or datetime.now()
     L = ["[ELIGAZITAS %s -- gepi, a sajat nyitott munkadbol]" % now.strftime("%Y-%m-%d %H:%M"),
          ""]
-    # #663, owner tg 9180: the order is cards and new tasks -> skill choice and
-    # loading -> work. Until 10-25 the skill choice came at 07:35, after an hour
-    # and a half of work done with yesterday's skills.
-    L += ["SORREND (gazda tg 9180):",
-          "  1. Olvasd el az alabbi kartyaidat es uzeneteidet (a kozben jott uj feladat is uzenet).",
-          "  2. Valassz skillt a mai munkahoz: %s lista %s, aztan valaszt %s <skill>..."
-          % (SKILL_CMD, agent, agent),
-          "     A kivalasztottat a Skill toollal toltsd be, mielott hozzakezdesz.",
-          "  3. Utana a munka, prioritas szerint.",
-          ""]
-    comments = comments or {}
     work = [c for c in cards if c.get("status") in WORKABLE]
-    parked = [c for c in cards if c.get("status") not in WORKABLE]
+    review = [c for c in cards if c.get("status") == "testing"]
+    parked = [c for c in cards if c.get("status") not in WORKABLE and c.get("status") != "testing"]
+    # #663, owner tg 9204/9211: read the first card fully -> choose the skill for it
+    # -> work -> testing, the main agent reviews -> only then the next card. The board
+    # refuses the steps out of order (read_card_first, review_pending, review_required),
+    # so the sheet gives the calls the board will ask for.
+    first = work[0] if work else None
+    ref = ("#%s (id %s)" % (first.get("seq"), first.get("id"))) if first else ""
+    cid = first.get("id") if first else ""
+    get = 'curl -s -H "Authorization: Bearer $(cat %s)" -H "X-Agent-Id: %s" %s/api/kanban/%s' % (
+        os.path.join(STORE, ".dashboard-token"), agent, DASH, cid)
+    # No workable card: nothing to read first; the sections below say what there is.
+    L += [] if not first else ["SORREND (gazda tg 9204, 9211):",
+          "  1. Az elso dolgozhato kartyad: %s (elobb az in_progress, aztan a planned prioritas" % ref,
+          "     szerint). Olvasd el TELJESEN, a leirast es a megjegyzeseket is:",
+          "       " + get,
+          "       " + get + "/comments",
+          "     Ha hasznos, a kovetkezot is olvasd el ugyanigy.",
+          "  2. Valassz skillt EHHEZ a kartyahoz, es toltsd be a Skill toollal:",
+          "       %s lista %s, aztan valaszt %s <skill>..." % (SKILL_CMD, agent, agent),
+          "  3. Dolgozz.",
+          "  4. Ha kesz: eredmeny-komment a kartyara, aztan testing-re (NEM done-ra). %s ellenorzi." % MAIN.capitalize(),
+          "  5. Amig egy kartyad testing-en all, uj kartyat ne kezdj. Ha %s rendben talalja," % MAIN.capitalize(),
+          "     a kartya done; ha javitast ker, visszakerul in_progress-re, a javitas a megjegyzesekben.",
+          "     Minden uj kartyanal elolrol: teljes olvasas, skill (ha uj kell), munka.",
+          ""]
     if work:
         L.append("DOLGOZHATO KARTYAID (%d). A SORSZAMOT hasznald, ha rajuk hivatkozol." % len(work))
-        L.append("A leiras eleje es az utolso megjegyzes itt van; a teljes kartya:")
-        L.append("  GET /api/kanban/<id> es /api/kanban/<id>/comments")
         for c in work:
             L.append("  #%s  %-11s %-6s  %s  (id %s)" % (c.get("seq"), c.get("status"),
                                                        c.get("priority"), _flat(c.get("title"), 120),
                                                        c.get("id")))
-            if (c.get("description") or "").strip():
-                L.append("      Leiras: " + _flat(c.get("description"), DESC_HEAD))
-            cm = comments.get(c.get("id"))
-            if cm:
-                when = datetime.fromtimestamp(cm["created_at"]).strftime("%m-%d %H:%M") \
-                    if isinstance(cm.get("created_at"), (int, float)) else "?"
-                L.append("      Utolso megjegyzes (%s, %s): %s"
-                         % (cm.get("author") or "?", when, _flat(cm.get("content"), COMMENT_HEAD)))
+        L.append("")
+    if review:
+        L.append("ELLENORZESRE VAR (%d): %s nezi at, addig uj kartyat nem kezdhetsz." % (len(review), MAIN.capitalize()))
+        for c in review:
+            L.append("  #%s  %s  (id %s)" % (c.get("seq"), _flat(c.get("title"), 120), c.get("id")))
         L.append("")
     if parked:
         L.append("VARO KARTYAID (%d): addig nincs veluk teendod, amig az ok fennall." % len(parked))
@@ -326,7 +308,7 @@ def build(agent, tok, force=False, dry=False, quiet_when_empty=False):
         pass
     same = (cards or msgs) and prev.get("digest") == dg
     text = render(agent, cards, msgs, unchanged_since=prev.get("since") if same else None,
-                  waits=waits, comments=last_comments(tok, cards))
+                  waits=waits)
     if dry:
         print("--- %s (dry-run, %d kartya, %d uzenet) ---" % (agent, len(cards), len(msgs)))
         print(text)

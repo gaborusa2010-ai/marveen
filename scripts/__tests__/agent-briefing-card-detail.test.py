@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""agent-briefing-build.py (#663, owner tg 9195-9200): workable cards carry the
-description head and the last comment, waiting cards one line with the reason,
-system notices are not listed as open messages."""
+"""agent-briefing-build.py (#663, owner tg 9204/9211): one line per card and no
+description excerpt; the sheet names the first card and hands over the two calls
+that read it fully, then skill -> work -> testing (not done) -> wait for the
+review. Waiting cards stay one line with the reason; system notices are not
+listed as open messages."""
 import importlib.util, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -14,51 +16,59 @@ def check(name, cond):
     print(("  ok   " if cond else "  FAIL ") + name)
     fails += 0 if cond else 1
 
-long_desc = "Elso mondat a feladatrol.\n\n" + "x" * 1000
+long_desc = "LEIRASJEL a feladatrol.\n\n" + "x" * 1000
+# open_cards() order: in_progress, testing, waiting, planned; then priority.
 cards = [
     {"id": "a1", "seq": 1, "status": "in_progress", "priority": "high", "title": "Dolgozz", "description": long_desc},
-    {"id": "a2", "seq": 2, "status": "planned", "priority": "low", "title": "Ures", "description": None},
+    {"id": "a6", "seq": 6, "status": "testing", "priority": "normal", "title": "Atnezesre"},
     {"id": "a3", "seq": 3, "status": "waiting", "priority": "normal", "title": "Var", "wait_kind": "owner",
      "wait_note": "jovahagyasra var"},
     {"id": "a4", "seq": 4, "status": "waiting", "priority": "normal", "title": "Ok nelkul"},
     {"id": "a5", "seq": 5, "status": "waiting", "priority": "normal", "title": "Datum", "wait_kind": "date",
      "wait_until": 1793008800, "wait_note": ""},
+    {"id": "a2", "seq": 2, "status": "planned", "priority": "low", "title": "Ures", "description": None},
 ]
-comments = {"a1": {"author": "roxy", "created_at": 1791624619, "content": "Itt tartok:\n" + "y" * 500}}
-t = abb.render("x", cards, [], comments=comments)
+t = abb.render("x", cards, [])
+lines = t.splitlines()
 
-check("description head is on the sheet, whitespace flattened", "Leiras: Elso mondat a feladatrol. xxx" in t)
-check("description is cut at DESC_HEAD", "x" * (abb.DESC_HEAD + 1) not in t and "..." in t)
-check("last comment with author", "Utolso megjegyzes (roxy, " in t and "Itt tartok: yyy" in t)
-check("comment is cut at COMMENT_HEAD", "y" * (abb.COMMENT_HEAD + 1) not in t)
-check("card without description gets no empty Leiras line", "Leiras: \n" not in t and t.count("Leiras:") == 1)
+# One line per card, nothing from the description.
+check("no description excerpt on the sheet", "LEIRASJEL" not in t and "Leiras:" not in t)
+check("no last-comment line", "Utolso megjegyzes" not in t)
+card_line = [l for l in lines if l.startswith("  #1 ")]
+check("workable card is exactly one line with seq, status, priority, title, id",
+      len(card_line) == 1 and "in_progress" in card_line[0] and "high" in card_line[0]
+      and "Dolgozz" in card_line[0] and "(id a1)" in card_line[0])
+
+# The order of the steps and the full-read calls for the FIRST card.
+check("first card named: in_progress before planned", "Az elso dolgozhato kartyad: #1 (id a1)" in t)
+tok = os.path.join(abb.STORE, ".dashboard-token")
+get = 'curl -s -H "Authorization: Bearer $(cat %s)" -H "X-Agent-Id: x" %s/api/kanban/a1' % (tok, abb.DASH)
+check("exact GET of the card with the agent claim", (get + "\n") in t)
+check("exact GET of its comments", (get + "/comments\n") in t)
+i_read, i_skill, i_work, i_done = (t.index("Olvasd el TELJESEN"), t.index("Valassz skillt EHHEZ"),
+                                   t.index("3. Dolgozz"), t.index("testing-re (NEM done-ra)"))
+check("steps in order: read -> skill -> work -> testing", i_read < i_skill < i_work < i_done)
+check("no new card while one is in testing", "Amig egy kartyad testing-en all, uj kartyat ne kezdj" in t)
+check("the sheet never tells the agent to set done", '"done"' not in t and "done-ra:" not in t)
+
+# planned only -> the highest-priority planned card is first
+t2 = abb.render("x", [{"id": "p1", "seq": 11, "status": "planned", "priority": "high", "title": "A"},
+                      {"id": "p2", "seq": 12, "status": "planned", "priority": "low", "title": "B"}], [])
+check("planned only: the first listed planned card is named", "Az elso dolgozhato kartyad: #11 (id p1)" in t2)
+
+# testing is the reviewer's turn: its own block, not workable
+check("testing card in its own review block", "ELLENORZESRE VAR (1)" in t and "  #6  Atnezesre  (id a6)" in t)
+check("workable count excludes testing and waiting", "DOLGOZHATO KARTYAID (2)" in t)
+
+# waiting block kept from b40a02ed
 check("waiting card in its own section, with kind and note", "#3  Var: var a gazdara -- jovahagyasra var" in t)
 check("waiting card without a reason says so", "#4  Ok nelkul: NINCS OK a kartyan" in t)
 check("date wait shows the date", "#5  Datum: var datumra -- 10-26-ig" in t)
-check("waiting cards are not under DOLGOZHATO", t.index("VARO KARTYAID (3)") > t.index("#2 "))
-check("workable count excludes waiting", "DOLGOZHATO KARTYAID (2)" in t)
-check("no workable -> no DOLGOZHATO section",
-      "DOLGOZHATO" not in abb.render("x", cards[2:], [], comments={}))
 
-# last_comments: prefers a real comment over the weekly-review stamp and automated rows,
-# skips waiting cards, survives a failing fetch
-rows = {"a1": [{"id": 1, "created_at": 10, "author": "roxy", "content": "valodi", "automated": 0},
-               {"id": 2, "created_at": 20, "author": "gazda", "content": "[Heti átnézés] marad", "automated": 0},
-               {"id": 3, "created_at": 30, "author": "system", "content": "auto", "automated": 1}],
-        "a2": [{"id": 4, "created_at": 5, "author": "gazda", "content": "[Heti átnézés] marad", "automated": 0}]}
-asked = []
-def fake_get(path, tok):
-    cid = path.split("/")[3]
-    asked.append(cid)
-    if cid == "a2b":
-        raise OSError("boom")
-    return rows.get(cid, [])
-abb._get = fake_get
-lc = abb.last_comments("tok", cards + [{"id": "a2b", "seq": 9, "status": "planned"}])
-check("real comment beats stamp and automated", lc["a1"]["content"] == "valodi")
-check("stamp used when it is the only comment", lc["a2"]["content"].startswith("[Heti"))
-check("waiting cards are not fetched", "a3" not in asked and "a4" not in asked)
-check("failing fetch -> no entry, no exception", "a2b" not in lc)
+# Negative control: no workable card -> no steps block, no invented card id.
+t3 = abb.render("x", cards[1:5], [])
+check("no workable card -> no SORREND and no DOLGOZHATO", "SORREND" not in t3 and "DOLGOZHATO" not in t3)
+check("no workable card -> no read call with an empty id", "/api/kanban/\n" not in t3 and "X-Agent-Id" not in t3)
 
 # open_messages drops system senders and receipts, keeps the rest
 abb._get = lambda path, tok: [
