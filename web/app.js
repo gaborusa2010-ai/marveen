@@ -21141,7 +21141,12 @@ async function openResearchDoc(agent, name) {
     in_progress: { bg: '#4f8ef7',        border: '#3a7be0' },
     waiting:     { bg: '#e8a838',        border: '#c88c20' },
     done:        { bg: '#3dbf79',        border: '#28a560' },
+    testing:     { bg: '#8e6cf0',        border: '#7353d6' },
   }
+  // Cards being worked on show even without a due date (owner tg 9288: the projects we
+  // work on were missing, only 6 of 171 open cards had one). Their bar runs to today.
+  const ACTIVE_NO_DUE = new Set(['in_progress', 'testing'])
+  const barEndOf = (c, nowMs) => c.due_date ? c.due_date * 1000 : nowMs
 
   // Period window: returns { rangeStart: Date, rangeEnd: Date } (midnight boundaries)
   function periodWindow() {
@@ -21213,20 +21218,21 @@ async function openResearchDoc(agent, name) {
     const nowMs = Date.now()
     const todayPct = Math.max(0, Math.min(100, (nowMs - rangeStart) / totalMs * 100))
 
-    // Filter: cards that have a due_date
+    // Filter: cards that have a due_date, plus active cards without one (ACTIVE_NO_DUE)
     // Standing tasks have no end, so they never go on the timeline (owner, msg 5611).
-    let cards = (Array.isArray(kanbanCards) ? kanbanCards : []).filter(c => c.due_date && !kanbanIsOngoing(c))
+    let cards = (Array.isArray(kanbanCards) ? kanbanCards : [])
+      .filter(c => (c.due_date || ACTIVE_NO_DUE.has(c.status)) && !kanbanIsOngoing(c))
 
     if (ganttOverdueOnly) {
       // Keep cards that are overdue OR due within 7 days
       const cutoff = (nowMs + 7 * 86400000) / 1000
-      cards = cards.filter(c => c.due_date <= cutoff / 1 && c.status !== 'done')
+      cards = cards.filter(c => c.due_date && c.due_date <= cutoff / 1 && c.status !== 'done')
     }
 
     // Exclude cards whose entire bar lies outside the window
     cards = cards.filter(c => {
       const barStart = c.start_date ? c.start_date * 1000 : c.created_at ? c.created_at * 1000 : rangeStart.getTime()
-      const barEnd   = c.due_date * 1000
+      const barEnd   = barEndOf(c, nowMs)
       return barEnd >= rangeStart && barStart <= rangeEnd
     })
 
@@ -21291,8 +21297,9 @@ async function openResearchDoc(agent, name) {
         // Planned start first (msg 4832): created_at is when the card was filed,
         // not when the work is meant to begin.
         const barStartMs = card.start_date ? card.start_date * 1000 : card.created_at ? card.created_at * 1000 : rangeStart.getTime()
-        const barEndMs   = card.due_date * 1000
-        const isOverdue  = card.status !== 'done' && barEndMs < nowMs
+        const barEndMs   = barEndOf(card, nowMs)
+        const noDue      = !card.due_date
+        const isOverdue  = !noDue && card.status !== 'done' && barEndMs < nowMs
 
         // Clamp to window
         const clampedStart = Math.max(barStartMs, rangeStart.getTime())
@@ -21345,8 +21352,10 @@ async function openResearchDoc(agent, name) {
           `cursor:pointer`,
           `z-index:2`,
           isOverdue ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.12) 0px,rgba(0,0,0,.12) 4px,transparent 4px,transparent 8px)' : '',
+          noDue ? 'opacity:0.6;border-style:dashed;border-right-width:0' : '',
         ].filter(Boolean).join(';')
-        bar.title = `${seqLabel} ${card.title}\n${fmtDateShort(new Date(barStartMs))} - ${fmtDateShort(new Date(barEndMs))}`
+        const endLabel = noDue ? t('kanban.gantt.no_due') : fmtDateShort(new Date(barEndMs))
+        bar.title = `${seqLabel} ${card.title}\n${fmtDateShort(new Date(barStartMs))} - ${endLabel}`
         bar.textContent = `${seqLabel} ${card.title}`
         bar.addEventListener('click', () => { if (typeof openCardDetail === 'function') openCardDetail(card.id) })
         rowTrack.appendChild(bar)
@@ -21365,8 +21374,10 @@ async function openResearchDoc(agent, name) {
       { key: 'planned',     color: STATUS_COLOR.planned.bg },
       { key: 'in_progress', color: STATUS_COLOR.in_progress.bg },
       { key: 'waiting',     color: STATUS_COLOR.waiting.bg },
+      { key: 'testing',     color: STATUS_COLOR.testing.bg },
       { key: 'done',        color: STATUS_COLOR.done.bg },
       { key: 'overdue',     color: 'var(--danger,#e05252)' },
+      { key: 'no_due',      color: 'transparent;border:1px dashed var(--muted)' },
     ]
     for (const item of legendItems) {
       const dot = document.createElement('span')
