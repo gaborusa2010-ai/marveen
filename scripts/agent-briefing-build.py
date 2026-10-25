@@ -51,6 +51,21 @@ OPEN_CARD_STATUSES = ("planned", "in_progress", "testing", "waiting")
 # those; listing them here would bury the two cards that matter under twenty
 # "[Eredmeny] msg_id:N status:done" lines.
 RECEIPT_PREFIXES = ("[Eredmeny]", "[Eredmény]")
+# #663, owner tg 9195-9198: the sheet listed [CONTEXT-GUARD] and [kanban-kovetkezo]
+# notices as open work. They are about the agent's own session or about a card
+# that is already on the sheet, so they are dropped here; they stay in the inbox.
+SYSTEM_SENDERS = ("system",)
+# #663, owner tg 9197: until 10-25 the sheet carried only the card TITLE, cut at
+# 90 characters. Measured 06:00-07:00 that morning: cody 36 tool calls, roxy 4,
+# forgacs 3, none opened a card; margo opened one. So the agents worked from the
+# title and their memory. The head of the description and the last comment now
+# ride along for every card the agent can work on.
+DESC_HEAD = 300
+COMMENT_HEAD = 200
+WAIT_KIND_LABEL = {"owner": "a gazdara", "date": "datumra", "card": "masik kartyara",
+                   "external": "kulso felre", "agent": "masik agensre"}
+WORKABLE = ("in_progress", "testing", "planned")
+REVIEW_STAMPS = ("[Heti átnézés]", "[Heti atnezes]")
 # How many open rows a briefing may list. See the comment at the cap itself.
 MESSAGE_CAP = 8
 SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
@@ -98,6 +113,8 @@ def open_messages(tok, agent):
     for m in msgs:
         if m.get("to_agent") != agent:
             continue
+        if m.get("from_agent") in SYSTEM_SENDERS:
+            continue
         if m.get("status") in ("done", "failed"):
             continue
         content = (m.get("content") or "").lstrip()
@@ -106,6 +123,35 @@ def open_messages(tok, agent):
         out.append(m)
     out.sort(key=lambda m: m.get("id") or 0)
     return out
+
+
+def last_comments(tok, cards):
+    """Last comment per workable card, keyed by card id. A human (agent) comment
+    beats an automated one; a card whose comments cannot be fetched simply gets
+    none -- the briefing must still go out."""
+    out = {}
+    for c in cards:
+        if c.get("status") not in WORKABLE:
+            continue
+        try:
+            rows = _rows(_get("/api/kanban/%s/comments" % c.get("id"), tok), "comments", "items")
+        except Exception as e:
+            sys.stderr.write("#%s: a megjegyzesek NEM jottek le: %s\n" % (c.get("seq"), e))
+            continue
+        rows = sorted(rows, key=lambda r: (r.get("created_at") or 0, r.get("id") or 0))
+        # The weekly review stamps "[Heti átnézés] ... marad" on every kept card; on
+        # roxy's 10-25 sheet it was the "last comment" of three cards out of five and
+        # said nothing about the work. It is used only when nothing else exists.
+        human = [r for r in rows if not r.get("automated")
+                 and not (r.get("content") or "").lstrip().startswith(REVIEW_STAMPS)]
+        if human or rows:
+            out[c.get("id")] = (human or rows)[-1]
+    return out
+
+
+def _flat(text, n):
+    t = " ".join((text or "").split())
+    return t if len(t) <= n else t[:n].rstrip() + "..."
 
 
 def agent_waits(tok, agent):
@@ -135,7 +181,7 @@ def digest(cards, msgs):
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
+def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None, comments=None):
     now = now or datetime.now()
     L = ["[ELIGAZITAS %s -- gepi, a sajat nyitott munkadbol]" % now.strftime("%Y-%m-%d %H:%M"),
          ""]
@@ -149,11 +195,39 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
           "     A kivalasztottat a Skill toollal toltsd be, mielott hozzakezdesz.",
           "  3. Utana a munka, prioritas szerint.",
           ""]
-    if cards:
-        L.append("NYITOTT KARTYAID (%d). A SORSZAMOT hasznald, ha rajuk hivatkozol:" % len(cards))
-        for c in cards:
-            L.append("  #%s  %-11s %-6s  %s" % (c.get("seq"), c.get("status"),
-                                                c.get("priority"), (c.get("title") or "")[:90]))
+    comments = comments or {}
+    work = [c for c in cards if c.get("status") in WORKABLE]
+    parked = [c for c in cards if c.get("status") not in WORKABLE]
+    if work:
+        L.append("DOLGOZHATO KARTYAID (%d). A SORSZAMOT hasznald, ha rajuk hivatkozol." % len(work))
+        L.append("A leiras eleje es az utolso megjegyzes itt van; a teljes kartya:")
+        L.append("  GET /api/kanban/<id> es /api/kanban/<id>/comments")
+        for c in work:
+            L.append("  #%s  %-11s %-6s  %s  (id %s)" % (c.get("seq"), c.get("status"),
+                                                       c.get("priority"), _flat(c.get("title"), 120),
+                                                       c.get("id")))
+            if (c.get("description") or "").strip():
+                L.append("      Leiras: " + _flat(c.get("description"), DESC_HEAD))
+            cm = comments.get(c.get("id"))
+            if cm:
+                when = datetime.fromtimestamp(cm["created_at"]).strftime("%m-%d %H:%M") \
+                    if isinstance(cm.get("created_at"), (int, float)) else "?"
+                L.append("      Utolso megjegyzes (%s, %s): %s"
+                         % (cm.get("author") or "?", when, _flat(cm.get("content"), COMMENT_HEAD)))
+        L.append("")
+    if parked:
+        L.append("VARO KARTYAID (%d): addig nincs veluk teendod, amig az ok fennall." % len(parked))
+        for c in parked:
+            kind = WAIT_KIND_LABEL.get(c.get("wait_kind"), c.get("wait_kind"))
+            why = _flat(c.get("wait_note"), 110)
+            if isinstance(c.get("wait_until"), (int, float)):
+                why = ("%s-ig; " % datetime.fromtimestamp(c["wait_until"]).strftime("%m-%d")) + why
+            if kind or why:
+                L.append("  #%s  %s: var %s%s" % (c.get("seq"), _flat(c.get("title"), 60),
+                                                  kind or "", (" -- " + why) if why else ""))
+            else:
+                L.append("  #%s  %s: NINCS OK a kartyan -> ird ra, mire var"
+                         % (c.get("seq"), _flat(c.get("title"), 60)))
         L.append("")
     if waits and (waits[0] or waits[1]):
         mine, on_me = waits
@@ -251,7 +325,8 @@ def build(agent, tok, force=False, dry=False, quiet_when_empty=False):
     except Exception:
         pass
     same = (cards or msgs) and prev.get("digest") == dg
-    text = render(agent, cards, msgs, unchanged_since=prev.get("since") if same else None, waits=waits)
+    text = render(agent, cards, msgs, unchanged_since=prev.get("since") if same else None,
+                  waits=waits, comments=last_comments(tok, cards))
     if dry:
         print("--- %s (dry-run, %d kartya, %d uzenet) ---" % (agent, len(cards), len(msgs)))
         print(text)
