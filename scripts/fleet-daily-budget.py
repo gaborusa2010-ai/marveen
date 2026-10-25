@@ -461,17 +461,16 @@ def main(argv=None):
                     fejlec += " A heti ablak MOST NEM MERHETO (a napi szam dontott)."
             msg = (f"{fejlec}\n\n"
                    f"Leallitva a nap hatralevo reszere: {', '.join(hirlista)}.\n"
-                   # NE IGERJ INDULAST: semmi nem valtja be. Anorak merte 2026-09-19
-                   # ejjel, harom uton: a `fleet-safe-start.sh` KEZI eszkoz es semmi nem
-                   # hivja (nulla talalat a systemd unitokon es a scheduled-tasks alatt);
-                   # az auto-restart SZANDEKOSAN nem eleszt fel `stopped` agenst
-                   # (`src/web/auto-restart-runner.ts`, "'stopped' is also left alone");
-                   # sajat inditoja pedig csak Anoraknak es Margonak van. Aznap Cody,
-                   # Forgacs es Roxy 23-28 oran at allt, mikozben ez a mondat azt
-                   # mondta, hogy reggel elindulnak.
-                   f"A kovetkezo napi ablak 06:00-kor nyilik, de az INDITAS KEZI: "
-                   f"a teljes flottat szandekosan nem inditjuk automatikusan "
-                   f"(a gazda dontese, lasd scripts/fleet-safe-start.sh fejlece).\n\n"
+                   # 2026-09-19 ota itt "az INDITAS KEZI" allt, mert akkor semmi nem
+                   # inditott ujra leallitott agenst (Anorak merese, harom uton). 2026-10-25
+                   # ota van indito: a marveen-<agens>-day-start unit 06:00-kor elinditja,
+                   # ha az agent-has-work.py munkat talal (#663, gazda tg 9191), es a
+                   # fleet-window-watch.py 06:10-kor riaszt, ha munkaval megis all. A
+                   # kapu nem tiltja az inditast, ezt mertuk: Cody 10-24 13:24-es leallitas
+                   # utan 10-25 06:00:20-kor elindult. Anorak sajat muszakja 23:00-kor.
+                   f"A kovetkezo napi ablak {a.daily_from:02d}:00-kor nyilik, es aki akkor "
+                   f"munkaval var, azt a reggeli indito magatol elinditja (Anorakot a "
+                   f"23 orai muszakja).\n\n"
                    "A fo-agens NEM all le: o a csatorna. Aki ma nem koltott, "
                    "azt nem allitom le -- nem o okozta.")
             kiment = g.notify(msg)

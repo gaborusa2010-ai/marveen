@@ -492,6 +492,12 @@ def main(argv=None):
            "Ez a sajat merese, nem a teljes fiokod. "
            "Ha ma megis futnia kell, szolj Marveennek: mara feloldja. "
            "Egy sima ujrainditas NEM eleg, azt a kovetkezo ellenorzes perceken belul ujra leallitja.")
+    if a.daily_from is not None:
+        # #663, owner tg 9191: the marveen-<agent>-day-start unit starts it at the
+        # anchor hour if agent-has-work.py finds work. True only with a daily
+        # window: a rolling window (anorak) has no "next day", only its shift.
+        msg += (f"\n\nA kovetkezo napi ablak {a.daily_from:02d}:00-kor nyilik, es ha akkor "
+                "van munkaja, a reggeli indito magatol elinditja.")
     if not ok:
         msg = (f"{a.agent} elerte a leallitasi kuszobot, de A LEALLITAS NEM SIKERULT.\n\n"
                f"{sz_total} token {ablak}, a kuszob {sz_trigger}, a plafon {sz_cap}.\n"

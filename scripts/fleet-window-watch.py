@@ -37,15 +37,30 @@ owner's third instruction in the same message was "adj nekik munkat ha nincs mit
 csinaljanak", so the notice carries each agent's open card and open message
 count. A restart notice with no backlog behind it is a chore, not information.
 
+2026-10-25: FROM NOTICE TO FAILURE ALARM (#663, owner tg 9191)
+---------------------------------------------------------------
+The owner reversed the 3774 shape: "ha a keret miatt allt le egy agent, akkor
+masnap reggel 6-kor induljon el automatikusan (ha van munkaja)". The 06:00
+marveen-<agent>-day-start units already do exactly that -- measured 10-25:
+Cody, stopped by its own cap 10-24 13:24, started at 06:00:20 -- because the
+gates only STOP and the start API is not gated by them. So at 06:10 a
+gate-stopped agent that is still down is one of two things:
+  - it has no work: agent-has-work.py skipped its start. Expected, silent.
+  - it has work: the start failed. THAT is the only thing left worth saying,
+    and it goes to the main agent, who can look at the unit log and fix it,
+    not to the owner as a chore. The owner only hears it if that send fails.
+Anorak is never a candidate: its start is the 23:00 night shift, not 06:00.
+
 Usage
 -----
   fleet-window-watch.py            # measure and print, send nothing
-  fleet-window-watch.py --notify   # send one Telegram per window-day
+  fleet-window-watch.py --notify   # send one alarm per window-day
 """
 import argparse
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timedelta
@@ -57,6 +72,7 @@ FLEET_STATE = os.path.join(STORE, "fleet-daily-budget.json")
 GUARD_STATE = os.path.join(STORE, "agent-budget-guard.json")
 DASH = os.environ.get("MARVEEN_DASHBOARD_URL", "http://localhost:3420")
 SUBS = ("anorak", "cody", "forgacs", "margo", "roxy")
+NIGHT_SHIFT = ("anorak",)  # started at 23:00 by its own timer, never at 06:00
 DAILY_FROM = 6  # the anchor hour, same as the gates'
 
 
@@ -142,38 +158,42 @@ def stopped_by_a_gate(today):
     return why
 
 
-def backlog(tok, agent):
-    """(open cards, open messages) -- so the notice can say whether it is worth
-    starting the agent at all."""
-    cards = [c for c in _rows(_get("/api/kanban", tok), "cards", "items")
-             if (c.get("assignee") or "").lower() == agent.lower()
-             and c.get("status") in ("planned", "in_progress", "waiting")
-             and not c.get("archived_at")]
-    msgs = [m for m in _rows(_get("/api/messages?agent=%s&limit=200" % agent, tok),
-                             "messages", "items")
-            if m.get("to_agent") == agent and m.get("status") != "done"
-            and not (m.get("content") or "").lstrip().startswith(("[Eredmeny]", "[Eredmény]"))]
-    return len(cards), len(msgs)
+def has_work(tok, agent):
+    """The reasons agent-has-work.py gives -- the SAME judgment the 06:00 start
+    made, imported rather than restated, so the watcher can never call an agent
+    "should have started" that the start gate rightly skipped."""
+    src = os.path.join(REPO, "scripts", "agent-has-work.py")
+    spec = importlib.util.spec_from_file_location("agent_has_work", src)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.check(agent, tok)
 
 
 def build_message(rows, today):
-    lines = ["FELOLDAS: a napi keret-ablak ujranyilt (%s 06:00), es %d leallitott agens "
-             "allhatna munkaba." % (today, len(rows)), ""]
-    for name, why, cards, msgs in rows:
-        munka = ("%d nyitott kartya, %d lezaratlan uzenet" % (cards, msgs)) if (cards or msgs) \
-                else "NINCS kiosztott munkaja"
+    lines = ["[INDITAS ELMARADT] %s 06:00 utan %d agens all munkaval, pedig a keret "
+             "miatti leallitasa mar lejart, es a reggeli indito (#663) elinditotta volna."
+             % (today, len(rows)), ""]
+    for name, why, reasons in rows:
         # NO " -- " IN OUTGOING TEXT. The house style bans the em dash and its
-        # two-hyphen stand-in in anything sent to the owner (CLAUDE.md), and this
-        # message does not pass through outgoing-copy-gate.py, which would
-        # otherwise refuse it: it goes straight to the Bot API from notify().
-        # A gate that cannot see the text is not a reason to drop the rule.
-        lines.append("  %-8s leallitotta: %s. Nala: %s." % (name, why, munka))
+        # two-hyphen stand-in; this text can reach the owner by the fallback
+        # path, which does not pass through outgoing-copy-gate.py.
+        lines.append("  %-8s leallitotta: %s. Munkaja: %s." % (name, why, ", ".join(reasons[:6])))
     lines += ["",
-              "Magamtol nem inditom el oket. A teljes flottat szandekosan nem inditjuk "
-              "automatikusan (a te dontesed, lasd scripts/fleet-safe-start.sh fejlece).",
-              "Ha mehet: bash scripts/fleet-safe-start.sh",
-              "Errol a napról tobbet nem szolok."]
+              "Nezd meg: journalctl --user -u marveen-<nev>-day-start, inditsd el, "
+              "es ha a hiba ismetlodhet, javitsd. Errol a naprol tobbet nem szolok.",
+              "Ezt a sort a fleet-window-watch.py irja."]
     return "\n".join(lines)
+
+
+def send_to_main(text):
+    """To the main agent's inbox; True only on a confirmed id (house rule)."""
+    try:
+        r = subprocess.run(["bash", os.path.join(REPO, "scripts", "agent-msg.sh"),
+                            "marveen", "marveen", "-"], input=text,
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "OK id=" in (r.stdout or "")
 
 
 def main(argv=None):
@@ -192,8 +212,11 @@ def main(argv=None):
 
     rows = []
     for n in names:
-        cards, msgs = backlog(tok, n)
-        rows.append((n, why[n], cards, msgs))
+        if n in NIGHT_SHIFT:
+            continue
+        reasons = has_work(tok, n)
+        if reasons:  # no work = its start was rightly skipped, nothing to say
+            rows.append((n, why[n], reasons))
 
     print(json.dumps({"window_day": today,
                       "not_running": sorted(down),
@@ -207,7 +230,8 @@ def main(argv=None):
     if not a.notify:
         print(build_message(fresh, today))
         return 0
-    if _guard().notify(build_message(fresh, today), to_owner=True):
+    text = build_message(fresh, today)
+    if send_to_main(text) or _guard().notify(text, to_owner=True):
         _write_state({"day": today, "notified": sorted(already | {r[0] for r in fresh})})
     else:
         # NOT recorded: an unsent notice must be retried, never marked done.

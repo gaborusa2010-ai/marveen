@@ -84,28 +84,60 @@ class TestStoppedByAGate(unittest.TestCase):
 
 
 class TestMessage(unittest.TestCase):
-    def test_it_says_whether_there_is_work(self):
+    def test_it_names_the_work(self):
         m = load()
-        msg = m.build_message([("cody", "a sajat napi plafonja (2026-09-20)", 7, 16),
-                               ("forgacs", "a flotta napi kerete (2026-09-22)", 0, 0)],
-                              "2026-09-23")
-        self.assertIn("7 nyitott kartya, 16 lezaratlan uzenet", msg)
-        self.assertIn("NINCS kiosztott munkaja", msg)
+        msg = m.build_message([("cody", "a sajat napi plafonja (2026-10-24)",
+                                ["#12 planned", "msg 5"])], "2026-10-25")
+        self.assertIn("Munkaja: #12 planned, msg 5.", msg)
+        self.assertIn("INDITAS ELMARADT", msg)
 
-    def test_it_never_promises_an_automatic_start(self):
+    def test_it_no_longer_says_the_start_is_manual(self):
+        # Owner tg 9191 (2026-10-25) replaced the manual start: a stale "Magamtol
+        # nem inditom el" would now be a false statement in the alarm.
         m = load()
-        msg = m.build_message([("cody", "x", 1, 1)], "2026-09-23")
-        self.assertIn("Magamtol nem inditom el", msg)
+        msg = m.build_message([("cody", "x", ["#1 planned"])], "2026-10-25")
+        self.assertNotIn("nem inditom", msg)
+        self.assertNotIn("fleet-safe-start", msg)
 
     def test_no_double_hyphen_in_outgoing_text(self):
-        # House style: no em dash and no ' -- ' stand-in in anything sent to the
-        # owner. This message bypasses outgoing-copy-gate.py (it goes straight to
-        # the Bot API), so the rule has no enforcer but this test.
+        # House style: no em dash and no ' -- ' stand-in in anything that can
+        # reach the owner. The fallback path bypasses outgoing-copy-gate.py.
         m = load()
-        msg = m.build_message([("cody", "a sajat napi plafonja (2026-09-20)", 7, 16)],
+        msg = m.build_message([("cody", "a sajat napi plafonja (2026-09-20)", ["#1 planned"])],
                               "2026-09-23")
         self.assertNotIn(" -- ", msg)
-        self.assertNotIn("—", msg)
+        self.assertNotIn("\u2014", msg)
+
+
+class TestWhoIsReported(unittest.TestCase):
+    """main() end to end with every reader stubbed: positive control (a stopped
+    agent with work IS reported) and the two silences (no work, night shift)."""
+
+    def _run(self, work):
+        m = load()
+        old = time.time() - 3 * 86400  # an earlier window-day whenever this runs
+        files = {m.GUARD_STATE: {n: {"stopped_at": old} for n in ("cody", "roxy", "anorak")}}
+        m._read_json = lambda p, d: files.get(p, d)
+        m._token = lambda: "tok"
+        m.not_running = lambda tok: {"cody", "roxy", "anorak"}
+        m.has_work = lambda tok, n: work.get(n, [])
+        sent = []
+        m.send_to_main = lambda text: sent.append(text) or True
+        m._write_state = lambda d: None
+        m.main(["--notify"])
+        return sent
+
+    def test_positive_stopped_with_work_is_reported(self):
+        sent = self._run({"cody": ["#7 planned"]})
+        self.assertEqual(len(sent), 1)
+        self.assertIn("cody", sent[0])
+        self.assertNotIn("roxy", sent[0])
+
+    def test_no_work_means_silence(self):
+        self.assertEqual(self._run({}), [])
+
+    def test_night_shift_is_never_reported(self):
+        self.assertEqual(self._run({"anorak": ["#9 planned"]}), [])
 
 
 class TestRunStateNotStatus(unittest.TestCase):
