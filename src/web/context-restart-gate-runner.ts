@@ -69,7 +69,9 @@ export function gateWakePrompt(): string {
     'Olvasd be oket, ellenorizd a kanban tabladat es a hot memoriaidat, es FOLYTASD onnan ahol abbamaradt. ' +
     'Ne kezdd elolrol ami mar kesz, es ne delegald ujra amit mar atadtal. ' +
     'Ha nem volt futo munkad, az is teljes erteku allapot -- olyankor ne talalj ki magadnak feladatot. ' +
-    'Rovid jelzest kuldj a sajat csatornadon, hogy friss kontextussal folytatod.'
+    // No restart notice on the channel: for an agent with its own bot that is
+    // the owner's Telegram, and the owner does not want it (tg 9411, 2026-10-25).
+    'Az ujraindulasrol a gazda Telegramjara NE kuldj jelzest.'
   )
 }
 

@@ -102,7 +102,11 @@ describe('resumePrompt closing line is agent-dependent', () => {
     expect(p).toContain('transzkript')
     expect(p).toContain(CONSTRAINT)
   })
-  it('sub-agent: channel notice stays (their channel is the inter-agent queue)', () => {
-    expect(resumePrompt('samu', '/x/HANDOFF.md', true)).toContain('jelezz a csatornádon')
+  // Owner tg 9411 (2026-10-25): a sub-agent with its own bot sent the notice
+  // to the owner's Telegram; no agent announces the restart on its channel.
+  it('sub-agent: no channel notice either, transcript line instead', () => {
+    const p = resumePrompt('samu', '/x/HANDOFF.md', true)
+    expect(p).not.toContain('jelezz a csatornádon')
+    expect(p).toContain('transzkript')
   })
 })

@@ -752,13 +752,15 @@ describe('decideWake', () => {
 })
 
 describe('gateWakePrompt', () => {
-  // The nudge exists to produce a turn AND a visible sign of life; a nudge that
-  // only said "you restarted" would leave the owner staring at silence again.
-  it('asks the agent to continue and to report on its channel', () => {
+  // The nudge exists to produce a turn. The restart notice on the channel was
+  // removed: for an agent with its own bot that is the owner's Telegram, and
+  // the owner does not want it (tg 9411, 2026-10-25).
+  it('asks the agent to continue, without a restart notice to the owner', () => {
     const p = gateWakePrompt()
     expect(p).toContain('[CONTEXT-RESTART-GATE]')
     expect(p.toLowerCase()).toContain('folytasd')
-    expect(p.toLowerCase()).toContain('csatorna')
+    expect(p).not.toContain('sajat csatornadon')
+    expect(p).toContain('NE kuldj jelzest')
   })
 
   // Guard against the nudge itself becoming a source of invented work.
