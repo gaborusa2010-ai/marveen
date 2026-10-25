@@ -47,7 +47,7 @@ vi.mock('../web/agent-process.js', async (importOriginal) => ({
 import {
   initDatabase, createKanbanCard, getKanbanCard, getKanbanCardEvents, moveKanbanCard,
 } from '../db.js'
-import { tryHandleKanban } from '../web/routes/kanban.js'
+import { tryHandleKanban, recordKanbanCardRead, resetKanbanCardReads } from '../web/routes/kanban.js'
 
 interface MoveResult { status: number; body: Record<string, unknown> }
 
@@ -75,11 +75,14 @@ async function move(id: string, payload: Record<string, unknown>): Promise<MoveR
 beforeEach(() => {
   vi.clearAllMocks()
   initDatabase(':memory:')
+  resetKanbanCardReads()
 })
 
 describe('POST /api/kanban/<id>/move with expected_status', () => {
   it('(a) moves the card when expected_status matches the current status', async () => {
     createKanbanCard({ id: 'c-a', title: 'Matching', assignee: 'dex' })
+    // #663: a sub-agent's in_progress needs a recorded full read of the card.
+    recordKanbanCardRead('dex', 'c-a')
 
     const r = await move('c-a', { status: 'in_progress', expected_status: 'planned', actor: 'dex' })
 
@@ -94,7 +97,8 @@ describe('POST /api/kanban/<id>/move with expected_status', () => {
 
   it('(b) refuses with 409 and leaves a done card done when expected_status is stale', async () => {
     createKanbanCard({ id: 'c-b', title: 'Already closed', assignee: 'dex' })
-    await move('c-b', { status: 'done', actor: 'dex' })
+    // The main agent closes (#663: a sub-agent's done is refused, review_required).
+    await move('c-b', { status: 'done', actor: 'orin' })
     expect(getKanbanCard('c-b')?.status).toBe('done')
     const updatedBefore = getKanbanCard('c-b')?.updated_at
 
@@ -111,7 +115,7 @@ describe('POST /api/kanban/<id>/move with expected_status', () => {
 
   it('(c) without expected_status the move is unconditional, exactly as before', async () => {
     createKanbanCard({ id: 'c-c', title: 'Legacy caller', assignee: 'dex' })
-    await move('c-c', { status: 'done', actor: 'dex' })
+    await move('c-c', { status: 'done', actor: 'orin' })
 
     const r = await move('c-c', { status: 'in_progress', sort_order: 0, actor: 'orin' })
 

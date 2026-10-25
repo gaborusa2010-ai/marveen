@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { kanbanMoveInstructions } from '../web/routes/kanban.js'
+import { MAIN_AGENT_ID } from '../config.js'
 
 // The one line of the dispatch that is a COMMAND rather than prose.
 const probeLine = (out: string): string | undefined =>
@@ -13,11 +14,11 @@ const probeLine = (out: string): string | undefined =>
 // (visible in the dashboard UI) -- the lightweight alternative to per-session
 // cards.
 describe('kanbanMoveInstructions', () => {
-  it('gives the agent the curl to post a result comment AND to mark done', () => {
-    const out = kanbanMoveInstructions('abc123', 'cody')
+  it('gives the main agent the curl to post a result comment AND to mark done', () => {
+    const out = kanbanMoveInstructions('abc123', MAIN_AGENT_ID)
     // Step 1: a human-readable result comment lands on the card.
     expect(out).toContain('/api/kanban/abc123/comments')
-    expect(out).toContain('"author":"cody"')
+    expect(out).toContain(`"author":"${MAIN_AGENT_ID}"`)
     // Step 2: mark the card done.
     expect(out).toContain('/api/kanban/abc123/move')
     expect(out).toContain('"status":"done"')
@@ -30,8 +31,26 @@ describe('kanbanMoveInstructions', () => {
   // the in_progress self-pickup, which is the one the dispatcher used to echo back.
   it('names the agent as the actor on every move it is told to make', () => {
     const out = kanbanMoveInstructions('abc123', 'cody')
-    expect(out).toContain('"status":"done","actor":"cody"')
+    expect(out).toContain('"status":"testing","actor":"cody"')
     expect(out).toContain('"status":"in_progress","actor":"cody"')
+    const main = kanbanMoveInstructions('abc123', MAIN_AGENT_ID)
+    expect(main).toContain(`"status":"done","actor":"${MAIN_AGENT_ID}"`)
+  })
+
+  // #663 (owner tg 9204, 9211): a sub-agent's finished card goes to testing and the main agent
+  // reviews it; the board refuses a sub-agent's done, so the template must not hand one out.
+  it('hands a sub-agent the testing move, never done, and the read it needs before in_progress', () => {
+    const out = kanbanMoveInstructions('abc123', 'cody')
+    expect(out).not.toContain('"status":"done"')
+    expect(out).toContain('2) Állítsd a kártyát testing-re (NEM done-ra)')
+    expect(out).toContain(`${MAIN_AGENT_ID} ellenőrzi`)
+    expect(out).toContain('review_pending')
+    expect(out).toContain('-H "X-Agent-Id: cody" http://')
+    expect(out).toContain('/api/kanban/abc123/comments')
+    // The main agent's template keeps done and carries none of the sub-agent lines.
+    const main = kanbanMoveInstructions('abc123', MAIN_AGENT_ID)
+    expect(main).not.toContain('NEM done-ra')
+    expect(main).not.toContain('review_pending')
   })
 
   // The dispatch fires once, when the card enters in_progress, and is correct at
@@ -110,15 +129,15 @@ describe('kanbanMoveInstructions', () => {
   // unreviewed. The fix is one sentence, not a global swap: for every other
   // program `done` IS the right close, so the template keeps it as the default
   // and only names the card as the stronger rule when the card says otherwise.
-  it('says the card own closing status outranks the template default', () => {
-    const out = kanbanMoveInstructions('abc123', 'cody')
+  it('says the card own closing status outranks the template default (main agent)', () => {
+    const out = kanbanMoveInstructions('abc123', MAIN_AGENT_ID)
     expect(out).toContain('a kártya program-specifikus szabálya erősebb')
     expect(out).toContain('záró-státuszt ír elő')
     // `testing` is named as the concrete case, so the reader does not have to
     // recognise the abstraction in the middle of a task.
     expect(out).toContain('testing')
     // ...and `done` stays the default: the sentence is an exception, not a swap.
-    expect(out).toContain('"status":"done","actor":"cody"')
+    expect(out).toContain(`"status":"done","actor":"${MAIN_AGENT_ID}"`)
     expect(out).toContain('a "done" az alapértelmezés')
   })
 
@@ -126,7 +145,7 @@ describe('kanbanMoveInstructions', () => {
   // done curl it modifies), not after the escalation block where a reader who
   // already ran the curl would meet it too late.
   it('puts the ranking sentence with step 2, before the escalation block', () => {
-    const out = kanbanMoveInstructions('abc123', 'cody')
+    const out = kanbanMoveInstructions('abc123', MAIN_AGENT_ID)
     const step2 = out.indexOf('2) Állítsd a kártyát done-ra')
     const ranking = out.indexOf('a kártya program-specifikus szabálya erősebb')
     const escalation = out.indexOf('Ha elakadtál')

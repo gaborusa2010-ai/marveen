@@ -57,7 +57,9 @@ async function call(method: string, path: string, body: unknown): Promise<number
   return status
 }
 
-const move = (id: string, status: string, actor = 'zara') =>
+// The main agent closes: since #663 a sub-agent's done is refused (review_required), and the
+// card reaches done when the main agent accepts the review.
+const move = (id: string, status: string, actor = 'orin') =>
   call('POST', `/api/kanban/${id}/move`, { status, sort_order: 0, actor })
 const put = (id: string, fields: Record<string, unknown>) => call('PUT', `/api/kanban/${id}`, fields)
 
@@ -128,9 +130,11 @@ describe('kanban unblock notification', () => {
   })
 
   it('the agent that closed the blocker is not told about its own waiting card', async () => {
-    await move('blk-a', 'done', 'dex')
-    expect(unblockMessages()).toHaveLength(0)
-    expect(systemComments('wait-b')).toHaveLength(1)
+    createKanbanCard({ id: 'wait-o', title: 'Own step', assignee: 'orin', status: 'planned' })
+    addCardBlocker('wait-o', 'blk-a')
+    await move('blk-a', 'done', 'orin')
+    expect(unblockMessages().map((c) => c[1])).toEqual(['dex'])
+    expect(systemComments('wait-o')).toHaveLength(1)
   })
 
   it('a human owner gets no prompt, only the card comment', async () => {

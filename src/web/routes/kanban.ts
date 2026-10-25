@@ -209,11 +209,16 @@ export function kanbanMoveInstructions(id: string, target: string): string {
     `    -H 'Content-Type: application/json' \\`,
     `    -d '{"author":"${target}","content":"AZ EREDMENY ROVIDEN"}'`,
     '',
-    '2) Állítsd a kártyát done-ra:',
+    // #663 (owner tg 9204, 9211): a sub-agent's card is reviewed by the main agent before it
+    // closes, and the board refuses a sub-agent's done (review_required). So a sub-agent is
+    // handed the testing move; only the main agent still closes its own cards with done.
+    ...(isMainAgent
+      ? ['2) Állítsd a kártyát done-ra:']
+      : [`2) Állítsd a kártyát testing-re (NEM done-ra): ${MAIN_AGENT_ID} ellenőrzi, és ő zárja le, vagy javítással visszaadja in_progress-re. A done-t a tábla tőled nem fogadja el.`]),
     `  curl -s -X POST ${moveUrl} \\`,
     `    ${auth} \\`,
     `    -H 'Content-Type: application/json' \\`,
-    `    -d '{"status":"done","actor":"${target}"}'`,
+    `    -d '{"status":"${isMainAgent ? 'done' : 'testing'}","actor":"${target}"}'`,
     '',
     // `done` is right for almost every card, so this template keeps it as the
     // default -- but not for every board PROGRAM. A program can give its cards
@@ -223,13 +228,20 @@ export function kanbanMoveInstructions(id: string, target: string): string {
     // deciding which one wins, or (worse) quietly follows this template and the
     // work closes unreviewed. One sentence fixes it; swapping the default
     // globally would break the close everywhere else.
-    'Ha a KÁRTYA SZÖVEGE más záró-státuszt ír elő (például `testing`, hogy a delegálód átnézze a munkát), AZ az irányadó: a kártya program-specifikus szabálya erősebb ennél a sablonnál. Ilyenkor a fenti hívásban a "done" helyére azt a státuszt írd, az "actor" mezőt ugyanúgy küldve. Ha a kártya nem ír elő mást, a "done" az alapértelmezés.',
-    '',
+    // For a sub-agent the close is testing already, so the ranking sentence is the main agent's.
+    ...(isMainAgent
+      ? ['Ha a KÁRTYA SZÖVEGE más záró-státuszt ír elő (például `testing`, hogy a delegálód átnézze a munkát), AZ az irányadó: a kártya program-specifikus szabálya erősebb ennél a sablonnál. Ilyenkor a fenti hívásban a "done" helyére azt a státuszt írd, az "actor" mezőt ugyanúgy küldve. Ha a kártya nem ír elő mást, a "done" az alapértelmezés.', '']
+      : [`Amíg egy kártyád testing-en áll, új kártyát ne kezdj: a tábla az in_progress-t addig elutasítja (review_pending). Ha ${MAIN_AGENT_ID} javítást kér, a kártya in_progress-re kerül vissza, a javítás a megjegyzésekben áll.`, '']),
     // The "actor" field is not decoration: it is what tells the board WHO moved
     // the card. Without it a self-pickup (agent -> in_progress on its own card)
     // is indistinguishable from an assignment, and the dispatcher echoes the
     // task back at the agent that just started it.
     `Az "actor":"${target}" mezőt MINDEN mozgatásnál küldd el (ez mondja meg a táblának, hogy te mozgattad). Ha te magad veszed fel a kártyát in_progress-re, ott is:`,
+    // #663: a sub-agent's in_progress is refused until it has read the card (read_card_first);
+    // the X-Agent-Id header on this GET is what records the read.
+    ...(isMainAgent ? [] : [
+      `  (előtte olvasd el a kártyát teljesen, különben a tábla elutasítja: curl -s ${auth} -H "X-Agent-Id: ${target}" ${cardUrl} és ugyanígy ${commentUrl})`,
+    ]),
     `  curl -s -X POST ${moveUrl} \\`,
     `    ${auth} \\`,
     `    -H 'Content-Type: application/json' \\`,
@@ -246,7 +258,7 @@ export function kanbanMoveInstructions(id: string, target: string): string {
     isMainAgent
       ? `Ez azért kritikus, mert ${OWNER_NAME} nem tudja kitalálni a dashboardon hogy egy nála maradt/rossz-assignee-jű, homályos kártya rá vár -- explicit átadás + explicit kérdés nélkül a felelősség-váltás elvész.`
       : `FONTOS: ${OWNER_NAME}-hez (az operátorhoz) EGYENESEN NE told át a kártyát, még ha a blokk végül tőle igényel is döntést -- ${MAIN_AGENT_ID} a delegálód, ő triázsol és ő dönti el, hogy tovább kell-e ${OWNER_NAME}-hez eszkalálnia. Ez azért kritikus, mert ${MAIN_AGENT_ID} nem tudja kitalálni a dashboardon hogy egy nála maradt/rossz-assignee-jű kártya rá vár -- explicit átadás + explicit kérdés nélkül a felelősség-váltás elvész.`,
-    'A "done"-t mindenképp te jelezd — a dashboard csak az in_progress/waiting állapotot követi automatikusan a session aktivitásából. Az eredmény-kommentet (1) ne hagyd ki: az a kártyán a látható eredmény.',
+    `A ${isMainAgent ? '"done"' : '"testing"'}-et mindenképp te jelezd — a dashboard csak az in_progress/waiting állapotot követi automatikusan a session aktivitásából. Az eredmény-kommentet (1) ne hagyd ki: az a kártyán a látható eredmény.`,
   ].join('\n')
 }
 
@@ -259,6 +271,127 @@ function kanbanWriteActor(actor: unknown, auth: RouteContext['auth']): { error: 
   if (actor !== undefined && actor !== null && typeof actor !== 'string') return { error: 'actor must be a string or null' }
   if (typeof actor === 'string' && actor.trim() !== '') return { actor }
   return { actor: auth?.kind === 'session' && auth.user ? auth.user : undefined }
+}
+
+// #663 (owner tg 9204, 9211): a sub-agent's card goes "read fully -> skill -> work -> testing", the
+// main agent reviews it, and only then does the agent start the next one. Three gates on a status
+// write enforce the order; they bind only a SUB-AGENT actor, i.e. a registered fleet agent that is
+// not MAIN_AGENT_ID. The owner's browser session, the main agent and an actor-less script call are
+// never affected.
+//
+// What these gates are and are not. The actor is the caller's own claim (one shared token, see
+// auth-gate.ts), so an agent that sends no actor passes all three. They exist for the measured
+// failure, an agent skipping a step by habit, not for an agent trying to get around them: the
+// habitual caller sends its actor because the dispatch recipe tells it to.
+//
+// "Read" is the same kind of claim: GET /api/kanban/<id> with an X-Agent-Id header naming the
+// agent. auth-gate.ts says the claim may warn, never authorize; it authorizes nothing here either.
+// A missing record only REFUSES a move (and says which call to make), a present one grants nothing
+// an actor-less move would not get anyway. The records live in memory: a dashboard restart
+// forgets them, and the cost is one more GET per open card.
+export const CARD_READ_TTL_MS = 12 * 3600 * 1000
+const CARD_READS_MAX = 5000
+const cardReads = new Map<string, number>()
+
+function cardReadKey(agent: string, cardId: string): string {
+  return `${agent.toLowerCase()}\u0000${cardId}`
+}
+
+export function recordKanbanCardRead(agent: string, cardId: string, now = Date.now()): void {
+  if (cardReads.size >= CARD_READS_MAX) {
+    for (const [k, at] of cardReads) if (now - at > CARD_READ_TTL_MS) cardReads.delete(k)
+    // Still full of fresh rows: drop the oldest insertions rather than grow without bound.
+    while (cardReads.size >= CARD_READS_MAX) cardReads.delete(cardReads.keys().next().value as string)
+  }
+  cardReads.delete(cardReadKey(agent, cardId))
+  cardReads.set(cardReadKey(agent, cardId), now)
+}
+
+export function hasReadKanbanCard(agent: string, cardId: string, now = Date.now()): boolean {
+  const at = cardReads.get(cardReadKey(agent, cardId))
+  return at !== undefined && now - at <= CARD_READ_TTL_MS
+}
+
+/** Test hook: forget every recorded read. */
+export function resetKanbanCardReads(): void {
+  cardReads.clear()
+}
+
+// The actor as a sub-agent id, or undefined when the gates do not apply. Lower-cased the same way
+// the card script records it (kartya-es-ertesites.py), so "Cody" and "cody" are one agent.
+function subAgentActor(actor: unknown, auth: RouteContext['auth']): string | undefined {
+  if (auth?.kind === 'session') return undefined
+  if (typeof actor !== 'string') return undefined
+  const name = actor.trim().toLowerCase()
+  if (!name || name === MAIN_AGENT_ID.toLowerCase()) return undefined
+  return listAgentNames().some((a) => a.toLowerCase() === name) ? name : undefined
+}
+
+type ReviewGateRefusal = { status: 409; body: Record<string, unknown> }
+
+// Gates 1-3 of #663. `card` is the card BEFORE the write; a write that does not change the status
+// (a reorder inside a column) is never refused.
+function reviewFlowGate(card: { id: string; status: string }, status: unknown, agent: string): ReviewGateRefusal | null {
+  if (status === card.status) return null
+  const tokenPath = join(STORE_DIR, '.dashboard-token')
+  const base = `http://${WEB_HOST}:${WEB_PORT}`
+  const auth = `-H "Authorization: Bearer $(cat ${tokenPath})" -H "X-Agent-Id: ${agent}"`
+  if (status === 'done') {
+    return {
+      status: 409,
+      body: {
+        error: 'review_required',
+        hint: `A kész kártyát "testing"-re tedd, ne "done"-ra: ${MAIN_AGENT_ID} ellenőrzi, és ő zárja le. ` +
+          `Előtte írd rá az eredményt kommentben. ` +
+          `curl -s -X POST ${base}/api/kanban/${card.id}/move ${auth} -H 'Content-Type: application/json' ` +
+          `-d '{"status":"testing","actor":"${agent}"}'`,
+      },
+    }
+  }
+  if (status !== 'in_progress') return null
+  const pending = listKanbanCards().find((c) =>
+    c.id !== card.id && c.status === 'testing' && c.archived_at == null &&
+    String(c.assignee ?? '').trim().toLowerCase() === agent)
+  if (pending) {
+    return {
+      status: 409,
+      body: {
+        error: 'review_pending',
+        card: `#${pending.seq}`,
+        hint: `A(z) #${pending.seq} kártyád ellenőrzésre vár (testing). Amíg ${MAIN_AGENT_ID} nem mondta rá, hogy rendben ` +
+          '(done), vagy vissza nem adta javítással (in_progress), új kártyát nem kezdhetsz.',
+      },
+    }
+  }
+  if (!hasReadKanbanCard(agent, card.id)) {
+    return {
+      status: 409,
+      body: {
+        error: 'read_card_first',
+        hint: 'Előbb olvasd el a kártyát TELJESEN, a leírást és a megjegyzéseket is, ezzel a két hívással ' +
+          '(az X-Agent-Id fejléc kell, abból tudja a tábla, hogy te olvastad), aztán válassz hozzá skillt:',
+        reads: [
+          `curl -s ${auth} ${base}/api/kanban/${card.id}`,
+          `curl -s ${auth} ${base}/api/kanban/${card.id}/comments`,
+        ],
+      },
+    }
+  }
+  return null
+}
+
+// Gate 4 of #663: a sub-agent's card entering testing tells the main agent once. No card text in
+// the message (KANBANASSIGNFRAME1008): the seq, the id (only in the safe shape) and the agent name.
+// Best-effort, like every other side effect of a move that already happened.
+function notifyReviewRequested(id: string, agent: string): void {
+  try {
+    const card = getKanbanCard(id)
+    const ref = card?.seq ? `#${card.seq}` : '#?'
+    const idPart = DISPATCH_SAFE_CARD_ID_RE.test(id) ? id : '(nem szabványos azonosító)'
+    createAgentMessage('system', MAIN_AGENT_ID, `[ellenorzes] ${ref} ${idPart} ${agent}: kesz, ellenorizd`)
+  } catch (err) {
+    logger.warn({ err, id, agent }, 'Review request notice failed (card move still succeeded)')
+  }
 }
 
 // KANBANASSIGNFRAME1008 (SECSZIVEK1007 follow-up): the dispatch goes out in the
@@ -1090,6 +1223,13 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     // dispatch path (KARTYADISPATCH1010). updateKanbanCard applies the shared
     // dispatched_at clear; no fireKanbanDispatch call belongs here.
     const before = getKanbanCard(id)
+    // #663: the same review gates as the /move -- agents close cards with a PUT as often as
+    // with a /move, and a gate on one of the two would only change which call they use.
+    const reviewAgent = 'status' in data ? subAgentActor(actor, ctx.auth) : undefined
+    if (reviewAgent && before) {
+      const refusal = reviewFlowGate(before, data.status, reviewAgent)
+      if (refusal) { json(res, refusal.body, refusal.status); return true }
+    }
     const recurrenceError = normaliseRecurrenceField(data, before?.recurrence)
     if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
     const locationError = normaliseLocationField(data)
@@ -1103,6 +1243,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
         // assignee; the local #574 notifyUnblockedByDone would have sent a second message.
         notifyUnblockedCards(id, who.actor)
       }
+      if (reviewAgent && before && before.status !== 'testing' && after?.status === 'testing') notifyReviewRequested(id, reviewAgent)
       json(res, { ok: true, ...archivedNote(after) })
       return true
     }
@@ -1217,6 +1358,13 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     }
     const beforeMove = getKanbanCard(id)
     const statusBeforeMove = beforeMove?.status
+    // #663: a sub-agent's done goes through review, its next card waits for that review and
+    // for a full read. Refused BEFORE the write, so nothing moves and no event row is written.
+    const reviewAgent = subAgentActor(actor, ctx.auth)
+    if (reviewAgent && beforeMove) {
+      const refusal = reviewFlowGate(beforeMove, status, reviewAgent)
+      if (refusal) { json(res, refusal.body, refusal.status); return true }
+    }
     if (moveKanbanCard(id, status, sort_order ?? 0, who.actor, hasExpected ? { expectedStatus: expected_status as Parameters<typeof moveKanbanCard>[1] } : undefined)) {
       if (reason) setKanbanWaitReason(id, reason)
       // The priority from BEFORE the move: moveKanbanCard rewrites it by column.
@@ -1234,6 +1382,7 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
       // Wake the assigned agent once when the card enters in_progress -- unless
       // that agent is the one who moved it (self-pickup needs no wake-up).
       if (status === 'in_progress') fireKanbanDispatch(id, who.actor)
+      if (reviewAgent && status === 'testing' && statusBeforeMove !== 'testing') notifyReviewRequested(id, reviewAgent)
       // A reorder inside the done column is not a closing: only a real
       // transition to done frees the cards waiting on this one.
       const moved = getKanbanCard(id)
@@ -1603,6 +1752,8 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     const id = decodeURIComponent(singleCardGetMatch[1])
     const card = getKanbanCard(id)
     if (!card) { json(res, { error: `Kártya nem található: ${id}` }, 404); return true }
+    // #663: the full read the in_progress gate asks for. Only a token caller's agent claim counts.
+    if (ctx.auth?.kind === 'token' && ctx.auth.agent) recordKanbanCardRead(ctx.auth.agent, card.id)
     json(res, card)
     return true
   }
