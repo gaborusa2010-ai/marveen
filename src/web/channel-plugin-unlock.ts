@@ -169,11 +169,26 @@ function sendUnlockKeystrokes(session: string, provider: ChannelProviderType): v
     // #642: on the autocompact suggestion the Enter after /mcp would confirm
     // "autocompact at 400k". Esc is its "not now". (agent-process imports this
     // module, so its async dismiss helper is not imported back here.)
-    const before = execFileSync(TMUX, ['capture-pane', '-t', exactTmuxTarget(session), '-p'], { encoding: 'utf-8', timeout: 5000 })
-    if (detectsAutocompactSuggestion(before)) {
-      execFileSync(TMUX, ['send-keys', '-t', exactTmuxTarget(session), 'Escape'], { timeout: 5000 })
-      execFileSync('/bin/sleep', ['0.3'], { timeout: 3000 })
-      logger.info({ session }, 'channel-plugin-unlock: dismissed autocompact suggestion before /mcp')
+    // TMUXWINDOWATTR920: both calls pipe stderr so a failure is logged below
+    // with the site instead of being copied undated onto dashboard.error.log.
+    // A failure aborts the sequence, as the throw to the outer catch did.
+    try {
+      const before = execFileSync(TMUX, ['capture-pane', '-t', exactTmuxTarget(session), '-p'], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      if (detectsAutocompactSuggestion(before)) {
+        execFileSync(TMUX, ['send-keys', '-t', exactTmuxTarget(session), 'Escape'], {
+          timeout: 5000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        execFileSync('/bin/sleep', ['0.3'], { timeout: 3000 })
+        logger.info({ session }, 'channel-plugin-unlock: dismissed autocompact suggestion before /mcp')
+      }
+    } catch (err) {
+      logger.warn({ site: 'channel-plugin-unlock.sendUnlockKeystrokes.autocompactCheck', session, tmux: tmuxStderr(err) }, 'channel-plugin-unlock: autocompact check before /mcp failed -- aborting')
+      return
     }
     // Open the MCP dialog. Claude renders the server list within ~2s; the
     // 3s settle ensures the cursor is on the first item before we move.

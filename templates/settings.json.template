@@ -133,6 +133,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f {{PROJECT_ROOT}}/scripts/hooks/limit-cut-notice.py ] && exec python3 {{PROJECT_ROOT}}/scripts/hooks/limit-cut-notice.py; exit 0'",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
