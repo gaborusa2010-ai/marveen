@@ -62,6 +62,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE = os.path.join(REPO, "store", "fleet-daily-budget.json")
 SUBS = ("anorak", "cody", "forgacs", "margo", "roxy")
 MAIN = "marveen"
+# Time-slot agents: measured and stopped like SUBS, but NOT added to the daily total,
+# which was calibrated on SUBS alone. Before this the weekly stop skipped them, and
+# prospero kept working on extra credit 09:34-10:00 on 2026-10-26.
+TIMED = ("ariel", "brigid", "kiron", "merlin", "prospero")
 
 # Below this an agent is a bystander, not a cause. 20M is roughly 4% of the
 # day's budget: enough to be a rounding error, little enough that anyone who
@@ -339,14 +343,14 @@ def main(argv=None):
     g = _load_guard()
     per_agent, total, missing = {}, 0, []
     last_seen = {}   # name -> newest transcript mtime in the window (activity marker)
-    for name in (MAIN,) + SUBS:
+    for name in (MAIN,) + SUBS + TIMED:
         tok, _files, last, miss = g.window_tokens(name, 24, 1.0, a.daily_from)
         if miss:
             missing.append(name)
             continue
         per_agent[name] = tok
         last_seen[name] = last or 0.0
-        if not (a.exclude_main and name == MAIN):
+        if name not in TIMED and not (a.exclude_main and name == MAIN):
             total += tok
 
     pct = total / a.budget * 100 if a.budget else 0
@@ -358,7 +362,9 @@ def main(argv=None):
                       "weekly": heti, "weekly_verdict": itelet},
                      ensure_ascii=False))
 
-    if missing:
+    # A time-slot agent is not in the total, so not measuring it cannot understate it:
+    # it is only left out of the stop list.
+    if any(n not in TIMED for n in missing):
         # Same rule as the per-agent guard: a gate that cannot measure must not
         # report a comfortable number. Partial data would understate the total.
         sys.stderr.write("fleet-daily-budget: NEM MERHETO: %s\n" % ", ".join(missing))
@@ -425,8 +431,11 @@ def main(argv=None):
         # The owner's same-day exemption (store/agent-budget-override.json) holds here
         # too: before this the fleet stop re-stopped an exempted agent on the next tick
         # (owner tg 9573, 2026-10-26: "ma csak Cody es Forgacs" past the 95% week).
-        koltok = sorted(n for n in SUBS
-                        if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott
+        # A time-slot agent works an hour at most, so the 20M bystander floor would
+        # always spare it (prospero 11M on 2026-10-26): any spend at all counts there.
+        koltok = sorted(n for n in SUBS + TIMED
+                        if per_agent.get(n, 0) >= (1 if n in TIMED else MIN_SPEND_TO_STOP)
+                        and n not in allitott
                         and not g.override_today(n, a.daily_from))
         sikeres = [n for n in koltok if g.stop_agent(n)]
         allitott |= set(sikeres)

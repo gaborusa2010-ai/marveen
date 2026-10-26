@@ -153,7 +153,17 @@ def project_dir(agent):
         if os.path.isdir(primary):
             return primary
         return os.path.join(PROJECTS, MAIN_AGENT_DIRNAME)
-    return os.path.join(PROJECTS, project_slug(os.path.join(REPO, "agents", agent)))
+    slug = project_slug(os.path.join(REPO, "agents", agent))
+    shared = os.path.join(PROJECTS, slug)
+    if os.path.isdir(shared):
+        return shared
+    # The newer agents (prospero, merlin, ariel, ...) have their own config root whose
+    # projects/ is NOT a symlink to ~/.claude/projects, so they never appear there.
+    # Measured 2026-10-26: prospero's 09:34-10:00 extra-credit spend read as null.
+    own = os.path.join(REPO, "agents", agent, ".claude-config", "projects", slug)
+    if os.path.isdir(own):
+        return own
+    return shared
 
 
 def day_start(reset_hour):
