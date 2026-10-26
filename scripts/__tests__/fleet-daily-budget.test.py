@@ -34,6 +34,10 @@ class FakeGuard:
         self.lasts = {}
         self.stopped = []
         self.sent = []
+        self.exempt = set()
+
+    def override_today(self, agent, daily_from=None):
+        return agent in self.exempt
 
     def window_tokens(self, agent, hours, weight, daily_from=None):
         if agent not in self.spends:
@@ -57,7 +61,7 @@ SEMLEGES = {"window": "seven_day", "used_pct": 80.0, "elapsed_pct": 50.0,
 _ALAP = object()
 
 
-def run(spends, argv, allapot, weekly=_ALAP, lasts=None):
+def run(spends, argv, allapot, weekly=_ALAP, lasts=None, exempt=()):
     """Egy futas, rogzitett heti ablakkal.
 
     A heti ablakot MINDIG rogzitjuk: kulonben a teszt a GEP valodi pillanatkepet
@@ -67,6 +71,7 @@ def run(spends, argv, allapot, weekly=_ALAP, lasts=None):
         weekly = SEMLEGES
     g = FakeGuard(spends)
     g.lasts = dict(lasts or {})
+    g.exempt = set(exempt)
     mod._load_guard = lambda: g
     mod.load = lambda: dict(allapot)
     def ment(d):
@@ -424,6 +429,20 @@ def main():
                     allapot, kozel)
         check("resetting mellett a napi proxy tovabbra is dont",
               g.stopped == ["forgacs"], f"{g.stopped}")
+
+        print("19. A gazda mai kivetele (agent-budget-override.json) a heti plafonnal is all")
+        # owner tg 9573, 2026-10-26: 95% heti mellett "ma csak Cody es Forgacs".
+        allapot = {}
+        rc, g = run(dict(MIND, cody=200_000_000, forgacs=200_000_000, roxy=50_000_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, weekly=heti(96.0, 50.0), exempt={"cody", "forgacs"})
+        check("a kivett agenseket nem allitja le", g.stopped == ["roxy"], f"{g.stopped}")
+        allapot = {}
+        rc, g = run(dict(MIND, cody=200_000_000, forgacs=200_000_000, roxy=50_000_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, weekly=heti(96.0, 50.0))
+        check("kivetel nelkul ugyanez leallitja oket (negativ kontroll)",
+              set(g.stopped) >= {"cody", "forgacs"}, f"{g.stopped}")
 
         print("18. window_day: az allapotfajl nap-kulcsa a 06:00-as horgonyhoz igazodik")
         from datetime import datetime as _dt

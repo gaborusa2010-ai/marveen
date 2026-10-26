@@ -422,8 +422,12 @@ def main(argv=None):
                 save(st)
         return 0
     if kell_leallitani:
+        # The owner's same-day exemption (store/agent-budget-override.json) holds here
+        # too: before this the fleet stop re-stopped an exempted agent on the next tick
+        # (owner tg 9573, 2026-10-26: "ma csak Cody es Forgacs" past the 95% week).
         koltok = sorted(n for n in SUBS
-                        if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott)
+                        if per_agent.get(n, 0) >= MIN_SPEND_TO_STOP and n not in allitott
+                        and not g.override_today(n, a.daily_from))
         sikeres = [n for n in koltok if g.stop_agent(n)]
         allitott |= set(sikeres)
         for n in sikeres:
