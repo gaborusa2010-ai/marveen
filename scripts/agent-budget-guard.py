@@ -60,7 +60,7 @@ STATE = os.path.join(STORE, "agent-budget-guard.json")
 # #417 (626f3223): a same-day exemption. A restart after a stop USED to be
 # re-stopped on the next tick (fresh transcript activity re-arms the guard),
 # while the stop message promised "restart it on the dashboard". The only
-# ways a restart can hold are a higher cap or this file: {"agent": "YYYY-MM-DD"}
+# ways a restart can hold are a higher cap or this file: {"agent": "YYYY-MM-DD" | ["YYYY-MM-DD", ...]}
 # -> on that local day the guard does not stop the agent (it still logs).
 OVERRIDE = os.path.join(STORE, "agent-budget-override.json")
 
@@ -83,7 +83,10 @@ def override_today(agent, daily_from=None):
         day = datetime.fromtimestamp(day_start(daily_from)).strftime("%Y-%m-%d")
     else:
         day = datetime.now().strftime("%Y-%m-%d")
-    return isinstance(data, dict) and data.get(agent) == day
+    # A list of days lets the owner exempt several days at once (tg 9590:
+    # Cody works on extra credit until the weekly window reopens).
+    val = data.get(agent) if isinstance(data, dict) else None
+    return val == day or (isinstance(val, list) and day in val)
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
