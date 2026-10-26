@@ -444,6 +444,26 @@ def main():
         check("kivetel nelkul ugyanez leallitja oket (negativ kontroll)",
               set(g.stopped) >= {"cody", "forgacs"}, f"{g.stopped}")
 
+        print("20. Idosavos agens (prospero) a heti plafonnal leall, de a napi osszegbe nem szamit")
+        # 2026-10-26: prospero 11M-mal 09:34-10:00 extrabol dolgozott, mert nem volt a listan.
+        allapot = {}
+        rc, g = run(dict(MIND, cody=200_000_000, prospero=11_000_000, merlin=0),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"],
+                    allapot, weekly=heti(96.0, 50.0), exempt={"cody"})
+        check("prospero 11M-mal is leall", g.stopped == ["prospero"], f"{g.stopped}")
+        check("a koltes nelkuli merlin nem", "merlin" not in g.stopped, f"{g.stopped}")
+        check("a nem merheto idosavos agens nem blokkol", rc == 0, f"rc={rc}")
+        allapot = {}
+        rc, g = run(dict(MIND, cody=400_000_000, prospero=300_000_000),
+                    ["--notify", "--budget", "520000000", "--no-warn-notify"], allapot)
+        check("prospero nincs a napi osszegben (700M-mal leallitana)", g.stopped == [],
+              f"{g.stopped}")
+        hianyos = dict(MIND, cody=400_000_000)
+        del hianyos["roxy"]
+        rc, g = run(hianyos, ["--notify", "--budget", "520000000"], {})
+        check("nem merheto SUBS-agens tovabbra is blokkol (negativ kontroll)", rc == 3,
+              f"rc={rc}")
+
         print("18. window_day: az allapotfajl nap-kulcsa a 06:00-as horgonyhoz igazodik")
         from datetime import datetime as _dt
         # A hamis hajnali riasztas oka: ejfel es 06:00 kozott a naptari datum mar
