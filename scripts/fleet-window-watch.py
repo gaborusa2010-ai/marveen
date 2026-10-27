@@ -169,6 +169,19 @@ def has_work(tok, agent):
     return m.check(agent, tok)
 
 
+def day_start_paused(agent):
+    """True when the agent's 06:00 starter is switched off on purpose (a rest
+    day stops marveen-<agent>-day-start.timer, 10-26 msg 13477): the start did
+    not fail, it was never meant to run, so there is nothing to report."""
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-active",
+                            "marveen-%s-day-start.timer" % agent],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False  # unknown: report, a missed start is the costlier miss
+    return (r.stdout or "").strip() == "inactive"
+
+
 def build_message(rows, today):
     lines = ["[INDITAS ELMARADT] %s 06:00 utan %d agens all munkaval, pedig a keret "
              "miatti leallitasa mar lejart, es a reggeli indito (#663) elinditotta volna."
@@ -212,7 +225,7 @@ def main(argv=None):
 
     rows = []
     for n in names:
-        if n in NIGHT_SHIFT:
+        if n in NIGHT_SHIFT or day_start_paused(n):
             continue
         reasons = has_work(tok, n)
         if reasons:  # no work = its start was rightly skipped, nothing to say

@@ -17,6 +17,13 @@ An agent is stopped only when ALL of these hold:
      previous tick (a background job that prints is still working)
   5. Anorak is left alone inside its shift (22:55-06:35): its own timers own it
 
+Daily 1-hour slots (owner tg 9343/9351/9353, 2026-10-25): an agent listed in
+store/agent-idosav.json gets one slot per day (Merlin 8-9, Ariel 9-10, Prospero
+weekdays 9-10 and Saturday 10-11, Kiron Sunday 10-11). A session that started at
+its slot start is warned 10 minutes before the slot ends and stopped at the end,
+WORK OR NOT; a busy pane gets at most 15 more minutes. Not while the owner is
+talking to it (own bot message in the last QUIET_MIN minutes). A session the owner
+woke outside the slot follows the normal rules above.
 A stopped agent is not lost: a scheduled task auto-starts it
 (src/web/schedule-runner.ts startAgentProcess), the 06:00 unit starts it when it
 has work, and #663 part 2 starts it on an owner message.
@@ -38,6 +45,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE = os.path.join(REPO, "store", "agent-idle-stop-state.json")
 QUIET_MIN = int(os.environ.get("IDLE_STOP_QUIET_MIN", "30"))
 MAIN = "marveen"
+SLOTS = os.path.join(REPO, "store", "agent-idosav.json")
+WARN_MIN = 10
+GRACE_MIN = 15
+EARLY_MIN = 5  # the day-start timer starts the agent a minute before the slot
 
 _spec = importlib.util.spec_from_file_location(
     "agent_has_work", os.path.join(REPO, "scripts", "agent-has-work.py"))
@@ -81,6 +92,57 @@ def pane(agent):
     return tmux("capture-pane", "-p", "-t", "agent-%s:" % agent)
 
 
+def slot_end(slots, created):
+    """Pure: end timestamp of the slot this session was started for, else None.
+    slots: [{"days": [0..6] or "*", "dom": [1..31] (optional), "start": "HH:MM",
+    "minutes": 60}], Monday = 0."""
+    if not slots or not created:
+        return None
+    c = datetime.fromtimestamp(created)
+    for sl in slots:
+        days = sl.get("days", "*")
+        if days != "*" and c.weekday() not in days:
+            continue
+        if "dom" in sl and c.day not in sl["dom"]:
+            continue
+        hh, mm = (int(x) for x in sl["start"].split(":"))
+        start = c.replace(hour=hh, minute=mm, second=0, microsecond=0).timestamp()
+        end = start + int(sl.get("minutes", 60)) * 60
+        if start - EARLY_MIN * 60 <= created < end:
+            return end
+    return None
+
+
+def decide_slot(*, end, owner_last, pane_text, now):
+    """Pure: ("stop"|"warn"|None, reason) for a slot session."""
+    if end is None:
+        return None, "nem idosav-session"
+    if owner_last and (now - owner_last) < QUIET_MIN * 60:
+        return None, "a gazda %.0f perce irt neki" % ((now - owner_last) / 60)
+    if now >= end + GRACE_MIN * 60:
+        return "stop", "idosav vege + %d perc raadas lejart" % GRACE_MIN
+    if now >= end:
+        if pane_text is not None and "esc to interrupt" in pane_text:
+            return None, "idosav vege, de a pane dolgozik (raadas)"
+        return "stop", "idosav vege"
+    if now >= end - WARN_MIN * 60:
+        return "warn", "idosav vege %.0f perc mulva" % ((end - now) / 60)
+    return None, "idosavban, %.0f perc van hatra" % ((end - now) / 60)
+
+
+def owner_last_message(agent):
+    """Newest owner message on the agent's own bot, epoch seconds (0 = none)."""
+    p = os.path.join(REPO, "agents", agent, ".claude", "channels", "telegram", "inbound-evidence.jsonl")
+    try:
+        with open(p, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            lines = f.read().decode("utf-8", "replace").strip().splitlines()
+        return json.loads(lines[-1]).get("at", 0) / 1000
+    except Exception:
+        return 0
+
+
 def decide(agent, *, running, has_tmux, work, last_life, pane_text, prev_hash, now):
     """Pure: (stop?, reason). work=None means it could not be read."""
     if agent == MAIN:
@@ -118,7 +180,14 @@ def main(argv):
     agents = bb._rows(bb._get("/api/agents", tok), "agents")
     sessions = tmux("ls", "-F", "#{session_name}") or ""
     live = {s[len("agent-"):] for s in sessions.split() if s.startswith("agent-")}
-    new_state = {}
+    try:
+        with open(SLOTS) as f:
+            slots = json.load(f)
+    except Exception as e:
+        slots = {}
+        print("idosav-config nem olvashato: %s" % e)
+    warned = {k: v for k, v in (state.get("_warned") or {}).items() if v > now - 86400}
+    new_state = {"_warned": warned}
     for a in agents:
         name = a.get("name") or ""
         if not name or name == MAIN:
@@ -138,8 +207,23 @@ def main(argv):
         text = pane(name)
         if text is not None:
             new_state[name] = hashlib.sha256(text.encode()).hexdigest()
-        stop, why = decide(name, running=running, has_tmux=has_tmux, work=work, last_life=last_life,
-                           pane_text=text, prev_hash=state.get(name), now=now)
+        end = slot_end(slots.get(name), session_created(name))
+        verdict, swhy = decide_slot(end=end, owner_last=owner_last_message(name), pane_text=text, now=now)
+        if verdict == "warn" and warned.get(name) != end:
+            if dry:
+                print("%-9s FIGYELMEZTETNEM (dry-run): %s" % (name, swhy))
+            else:
+                msg = ("[IDOSAV] %d perc mulva leallsz (napi egy oras sav, gazda tg 9351). Mentsd az allast: "
+                       "kartya-komment, HANDOFF.md, hot emlek. A kovetkezo savban innen folytatod." % max(1, round((end - now) / 60)))
+                r = subprocess.run(["bash", os.path.join(REPO, "scripts", "agent-msg.sh"), MAIN, name, msg],
+                                   capture_output=True, text=True, timeout=60)
+                print("%-9s FIGYELMEZTETVE: %s | %s" % (name, swhy, (r.stdout or r.stderr).strip()[-80:]))
+                warned[name] = end
+        if verdict == "stop":
+            stop, why = True, swhy
+        else:
+            stop, why = decide(name, running=running, has_tmux=has_tmux, work=work, last_life=last_life,
+                               pane_text=text, prev_hash=state.get(name), now=now)
         if not stop:
             print("%-9s marad: %s" % (name, why))
             continue

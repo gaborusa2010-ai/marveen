@@ -113,7 +113,7 @@ class TestWhoIsReported(unittest.TestCase):
     """main() end to end with every reader stubbed: positive control (a stopped
     agent with work IS reported) and the two silences (no work, night shift)."""
 
-    def _run(self, work):
+    def _run(self, work, paused=()):
         m = load()
         old = time.time() - 3 * 86400  # an earlier window-day whenever this runs
         files = {m.GUARD_STATE: {n: {"stopped_at": old} for n in ("cody", "roxy", "anorak")}}
@@ -121,6 +121,7 @@ class TestWhoIsReported(unittest.TestCase):
         m._token = lambda: "tok"
         m.not_running = lambda tok: {"cody", "roxy", "anorak"}
         m.has_work = lambda tok, n: work.get(n, [])
+        m.day_start_paused = lambda n: n in paused
         sent = []
         m.send_to_main = lambda text: sent.append(text) or True
         m._write_state = lambda d: None
@@ -138,6 +139,11 @@ class TestWhoIsReported(unittest.TestCase):
 
     def test_night_shift_is_never_reported(self):
         self.assertEqual(self._run({"anorak": ["#9 planned"]}), [])
+
+    def test_a_rest_day_pause_is_not_a_missed_start(self):
+        # 10-26 msg 13477: margo/roxy reported while their day-start timer was
+        # stopped on purpose. Negative control is the positive test above.
+        self.assertEqual(self._run({"roxy": ["#463 in_progress"]}, paused={"roxy"}), [])
 
 
 class TestRunStateNotStatus(unittest.TestCase):
