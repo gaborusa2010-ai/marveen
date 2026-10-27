@@ -97,4 +97,12 @@ r = ws.search("q", keys={}, providers=all4)
 check("keyless SearXNG answers when nothing has a key", r["provider"], "searxng")
 os.environ.pop("CLAUDE_CONFIG_DIR")
 
+r = ws.search("q", keys=both, providers={"exa": ok}, snippet_chars=ws.LONG_SNIPPET_CHARS)
+check("--long snippet cap", len(r["results"][0]["snippet"]) - len('<untrusted source="web-search:exa"></untrusted>'), ws.LONG_SNIPPET_CHARS)
+check("short default is shorter", ws.SNIPPET_CHARS < ws.LONG_SNIPPET_CHARS, True)
+ws.count_chars("exa", 1234, True)
+ws.count_chars("exa", 66, False)
+u = ws.load_json(ws.USAGE_PATH, {})[ws.month()]["exa"]
+check("output chars summed", (u["out_chars"], u["out_calls"], u["long_calls"]), (1300, 2, 1))
+
 sys.exit(1 if fails else 0)
