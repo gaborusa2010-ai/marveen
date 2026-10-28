@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'.",
+  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'. #718: a case may carry `cwd` (relative to the repo root): the directory the command runs in, the hook payload's cwd; without it the test process's cwd (the repo root).",
   "cases": [
     {
       "name": "inter-agent curl, content mentions the mail script",
@@ -878,7 +878,7 @@
     },
     {
       "name": "#1855 control: the written sender script is not run, another path is",
-      "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\npython3 $S/other.py",
+      "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\npython3 src/__tests__/fixtures/send-gate/plain.py",
       "expected": false
     },
     {
@@ -953,12 +953,12 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: an interpreter option before another script",
-      "cmd": "python3 -u scripts/other.py --verbose",
+      "cmd": "python3 -u src/__tests__/fixtures/send-gate/plain.py --verbose",
       "expected": false
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: -X before another script with a --top flag",
-      "cmd": "python3 -X utf8 scripts/tool.py --top 5",
+      "cmd": "python3 -X utf8 src/__tests__/fixtures/send-gate/plain.py --top 5",
       "expected": false
     },
     {
@@ -968,7 +968,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a --to-date flag is not a recipient flag",
-      "cmd": "python3 scripts/x.py --to-date 2026-10-16",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py --to-date 2026-10-16",
       "expected": false
     },
     {
@@ -1023,7 +1023,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a substitution as a plain argument",
-      "cmd": "python3 scripts/x.py --date $(date +%F)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py --date $(date +%F)",
       "expected": false
     },
     {
@@ -1067,13 +1067,107 @@
       "expected": false
     },
     {
-      "name": "#718 control: a script that cannot be read, without a recipient flag, passes",
+      "name": "#718 must-block: a script that cannot be found, without a recipient flag (fail-closed; the sender may carry its recipient inside)",
       "cmd": "python3 src/__tests__/fixtures/send-gate/no_such_script.py --q x",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#718 control: a mail gate's own test file (mailer names as literals) passes; script content is judged by the provider-API patterns only",
       "cmd": "python3 scripts/__tests__/email-approval-gate.test.py",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative sender script after a leading cd (Marveen's review repro)",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: relative sender script after cd with ; and a flag",
+      "cmd": "cd -P src/__tests__/fixtures/send-gate; python3 -u gmail_reply.py --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 control: relative read-only script after a leading cd passes",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative sender script resolved against the payload cwd",
+      "cmd": "python3 gmail_reply.py --body hi",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 control: relative read-only script resolved against the payload cwd passes",
+      "cmd": "python3 gmail_read.py --q x",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative script after a cd that cannot be followed (cd -)",
+      "cmd": "cd - && python3 gmail_read.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: relative script after a cd to a variable",
+      "cmd": "cd \"$WORK\" && python3 gmail_read.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run python on the sender script",
+      "cmd": "uv run python src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run python3 with a valued uv flag first",
+      "cmd": "uv run --with requests python3 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run on the .py script itself",
+      "cmd": "uv run src/__tests__/fixtures/send-gate/gmail_client_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 control: uv run python on the read-only script passes",
+      "cmd": "uv run python src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 control: a script written by a heredoc of the same command is judged by that body (benign)",
+      "cmd": "cat > /tmp/send-gate-718-x.py <<'EOF'\nprint('hello')\nEOF\npython3 /tmp/send-gate-718-x.py",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: a script written by a heredoc of the same command, Gmail API send in the body",
+      "cmd": "cat > /tmp/send-gate-718-x.py <<'EOF'\nURL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'\nEOF\npython3 /tmp/send-gate-718-x.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: bash -c with its own cd to the sender script",
+      "cmd": "bash -c 'cd src/__tests__/fixtures/send-gate && python3 gmail_reply.py'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: a cd to a variable set earlier in the same command, then the relative sender",
+      "cmd": "S=src/__tests__/fixtures/send-gate; cd $S && python3 gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a cd to a variable set earlier in the same command, then the relative read-only script",
+      "cmd": "S=src/__tests__/fixtures/send-gate; cd \"$S\" && python3 gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: the sender script path through a variable set earlier in the same command",
+      "cmd": "export S=src/__tests__/fixtures/send-gate; python3 $S/gmail_reply.py --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a --to time flag on a readable non-mail script through a variable",
+      "cmd": "S=src/__tests__/fixtures/send-gate; python3 \"${S}/plain.py\" --to 40",
       "expected": false
     }
   ]

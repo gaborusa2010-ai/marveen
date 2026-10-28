@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { isSendInvocation } from '../../scripts/email-send-gate.mjs'
@@ -23,27 +24,29 @@ const ROOT = join(__dirname, '..', '..')
 const GATE_PY = join(ROOT, 'scripts', 'hooks', 'outgoing-copy-gate.py')
 const CASES = JSON.parse(
   readFileSync(join(ROOT, 'scripts', 'hooks', 'send-invocation-cases.json'), 'utf-8'),
-) as { cases: Array<{ name: string; cmd: string; expected: boolean }> }
+) as { cases: Array<{ name: string; cmd: string; cwd?: string; expected: boolean }> }
+// A case's cwd (the hook payload's cwd) is relative to the repo root; absent: null.
+const caseCwd = (c: { cwd?: string }) => (c.cwd ? join(ROOT, c.cwd) : null)
 
 // One python process for the whole list: stdin carries the JSON cases, stdout
 // returns the per-case verdicts. Spawning per-case would be ~30x slower.
-function pythonVerdicts(cmds: string[]): boolean[] {
+function pythonVerdicts(cmds: Array<[string, string | null]>): boolean[] {
   const out = execFileSync('python3', ['-c', `
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("gate", ${JSON.stringify(GATE_PY)})
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 cmds = json.load(sys.stdin)
-print(json.dumps([g.is_send_invocation(c) for c in cmds]))
+print(json.dumps([g.is_send_invocation(c, cwd=d) for c, d in cmds]))
 `], { encoding: 'utf-8', input: JSON.stringify(cmds) })
   return JSON.parse(out.trim())
 }
 
 describe('send-invocation conformance: both gates agree with the shared contract on every case', () => {
-  const py = pythonVerdicts(CASES.cases.map((c) => c.cmd))
+  const py = pythonVerdicts(CASES.cases.map((c) => [c.cmd, caseCwd(c)]))
 
   CASES.cases.forEach((c, i) => {
     it(`${c.name} -> ${c.expected}`, () => {
-      const js = isSendInvocation(c.cmd)
+      const js = isSendInvocation(c.cmd, 0, caseCwd(c))
       expect(js, `JS verdict for: ${c.cmd}`).toBe(c.expected)
       expect(py[i], `python verdict for: ${c.cmd}`).toBe(c.expected)
     })
@@ -53,5 +56,37 @@ describe('send-invocation conformance: both gates agree with the shared contract
     expect(CASES.cases.some((c) => c.expected)).toBe(true)
     expect(CASES.cases.some((c) => !c.expected)).toBe(true)
     expect(CASES.cases.length).toBeGreaterThanOrEqual(20)
+  })
+})
+
+// #718 (Marveen's review of 874932ce): a script that exists but cannot be read
+// (mode 000) or is over the 2 MiB cap counts as a send in both gates, with no
+// recipient flag. Built at test time: neither shape belongs in the repo. Both
+// verdicts are taken while the files exist, then the directory is removed.
+describe('#718 fail-closed: an unreadable or oversized script is a send in both gates', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'send-gate-718-'))
+  const cases: Array<[string, boolean]> = [
+    ['python3 locked.py', true],
+    ['python3 big.py', true],
+    ['python3 small.py', false],
+  ]
+  let py: boolean[]
+  let js: boolean[]
+  try {
+    writeFileSync(join(dir, 'locked.py'), "print('hi')\n")
+    chmodSync(join(dir, 'locked.py'), 0o000)
+    writeFileSync(join(dir, 'big.py'), '#'.repeat(2 * 1024 * 1024 + 1))
+    writeFileSync(join(dir, 'small.py'), "print('hi')\n")
+    py = pythonVerdicts(cases.map(([cmd]) => [cmd, dir]))
+    js = cases.map(([cmd]) => isSendInvocation(cmd, 0, dir))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  cases.forEach(([cmd, expected], i) => {
+    it(`${cmd} -> ${expected}`, () => {
+      expect(js[i], `JS verdict for: ${cmd}`).toBe(expected)
+      expect(py[i], `python verdict for: ${cmd}`).toBe(expected)
+    })
   })
 })

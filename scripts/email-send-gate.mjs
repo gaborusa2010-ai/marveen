@@ -33,7 +33,7 @@
 
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { homedir } from 'node:os'
 
 // HOOKDEPLOAD1008: the ledger module is a DYNAMIC import. As a static import, a
@@ -303,6 +303,12 @@ const WRAPPERS = new Map([
   ['timeout', ['sk', ['signal', 'kill-after'], 1]],
   ['setsid', ['', [], 0]],
 ])
+// #718: `uv run [opts] CMD`; `uv run x.py` is judged as `python3 x.py` (see _UV_RUN in
+// hooks/outgoing-copy-gate.py).
+const UV_RUN = ['pfCP', ['with', 'with-editable', 'with-requirements', 'python', 'project',
+  'directory', 'env-file', 'extra', 'group', 'only-group', 'no-group',
+  'package', 'index', 'default-index', 'index-url', 'extra-index-url',
+  'find-links', 'config-setting', 'cache-dir', 'config-file'], 0]
 const HEAD_DEPTH = 8
 
 function commandHeads(toksIn, d = 0) {
@@ -314,7 +320,9 @@ function commandHeads(toksIn, d = 0) {
   if (d >= HEAD_DEPTH) return (WRAPPERS.has(w) || w === 'function' || w === 'coproc') ? [null] : [toks]
   if (w === 'function') return commandHeads(toks.slice(2), d + 1)
   if (w === 'coproc') return [...commandHeads(toks.slice(1), d + 1), ...commandHeads(toks.slice(2), d + 1)]
-  const spec = WRAPPERS.get(w)
+  let spec = WRAPPERS.get(w)
+  const uvRun = w === 'uv' && toks[1] === 'run'
+  if (uvRun) { spec = UV_RUN; toks = toks.slice(1) }
   if (!spec) return [toks]
   const [shortVal, longVal, positionals] = spec
   let i = 1
@@ -338,7 +346,8 @@ function commandHeads(toksIn, d = 0) {
     break
   }
   starts.unshift(i)
-  return starts.flatMap((s) => commandHeads(toks.slice(s + positionals), d + 1))
+  const heads = starts.flatMap((s) => commandHeads(toks.slice(s + positionals), d + 1))
+  return uvRun ? heads.map((h) => (h && h.length && h[0].endsWith('.py') ? ['python3', ...h] : h)) : heads
 }
 
 // SUBAGENTMAILGATE1016 (measured on the sub-agent gate, 2026-10-16): the
@@ -428,14 +437,19 @@ export function flattenSubstitutions(cmd) {
 }
 
 // #718 (aaf838d6): the script file the interpreter runs is read and judged by the
-// provider-API send patterns only (codeApiSends; why: _read_script in
-// hooks/outgoing-copy-gate.py). Same limits as _read_script in hooks/outgoing-copy-gate.py: a
-// relative path resolves against this process's cwd; an unreadable or oversized
-// script counts as a send only with a recipient flag.
+// provider-API send patterns only (codeApiSends; why, where the file is looked up and
+// the stated limits: _read_script in hooks/outgoing-copy-gate.py). A relative path
+// resolves against the payload's cwd, moved by an earlier cd/pushd segment; a script
+// written by a heredoc of the same command is judged by that body. FAIL-CLOSED: a
+// script that cannot be read counts as a send. base null: the directory is unknown.
 const SCRIPT_READ_LIMIT = 2 * 1024 * 1024
-function readScript(script) {
-  let path = script.startsWith('~/') ? join(homedir(), script.slice(2)) : script
-  if (!isAbsolute(path)) path = join(process.cwd(), path)
+const expandHome = (p) => (p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p)
+function readScript(script, base) {
+  let path = expandHome(script)
+  if (!isAbsolute(path)) {
+    if (base === null) return null
+    path = join(base, path)
+  }
   try {
     const st = statSync(path)
     if (!st.isFile() || st.size > SCRIPT_READ_LIMIT) return null
@@ -445,26 +459,79 @@ function readScript(script) {
   }
 }
 
-function pythonHeadSends(rest) {
+// $NAME / ${NAME} set by an earlier assignment-only segment of the same command
+// (`S=/x; cd $S`); see _expand_vars / _assignments in hooks/outgoing-copy-gate.py.
+const VAR_REF = /\$(?:\{([A-Za-z_][A-Za-z_0-9]*)\}|([A-Za-z_][A-Za-z_0-9]*))/g
+const expandVars = (tok, env) => tok.replace(VAR_REF, (m, a, b) => env.get(a || b) ?? m)
+function assignments(toks, env) {
+  const body = toks[0] === 'export' ? toks.slice(1) : toks
+  if (!body.length || !body.every((t) => ENV_ASSIGN.test(t))) return null
+  const out = new Map()
+  for (const t of body) {
+    const eq = t.indexOf('=')
+    const value = expandHome(expandVars(t.slice(eq + 1), env))
+    if (!UNDECIDABLE_PATH.test(value)) out.set(t.slice(0, eq), value)
+  }
+  return out
+}
+
+// [isCd, new base] for a cd/pushd/popd head; the base is null when it cannot be followed.
+function cdTarget(head, base, env) {
+  const w = head && head.length ? basename(head[0]) : ''
+  if (w !== 'cd' && w !== 'pushd' && w !== 'popd') return [false, base]
+  if (w === 'popd') return [true, null]
+  const args = head.slice(1)
+  while (args.length && args[0].startsWith('-') && args[0] !== '-') {
+    if (args.shift() === '--') break
+  }
+  if (!args.length) return [true, homedir()]
+  const arg = expandVars(args[0], env)
+  if (arg === '-' || UNDECIDABLE_PATH.test(arg)) return [true, null]
+  const target = expandHome(arg)
+  if (isAbsolute(target)) return [true, normalize(target)]
+  return [true, base === null ? null : join(base, target)]
+}
+
+function pythonHeadSends(rest, base, written, env) {
   const recipient = rest.some((t) => RECIPIENT_FLAG.test(t))
-  const { script, stdin, stdinRedirect } = pythonScriptOperand(rest)
+  const operand = pythonScriptOperand(rest)
+  const { stdin, stdinRedirect } = operand
+  let { script } = operand
+  if (script !== null && !written.has(script)) script = expandVars(script, env)
   if (script !== null && SENDPY.test(basename(script))) return recipient
   if (script !== null && UNDECIDABLE_PATH.test(script)) {
     return recipient || rest.some((t) => t !== script && t.includes('$'))
   }
   if (stdin || (script === null && stdinRedirect)) return recipient
   if (script !== null) {
-    const body = readScript(script)
-    return body === null ? recipient : codeApiSends(body)
+    if (written.has(script)) return codeApiSends(written.get(script))
+    const body = readScript(script, base)
+    return body === null ? true : codeApiSends(body)
   }
   return false
 }
 
-function segmentIsSend(toksIn, depth) {
-  return commandHeads(toksIn).some((h) => headIsSend(h, depth))
+// Segments in order; a cd/pushd/popd head moves the base of the later ones, and an
+// assignment-only segment is remembered for them.
+function segmentsSend(segments, depth, base, written) {
+  const env = new Map()
+  for (const toks of segments) {
+    const assigned = assignments(toks, env)
+    if (assigned) {
+      for (const [k, v] of assigned) env.set(k, v)
+      continue
+    }
+    const heads = commandHeads(toks)
+    if (heads.some((h) => headIsSend(h, depth, base, written, env))) return true
+    for (const h of heads) {
+      const [isCd, next] = cdTarget(h, base, env)
+      if (isCd) { base = next; break }
+    }
+  }
+  return false
 }
 
-function headIsSend(toks, depth) {
+function headIsSend(toks, depth, base, written, env) {
   if (toks === null) return true // the depth bound was hit on a wrapper: audit it
   if (!toks.length) return false
   const prog = basename(toks[0])
@@ -472,7 +539,7 @@ function headIsSend(toks, depth) {
   if (SENDER_PROG.test(prog)) return true
   if (WRAPPER_SHELL.test(prog) && depth < 3) {
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === '-c' && rest[i + 1] && isSendInvocation(rest[i + 1], depth + 1)) return true
+      if (rest[i] === '-c' && rest[i + 1] && isSend(rest[i + 1], depth + 1, base)) return true
     }
   }
   if (PYTHON.test(prog) || NODEISH.test(prog)) {
@@ -490,7 +557,7 @@ function headIsSend(toks, depth) {
     }
   }
   if (candidates.some((c) => SENDPY.test(c)) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
-  if (PYTHON.test(prog) && pythonHeadSends(rest)) return true
+  if (PYTHON.test(prog) && pythonHeadSends(rest, base, written, env)) return true
   // An interpreter or program that cannot be resolved statically ($PY, a glob,
   // a substitution) with a recipient flag: what runs is undecidable here.
   if (UNDECIDABLE_PATH.test(toks[0]) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
@@ -514,7 +581,9 @@ export function wrapperDepthHit(cmd) {
   }
   // Only when the bound is the WHOLE reason: a visible send in another segment wins.
   const heads = segments.flatMap((toks) => commandHeads(toks))
-  return heads.some((h) => h === null) && !heads.some((h) => h !== null && headIsSend(h, 0))
+  const base = process.cwd()
+  const written = heredocWritten(cmd)
+  return heads.some((h) => h === null) && !heads.some((h) => h !== null && headIsSend(h, 0, base, written, new Map()))
 }
 
 export function buildWrapperDepthMsg() {
@@ -552,7 +621,7 @@ const HEREDOC_SHELL = /(?:^|[\s;&|(])(?:\S*\/)?(?:bash|sh|zsh|dash)\b[^\n<]*$/i
 const HEREDOC_INTERP = /(?:^|[\s;&|(])(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun)\b[^\n<]*$/i
 const HEREDOC_PIPE = /\|\s*(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun|bash|sh|zsh|dash)\b/i
 const HEREDOC_REDIRECT = /(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['"]?)([^\s'"<>;&|]+)\1/
-function writtenThenRun(cmd, written, depth) {
+function writtenThenRun(cmd, written, depth, base) {
   if (!written.size) return false
   let segments
   try { segments = segmentsTokens(cmd) } catch { return false }
@@ -565,22 +634,28 @@ function writtenThenRun(cmd, written, depth) {
       if (!args.length || !written.has(args[0])) continue
       const body = written.get(args[0])
       if ((PYTHON.test(prog) || NODEISH.test(prog)) && heredocBodySends(body)) return true
-      if (WRAPPER_SHELL.test(prog) && depth < 3 && isSendInvocation(body, depth + 1)) return true
+      if (WRAPPER_SHELL.test(prog) && depth < 3 && isSend(body, depth + 1, base)) return true
     }
   }
   return false
 }
-function heredocProgramSends(cmd, depth = 0) {
+// path token -> body, for every heredoc the command writes to a file.
+function heredocWritten(cmd) {
   const written = new Map()
   for (const m of cmd.matchAll(HEREDOC_RE)) {
     const opener = cmd.slice(cmd.lastIndexOf('\n', m.index - 1) + 1, m.index) + m[1]
     const w = HEREDOC_REDIRECT.exec(opener)
     if (w) written.set(w[2], cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length))
+  }
+  return written
+}
+function heredocProgramSends(cmd, depth, base, written) {
+  for (const m of cmd.matchAll(HEREDOC_RE)) {
     const piped = HEREDOC_PIPE.exec(m[1])
     if (piped) {
       const pbody = cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length)
       if (WRAPPER_SHELL.test(piped[1])) {
-        if (depth < 3 && isSendInvocation(pbody, depth + 1)) return true
+        if (depth < 3 && isSend(pbody, depth + 1, base)) return true
       } else if (heredocBodySends(pbody)) return true
     }
     const lineStart = cmd.lastIndexOf('\n', m.index - 1) + 1
@@ -590,14 +665,21 @@ function heredocProgramSends(cmd, depth = 0) {
     if (HEREDOC_INTERP.test(head)) {
       if (heredocBodySends(body)) return true
     } else if (HEREDOC_SHELL.test(head) && depth < 3) {
-      if (isSendInvocation(body, depth + 1)) return true
+      if (isSend(body, depth + 1, base)) return true
     }
   }
-  return writtenThenRun(cmd, written, depth)
+  return writtenThenRun(cmd, written, depth, base)
 }
 
-export function isSendInvocation(cmd, depth = 0) {
-  if (heredocProgramSends(cmd, depth)) return true
+// cwd: the directory the command runs in (the hook payload's cwd); a relative script
+// path resolves against it. Null: this process's cwd.
+export function isSendInvocation(cmd, depth = 0, cwd = null) {
+  return isSend(cmd, depth, cwd || process.cwd())
+}
+
+function isSend(cmd, depth, base) {
+  const written = heredocWritten(cmd)
+  if (heredocProgramSends(cmd, depth, base, written)) return true
   let segments
   try {
     segments = segmentsTokens(cmd)
@@ -606,13 +688,13 @@ export function isSendInvocation(cmd, depth = 0) {
     // this path the gate is exactly as strict as before -- never weaker.
     return SEND_PATTERNS.some((re) => re.test(cmd))
   }
-  if (segments.some((toks) => segmentIsSend(toks, depth))) return true
+  if (segmentsSend(segments, depth, base, written)) return true
   // The same command with every substitution as one undecidable word (see
   // flattenSubstitutions): the outer command keeps the word it would run.
   const flat = flattenSubstitutions(cmd)
   if (flat === cmd) return false
   try {
-    return segmentsTokens(flat).some((toks) => segmentIsSend(toks, depth))
+    return segmentsSend(segmentsTokens(flat), depth, base, written)
   } catch {
     return SEND_PATTERNS.some((re) => re.test(cmd))
   }
@@ -672,7 +754,7 @@ function ledgerLookup() {
 // (the only path the thread-reply capability below can narrow),
 // 'unverified-recipient' is a draft/manage_email address with no recorded
 // source, and everything else is the sub-agent governance block.
-export function gateDecision(toolName, toolInput, isVerified = null) {
+export function gateDecision(toolName, toolInput, isVerified = null, cwd = null) {
   const name = String(toolName ?? '')
   // Lazy: only build the ledger lookup when a call actually carries addresses,
   // so a read-shaped tool call never pays a file read.
@@ -728,7 +810,7 @@ export function gateDecision(toolName, toolInput, isVerified = null) {
   }
   if (name === 'Bash') {
     const cmd = String(toolInput?.command ?? '')
-    if (isSendInvocation(cmd)) return wrapperDepthHit(cmd) ? { deny: true, kind: 'wrapper-depth' } : { deny: true }
+    if (isSendInvocation(cmd, 0, cwd)) return wrapperDepthHit(cmd) ? { deny: true, kind: 'wrapper-depth' } : { deny: true }
   }
   return { deny: false }
 }
@@ -988,7 +1070,8 @@ if (isInvokedDirectly()) {
   }
   let decision
   try {
-    decision = gateDecision(payload?.tool_name, payload?.tool_input)
+    const cwd = typeof payload?.cwd === 'string' && isAbsolute(payload.cwd) ? payload.cwd : null
+    decision = gateDecision(payload?.tool_name, payload?.tool_input, null, cwd)
   } catch (err) {
     // HOOKDEPLOAD1008: the call needed the ledger, and the ledger module did
     // not load. Anything else that throws here is not this branch's to judge.

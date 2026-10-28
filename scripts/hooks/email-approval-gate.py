@@ -630,7 +630,9 @@ def main():
             sys.exit(0)
     elif tool == "Bash":
         cmd = str(tool_input.get("command") or "")
-        if not _load_is_send_invocation()(cmd):
+        cwd = payload.get("cwd")
+        cwd = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else None
+        if not _load_is_send_invocation()(cmd, cwd=cwd):
             sys.exit(0)
     else:
         sys.exit(0)

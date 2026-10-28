@@ -59,9 +59,9 @@ def _load(module_name: str, file_name: str):
     return mod
 
 
-def is_send_invocation(cmd: str) -> bool:
+def is_send_invocation(cmd: str, cwd=None) -> bool:
     """The copy gate's classifier: one implementation decides what both see."""
-    return _load("outgoing_copy_gate", "outgoing-copy-gate.py").is_send_invocation(cmd)
+    return _load("outgoing_copy_gate", "outgoing-copy-gate.py").is_send_invocation(cmd, cwd=cwd)
 
 
 def content_anchor(env: dict) -> str:
@@ -70,11 +70,11 @@ def content_anchor(env: dict) -> str:
     return _load("email_approval_gate", "email-approval-gate.py").content_anchor(env)
 
 
-def letter_of(tool: str, tool_input: dict):
+def letter_of(tool: str, tool_input: dict, cwd=None):
     """(env, in_scope). env: {to, cc, bcc, text, unreadable_reason}."""
     if tool == "Bash":
         cmd = str(tool_input.get("command") or "")
-        if not is_send_invocation(cmd):
+        if not is_send_invocation(cmd, cwd=cwd):
             return None, False
         return collect_email_envelope(tool, tool_input), True
     if _SEND_TOOL.search(tool):
@@ -191,7 +191,8 @@ def main():
     tool_input = payload.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 
-    env, in_scope = letter_of(tool, tool_input)
+    cwd = payload.get("cwd")
+    env, in_scope = letter_of(tool, tool_input, cwd if isinstance(cwd, str) and os.path.isabs(cwd) else None)
     if not in_scope:
         sys.exit(0)
     log = {"tool": tool}
