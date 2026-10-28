@@ -1035,6 +1035,46 @@
       "name": "SUBAGENTMAILGATE1016 control: a variable command without a recipient flag",
       "cmd": "$EDITOR notes.md",
       "expected": false
+    },
+    {
+      "name": "#718 must-block: ad-hoc Gmail API sender script with a recipient flag (the 2026-10-28 incident shape)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py --to office@example.invalid --body 'Thanks, see you Monday'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: the same Gmail API sender with the recipient inside the script",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py --body 'hello'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: Gmail send through the Google client library (users().messages().send)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_client_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: Gmail API send path in a -c code string",
+      "cmd": "python3 -c \"import urllib.request as u; u.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\"",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: a script that cannot be read, with a recipient flag (undecidable)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/no_such_script.py --to office@example.invalid",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a read-only Gmail API script (search) passes",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_read.py --q 'from:office@example.invalid'",
+      "expected": false
+    },
+    {
+      "name": "#718 control: a script that cannot be read, without a recipient flag, passes",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/no_such_script.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 control: a mail gate's own test file (mailer names as literals) passes; script content is judged by the provider-API patterns only",
+      "cmd": "python3 scripts/__tests__/email-approval-gate.test.py",
+      "expected": false
     }
   ]
 }

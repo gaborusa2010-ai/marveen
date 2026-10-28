@@ -31,9 +31,9 @@
 // writeAgentSettingsFromProfile() (agent-scaffold.ts), guarded by
 // name !== MAIN_AGENT_ID, and re-applied on every spawn (respawn-safe).
 
-import { readFileSync, realpathSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 
 // HOOKDEPLOAD1008: the ledger module is a DYNAMIC import. As a static import, a
@@ -214,8 +214,21 @@ const CODE_SEND_MODULE = new RegExp(
   // The same class on the Graph sender (export sendMail): renamed on import, or a string key.
   String.raw`|\bsendMail\s+as\b|\[\s*['"]sendMail['"]\s*\]`,
 )
+// #718 (aaf838d6): a send straight through a mail provider's HTTP API (Gmail
+// `messages/send` / `drafts/send` by REST URL or the Google client's
+// `.messages().send(`, Graph `sendMail`). Host and send path are matched apart, as a
+// pair, because the URL is often assembled. Mirrors _code_api_sends in
+// hooks/outgoing-copy-gate.py.
+const CODE_API_CLIENT_SEND = /\.(?:messages|drafts)\(\)\s*\.send\s*\(/
+const CODE_API_PAIRS = [
+  [/gmail\.googleapis\.com/i, /\b(?:messages|drafts)\/send\b/],
+  [/graph\.microsoft\.com/i, /\/sendMail\b/],
+]
+const codeApiSends = (code) =>
+  CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))
 const codeStringSends = (code) =>
-  CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
+  CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || codeApiSends(code) ||
+  (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
 
 // Unquoted newline / backtick / `$(` become segment separators; quoted text is
 // untouched (it is content). Tracks quote state by hand -- no shell involved.
@@ -414,6 +427,24 @@ export function flattenSubstitutions(cmd) {
   return out
 }
 
+// #718 (aaf838d6): the script file the interpreter runs is read and judged by the
+// provider-API send patterns only (codeApiSends; why: _read_script in
+// hooks/outgoing-copy-gate.py). Same limits as _read_script in hooks/outgoing-copy-gate.py: a
+// relative path resolves against this process's cwd; an unreadable or oversized
+// script counts as a send only with a recipient flag.
+const SCRIPT_READ_LIMIT = 2 * 1024 * 1024
+function readScript(script) {
+  let path = script.startsWith('~/') ? join(homedir(), script.slice(2)) : script
+  if (!isAbsolute(path)) path = join(process.cwd(), path)
+  try {
+    const st = statSync(path)
+    if (!st.isFile() || st.size > SCRIPT_READ_LIMIT) return null
+    return readFileSync(path, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
 function pythonHeadSends(rest) {
   const recipient = rest.some((t) => RECIPIENT_FLAG.test(t))
   const { script, stdin, stdinRedirect } = pythonScriptOperand(rest)
@@ -422,6 +453,10 @@ function pythonHeadSends(rest) {
     return recipient || rest.some((t) => t !== script && t.includes('$'))
   }
   if (stdin || (script === null && stdinRedirect)) return recipient
+  if (script !== null) {
+    const body = readScript(script)
+    return body === null ? recipient : codeApiSends(body)
+  }
   return false
 }
 

@@ -131,8 +131,27 @@ _CODE_EXECISH = re.compile(
 _CODE_SENDER_LIT = re.compile(r"sendmail|msmtp|swaks|send\.py", re.I)
 
 
+# #718 (aaf838d6): a send straight through a mail provider's HTTP API -- the
+# Gmail API (`users.messages.send` / `drafts.send`, by REST URL or by the Google
+# client's `.messages().send(`) and Microsoft Graph `sendMail`. The URL is often
+# assembled (f-string, base + path), so host and send path are matched apart, as
+# a pair, anywhere in the code. A read (list/get, `?q=`) carries no send path.
+# Mirrored in email-send-gate.mjs (CODE_API_SEND).
+_CODE_API_CLIENT_SEND = re.compile(r"\.(?:messages|drafts)\(\)\s*\.send\s*\(")
+_CODE_API_PAIRS = (
+    (re.compile(r"gmail\.googleapis\.com", re.I), re.compile(r"\b(?:messages|drafts)/send\b")),
+    (re.compile(r"graph\.microsoft\.com", re.I), re.compile(r"/sendMail\b")),
+)
+
+
+def _code_api_sends(code: str) -> bool:
+    if _CODE_API_CLIENT_SEND.search(code):
+        return True
+    return any(host.search(code) and path.search(code) for host, path in _CODE_API_PAIRS)
+
+
 def _code_string_sends(code: str) -> bool:
-    if _CODE_SEND.search(code) or _CODE_SEND_MODULE.search(code):
+    if _CODE_SEND.search(code) or _CODE_SEND_MODULE.search(code) or _code_api_sends(code):
         return True
     return bool(_CODE_EXECISH.search(code) and _CODE_SENDER_LIT.search(code))
 # Token-ELEJERE horgonyzott cel-minta: egy URL-argumentum vagy csupasz
@@ -479,6 +498,34 @@ def flatten_substitutions(cmd: str) -> str:
     return "".join(out)
 
 
+# #718 (aaf838d6): an ad-hoc script (a scratchpad gmail_reply.py) sent through
+# the Gmail API and passed: only send.py was known by name, and the script's
+# CONTENT was never read. Now a script file the interpreter runs is read and
+# judged by the provider-API send patterns only (_code_api_sends): the full
+# code-string set (the mail-library and exec + mailer-name patterns) matched 9 of
+# 1035 fleet scripts on 2026-10-28, all of them the mail gates and their own
+# tests, whose literals are content; the API set matched none. Limits, stated:
+# a relative path resolves
+# against this process's cwd, so a `cd X && python3 y.py` may read another file
+# or none; an unreadable or oversized script with a recipient flag counts as a
+# send (what runs is undecidable), without one it passes. Mirrored in
+# email-send-gate.mjs (readScript); send-invocation-cases.json binds the two.
+_SCRIPT_READ_LIMIT = 2 * 1024 * 1024
+
+
+def _read_script(script: str):
+    path = os.path.expanduser(script)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > _SCRIPT_READ_LIMIT:
+            return None
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
 def _python_head_sends(rest) -> bool:
     recipient = any(_RECIPIENT_FLAG.match(t) for t in rest)
     script, stdin, stdin_redirect = _python_script_operand(rest)
@@ -488,6 +535,9 @@ def _python_head_sends(rest) -> bool:
         return recipient or any(t != script and "$" in t for t in rest)
     if stdin or (script is None and stdin_redirect):
         return recipient
+    if script is not None:
+        body = _read_script(script)
+        return recipient if body is None else _code_api_sends(body)
     return False
 
 
