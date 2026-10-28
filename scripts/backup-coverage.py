@@ -139,8 +139,11 @@ SKIP_SUFFIXES_ANYWHERE = (".pid",)
 #   */target/{debug,release,tmp} -- added 2026-10-24, the checker's half of the
 #       backup.sh agents-find exclusion: Rust (cargo) build output, 23 GB under
 #       agents/cody/external/solidcraft/target, rebuilt by `cargo build`.
+#   */tests/_work -- added 2026-10-28, same pairing: test scratch dirs that
+#       videogyar's test_edit.py copies from tests/fixtures (5.3 GB measured).
 SKIP_PATHS = (".claude/channels/worksource/*/done",
-              "*/target/debug", "*/target/release", "*/target/tmp")
+              "*/target/debug", "*/target/release", "*/target/tmp",
+              "*/tests/_work")
 
 # Suffixes skipped ONLY under the repo's store/ -- the checker's half of a rule
 # backup.sh already states out loud in its store block:

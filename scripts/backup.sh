@@ -390,6 +390,14 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/briefs
 #                               23 GB and turned the weekly full archive from
 #                               1.3 GB (10-16) into 9.9 GB. Rebuilt by `cargo
 #                               build` from the sources next to it, which stay in.
+#   tests/_work              -- test scratch output. Measured 2026-10-28 08:3x:
+#                               agents/cody/projects/videogyar/tests/_work was
+#                               5.3 GB (518 uuid-named case dirs, each a copy of
+#                               tests/fixtures plus rendered mp4 previews) and
+#                               made the daily diff 3.0 GB (10-27: 138 MB).
+#                               test_edit.py creates them from tests/fixtures,
+#                               which stays in; the project .gitignore already
+#                               lists /tests/_work/.
 #   .venv                    -- egy agens sajat Python-kornyezete. Margo
 #                               agents/margo/.venv-je MERVE 2026-09-08 20:3x:
 #                               826 MB es 15 080 fajl, vagyis az agents/ alol
@@ -456,6 +464,7 @@ if [[ -d agents ]]; then
     -not -path '*/target/debug/*' \
     -not -path '*/target/release/*' \
     -not -path '*/target/tmp/*' \
+    -not -path '*/tests/_work/*' \
     -not -name '*.pid' \
     "${_skip_args[@]}" \
     -print >> "${REPOLIST}"
