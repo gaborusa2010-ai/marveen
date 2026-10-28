@@ -1313,6 +1313,81 @@
       "name": "#718 r3 control: a missing .py run directly cannot execute, passes",
       "cmd": "src/__tests__/fixtures/send-gate/no_such_script.py",
       "expected": false
+    },
+    {
+      "name": "#718 r4 MUST: leading stdin redirect before the interpreter",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 MUST: leading fd-0 redirect before the interpreter",
+      "cmd": "0< src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading glued redirect, explicit -",
+      "cmd": "<src/__tests__/fixtures/send-gate/gmail_reply.py python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: fd-0 redirect after the interpreter",
+      "cmd": "python3 0< src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading redirect before a wrapper",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py sudo python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading redirect after an assignment",
+      "cmd": "X=1 < src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading output redirect before a script run",
+      "cmd": ">/dev/null python3 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading stderr + stdin redirects",
+      "cmd": "2>/dev/null < src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 minor: cat with a stdin redirect piped into python3",
+      "cmd": "cat < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 control: leading redirect of a read-only Gmail script passes",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_read.py python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: leading redirect of a plain script passes",
+      "cmd": "< src/__tests__/fixtures/send-gate/plain.py python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: another fd is not stdin, -c code runs",
+      "cmd": "3< src/__tests__/fixtures/send-gate/gmail_reply.py python3 -c 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: fd 3 ignored, stdin is /dev/null",
+      "cmd": "python3 - 3< src/__tests__/fixtures/send-gate/gmail_reply.py < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: leading redirect into cat is not a send",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py cat",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: cat with stderr redirect piped into python3, plain script",
+      "cmd": "cat src/__tests__/fixtures/send-gate/plain.py 2>/dev/null | python3 -",
+      "expected": false
     }
   ]
 }

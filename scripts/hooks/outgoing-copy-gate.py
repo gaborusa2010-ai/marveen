@@ -366,11 +366,27 @@ _UV_RUN = ("pfCP", ("with", "with-editable", "with-requirements", "python", "pro
 _HEAD_DEPTH = 8
 
 
+# #718 (review 2814): bash takes a redirection anywhere in a simple command, so
+# `< f python3` is `python3 < f`. A leading one made `<` the program and the send
+# passed all three gates; it is moved behind the command, where the interpreter
+# checks look for it. Mirrored in email-send-gate.mjs (REDIRECT, commandHeads).
+_REDIRECT = re.compile(r"^\d*(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)(.*)$", re.S)
+
+
 def _command_heads(toks, _d: int = 0):
     """Every token list that can be the real command of this segment, after the
-    leading assignments, command-position keywords and wrappers are stepped over."""
-    while toks and (_ENV_ASSIGN.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS):
-        toks = toks[1:]
+    leading assignments, command-position keywords, redirections and wrappers are
+    stepped over."""
+    moved = []
+    while toks and (_ENV_ASSIGN.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS
+                    or _REDIRECT.match(toks[0])):
+        m = _REDIRECT.match(toks[0])
+        n = 1 if m is None or m.group(2) else 2
+        if m is not None:
+            moved += toks[:n]
+        toks = toks[n:]
+    if moved and toks:
+        toks = list(toks) + moved
     if not toks:
         return [toks]
     w = _basename(toks[0])
@@ -421,6 +437,28 @@ def _command_heads(toks, _d: int = 0):
     return heads
 
 
+def _cat_operands(args):
+    """The files `cat` prints: its operands and a `<` / `0<` stdin file. An output
+    redirect is not one; a heredoc word stays (its body is gone, so it reads as
+    unreadable and fails closed)."""
+    out, i = [], 0
+    while i < len(args):
+        t = args[i]
+        m = re.match(r"^(\d*)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)(.*)$", t, re.S)
+        if m and m.group(2) == "<" and m.group(1) in ("", "0"):
+            target = m.group(3) or (args[i + 1] if i + 1 < len(args) else "")
+            out.append(target)
+            i += 1 if m.group(3) else 2
+            continue
+        if m and m.group(2).startswith(">"):
+            i += 1 if m.group(3) else 2
+            continue
+        if not t.startswith("-"):
+            out.append(t)
+        i += 1
+    return out
+
+
 def _segments_send(segments, depth: int, base, written) -> bool:
     """Segments in order; a cd/pushd/popd head moves the base of the later ones,
     and an assignment-only segment (`S=/x; cd $S`) is remembered for them. $HOME
@@ -441,7 +479,7 @@ def _segments_send(segments, depth: int, base, written) -> bool:
         cat_files = None
         for h in heads:
             if h and _basename(h[0]) == "cat":
-                cat_files = [_expand_vars(t, env) for t in h[1:] if not t.startswith("-")] or None
+                cat_files = [_expand_vars(t, env) for t in _cat_operands(h[1:])] or None
         for h in heads:
             is_cd, new_base = _cd_target(h, base, env)
             if is_cd:
@@ -474,9 +512,11 @@ def _python_script_operand(rest):
         if t in _PY_OPT_WITH_ARG:
             i += 2
             continue
-        if t.startswith("<"):
-            stdin_redirect = True
-            i += 2 if t in ("<", "<<<", "<<", "<<-") else 1  # the word after a bare redirect
+        m = re.match(r"^(\d*)(<<<|<<-|<<|<>|<&|<)(.*)$", t, re.S)
+        if m:
+            if m.group(1) in ("", "0"):  # another fd is not stdin
+                stdin_redirect = True
+            i += 1 if m.group(3) else 2  # the word after a bare redirect
             continue
         if re.match(r"^\d*>", t):
             i += 2 if re.match(r"^\d*>>?$", t) else 1
@@ -576,7 +616,11 @@ def flatten_substitutions(cmd: str) -> str:
 # (`./x.py`) is read like a script. Stated limits: a script reached through a
 # command substitution (`python3 "$(echo x.py)"`), an import of another file,
 # `exec(open(...).read())` in -c, shell scripts (`bash run.sh`) and non-python
-# interpreters are not read.
+# interpreters are not read. Only a `cat` directly before the interpreter feeds
+# it: another program in the pipe (`head -n 999 x.py | python3`,
+# `cat x.py | tee /dev/null | python3`) is not followed and passes (review 2814).
+# Round 4 (review 2814): a redirection may stand anywhere in the command, so a
+# leading one (`< x.py python3`, `0< x.py python3`) is moved behind it.
 _SCRIPT_READ_LIMIT = 2 * 1024 * 1024
 # False only inside unreadable_script_hit: is a script that cannot be read the
 # whole reason a command counts as a send?
@@ -649,6 +693,8 @@ def _python_stdin(rest):
     i = 0
     while i < len(rest):
         t = rest[i]
+        if t.startswith("0<"):  # fd 0 is stdin: `0< f` is `< f`
+            t = t[1:]
         if t.startswith("<<<"):
             return "code", t[3:] or (rest[i + 1] if i + 1 < len(rest) else "")
         if t in ("<<", "<<-"):

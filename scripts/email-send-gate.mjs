@@ -322,9 +322,20 @@ const UV_RUN = ['pfCP', ['with', 'with-editable', 'with-requirements', 'python',
   'find-links', 'config-setting', 'cache-dir', 'config-file'], 0]
 const HEAD_DEPTH = 8
 
+// #718 (review 2814): a leading redirection (`< f python3`) is moved behind the
+// command, see _REDIRECT in the python twin.
+const REDIRECT = /^\d*(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
+
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
-  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]))) toks = toks.slice(1)
+  const moved = []
+  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
+    const m = REDIRECT.exec(toks[0])
+    const n = m === null || m[2] ? 1 : 2
+    if (m !== null) moved.push(...toks.slice(0, n))
+    toks = toks.slice(n)
+  }
+  if (moved.length && toks.length) toks = [...toks, ...moved]
   if (!toks.length) return [toks]
   const w = basename(toks[0])
   // Still a wrapper at the depth bound: counts as a send (null), see the python twin.
@@ -397,7 +408,8 @@ function pythonScriptOperand(rest) {
     if (t === '-') return { script: null, stdin: true, stdinRedirect }
     if (/^-[cm]/.test(t)) return { script: null, stdin: false, stdinRedirect } // code string / module: judged elsewhere
     if (PY_OPT_WITH_ARG.has(t)) { i++; continue }
-    if (t.startsWith('<')) { stdinRedirect = true; if (['<', '<<<', '<<', '<<-'].includes(t)) i++; continue } // the word after a bare redirect
+    const r = /^(\d*)(<<<|<<-|<<|<>|<&|<)([\s\S]*)$/.exec(t)
+    if (r) { if (r[1] === '' || r[1] === '0') stdinRedirect = true; if (!r[3]) i++; continue } // another fd is not stdin; the word after a bare redirect
     if (/^\d*>/.test(t)) { if (/^\d*>>?$/.test(t)) i++; continue }
     if (t.startsWith('-') && t.length > 1) continue
     return { script: t, stdin: false, stdinRedirect }
@@ -456,6 +468,8 @@ export function flattenSubstitutions(cmd) {
 // Round 3 (Marveen's review 2805): a program fed on stdin from a file (`python3 - < x.py`,
 // `cat x.py | python3`), a here-string, `python3 -m mod` from the base directory and a
 // `.py` path run directly are read too; the stated limits are at _read_script.
+// Round 4 (review 2814): a leading redirection (`< x.py python3`) counts, and a pipe
+// other than a direct `cat` (head, tee) is a stated limit.
 const SCRIPT_READ_LIMIT = 2 * 1024 * 1024
 // False only inside unreadableScriptHit: is an unreadable script the whole reason?
 let unreadableSends = true
@@ -511,7 +525,7 @@ function cdTarget(head, base, env) {
 // ['file', path] for a `<` redirect, ['code', text] for a here-string, else null.
 function pythonStdin(rest) {
   for (let i = 0; i < rest.length; i++) {
-    const t = rest[i]
+    const t = rest[i].startsWith('0<') ? rest[i].slice(1) : rest[i] // fd 0 is stdin: `0< f` is `< f`
     if (t.startsWith('<<<')) return ['code', t.slice(3) || (rest[i + 1] ?? '')]
     if (t === '<<' || t === '<<-') { i++; continue }
     if (t.startsWith('<<')) continue
@@ -591,6 +605,24 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
 
 // Segments in order; a cd/pushd/popd head moves the base of the later ones, and an
 // assignment-only segment is remembered for them. $HOME comes from the environment.
+// The files `cat` prints: its operands and a `<` / `0<` stdin file; an output
+// redirect is not one, a heredoc word stays (see _cat_operands in the python twin).
+function catOperands(args) {
+  const out = []
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i]
+    const m = /^(\d*)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/.exec(t)
+    if (m && m[2] === '<' && (m[1] === '' || m[1] === '0')) {
+      out.push(m[3] || (args[i + 1] ?? ''))
+      if (!m[3]) i++
+      continue
+    }
+    if (m && m[2].startsWith('>')) { if (!m[3]) i++; continue }
+    if (!t.startsWith('-')) out.push(t)
+  }
+  return out
+}
+
 // The files a `cat` segment prints are the stdin of the segment piped after it.
 function segmentsSend(segments, depth, base, written) {
   const env = new Map([['HOME', homedir()]])
@@ -608,7 +640,7 @@ function segmentsSend(segments, depth, base, written) {
     catFiles = null
     for (const h of heads) {
       if (h && h.length && basename(h[0]) === 'cat') {
-        const files = h.slice(1).filter((t) => !t.startsWith('-')).map((t) => expandVars(t, env))
+        const files = catOperands(h.slice(1)).map((t) => expandVars(t, env))
         catFiles = files.length ? files : null
       }
     }
