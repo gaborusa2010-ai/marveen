@@ -31,7 +31,7 @@
 // writeAgentSettingsFromProfile() (agent-scaffold.ts), guarded by
 // name !== MAIN_AGENT_ID, and re-applied on every spawn (respawn-safe).
 
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { homedir } from 'node:os'
@@ -215,14 +215,16 @@ const CODE_SEND_MODULE = new RegExp(
   String.raw`|\bsendMail\s+as\b|\[\s*['"]sendMail['"]\s*\]`,
 )
 // #718 (aaf838d6): a send straight through a mail provider's HTTP API (Gmail
-// `messages/send` / `drafts/send` by REST URL or the Google client's
-// `.messages().send(`, Graph `sendMail`). Host and send path are matched apart, as a
-// pair, because the URL is often assembled. Mirrors _code_api_sends in
-// hooks/outgoing-copy-gate.py.
+// messages/send or drafts/send by REST URL on the gmail or www googleapis host, or the
+// Google client's messages() / drafts() chain ending in send(), also split over two
+// statements; Graph sendMail or send/reply/replyAll/forward on one message). Host and
+// send path are matched apart, as a pair, because the URL is often assembled. Mirrors
+// _code_api_sends in hooks/outgoing-copy-gate.py.
 const CODE_API_CLIENT_SEND = /\.(?:messages|drafts)\(\)\s*\.send\s*\(/
 const CODE_API_PAIRS = [
-  [/gmail\.googleapis\.com/i, /\b(?:messages|drafts)\/send\b/],
-  [/graph\.microsoft\.com/i, /\/sendMail\b/],
+  [/(?:gmail|www)\.googleapis\.com/i, /\b(?:messages|drafts)\/send\b/],
+  [/\.users\(\)\s*\.(?:messages|drafts)\(\)/, /\.send\s*\(/],
+  [/graph\.microsoft\.com/i, /\/sendMail\b|\/messages\/[^/\s'"]+\/(?:send|reply|replyAll|forward)\b/],
 ]
 const codeApiSends = (code) =>
   CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))
@@ -261,8 +263,12 @@ export function segmentsTokens(cmd) {
   let tok = ''
   let hasTok = false
   let q = null
+  let piped = false // the next segment's stdin is this one's output (`a | b`): seg.piped
   const pushTok = () => { if (hasTok) { cur.push(tok); tok = ''; hasTok = false } }
-  const pushSeg = () => { pushTok(); if (cur.length) { segments.push(cur); cur = [] } }
+  const pushSeg = () => {
+    pushTok()
+    if (cur.length) { if (piped) cur.piped = true; segments.push(cur); cur = [] }
+  }
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
     if (q) {
@@ -274,7 +280,12 @@ export function segmentsTokens(cmd) {
     if (ch === "'" || ch === '"') { q = ch; hasTok = true; continue }
     if (ch === '\\' && i + 1 < s.length) { tok += s[++i]; hasTok = true; continue }
     if (ch === ' ' || ch === '\t') { pushTok(); continue }
-    if ('|&;()'.includes(ch)) { pushSeg(); continue }
+    if ('|&;()'.includes(ch)) {
+      pushSeg()
+      if (ch === '|') piped = s[i + 1] !== '|' && s[i - 1] !== '|'
+      else if (!(ch === '&' && s[i - 1] === '|')) piped = false
+      continue
+    }
     tok += ch
     hasTok = true
   }
@@ -386,7 +397,7 @@ function pythonScriptOperand(rest) {
     if (t === '-') return { script: null, stdin: true, stdinRedirect }
     if (/^-[cm]/.test(t)) return { script: null, stdin: false, stdinRedirect } // code string / module: judged elsewhere
     if (PY_OPT_WITH_ARG.has(t)) { i++; continue }
-    if (t.startsWith('<')) { stdinRedirect = true; if (t === '<') i++; continue }
+    if (t.startsWith('<')) { stdinRedirect = true; if (['<', '<<<', '<<', '<<-'].includes(t)) i++; continue } // the word after a bare redirect
     if (/^\d*>/.test(t)) { if (/^\d*>>?$/.test(t)) i++; continue }
     if (t.startsWith('-') && t.length > 1) continue
     return { script: t, stdin: false, stdinRedirect }
@@ -442,7 +453,12 @@ export function flattenSubstitutions(cmd) {
 // resolves against the payload's cwd, moved by an earlier cd/pushd segment; a script
 // written by a heredoc of the same command is judged by that body. FAIL-CLOSED: a
 // script that cannot be read counts as a send. base null: the directory is unknown.
+// Round 3 (Marveen's review 2805): a program fed on stdin from a file (`python3 - < x.py`,
+// `cat x.py | python3`), a here-string, `python3 -m mod` from the base directory and a
+// `.py` path run directly are read too; the stated limits are at _read_script.
 const SCRIPT_READ_LIMIT = 2 * 1024 * 1024
+// False only inside unreadableScriptHit: is an unreadable script the whole reason?
+let unreadableSends = true
 const expandHome = (p) => (p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p)
 function readScript(script, base) {
   let path = expandHome(script)
@@ -492,7 +508,58 @@ function cdTarget(head, base, env) {
   return [true, base === null ? null : join(base, target)]
 }
 
-function pythonHeadSends(rest, base, written, env) {
+// ['file', path] for a `<` redirect, ['code', text] for a here-string, else null.
+function pythonStdin(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i]
+    if (t.startsWith('<<<')) return ['code', t.slice(3) || (rest[i + 1] ?? '')]
+    if (t === '<<' || t === '<<-') { i++; continue }
+    if (t.startsWith('<<')) continue
+    if (t === '<') return i + 1 < rest.length ? ['file', rest[i + 1]] : null
+    if (t.startsWith('<')) return ['file', t.slice(1)]
+  }
+  return null
+}
+const stdinBody = (path, base) => (path === '/dev/null' ? '' : readScript(path, base))
+
+// null when no local module file runs (`python3 -m mod`), else whether it sends.
+function pythonModuleSends(rest, base, env) {
+  let mod = null
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i]
+    if (t === '-m') { mod = rest[i + 1] ?? null; break }
+    if (t.startsWith('-m')) { mod = t.slice(2); break }
+    if (!t.startsWith('-') || t.startsWith('-c')) return null
+    if (PY_OPT_WITH_ARG.has(t)) i++
+  }
+  if (!mod || base === null) return null
+  mod = expandVars(mod, env)
+  if (UNDECIDABLE_PATH.test(mod)) return null
+  const rel = mod.replaceAll('.', '/')
+  for (const cand of [`${rel}.py`, `${rel}/__main__.py`]) {
+    const path = join(base, cand)
+    let exists = true
+    try { lstatSync(path) } catch { exists = false }
+    if (exists) {
+      const body = readScript(path, base)
+      return body === null ? unreadableSends : codeApiSends(body)
+    }
+  }
+  return null
+}
+
+// True when the program comes from -c or -m: stdin is then data, not code.
+function runsCodeArg(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i]
+    if (/^-[cm]/.test(t)) return true
+    if (t === '-' || t === '--' || !t.startsWith('-')) return false
+    if (PY_OPT_WITH_ARG.has(t)) i++
+  }
+  return false
+}
+
+function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
   const recipient = rest.some((t) => RECIPIENT_FLAG.test(t))
   const operand = pythonScriptOperand(rest)
   const { stdin, stdinRedirect } = operand
@@ -502,27 +569,49 @@ function pythonHeadSends(rest, base, written, env) {
   if (script !== null && UNDECIDABLE_PATH.test(script)) {
     return recipient || rest.some((t) => t !== script && t.includes('$'))
   }
-  if (stdin || (script === null && stdinRedirect)) return recipient
+  if (script === null) {
+    const module = pythonModuleSends(rest, base, env)
+    if (module !== null) return recipient || module
+  }
+  if (stdin || (script === null && !runsCodeArg(rest) && (stdinRedirect || stdinFiles))) {
+    const src = pythonStdin(rest)
+    if (src && src[0] === 'code') return recipient || codeStringSends(src[1])
+    const files = src ? [expandVars(src[1], env)] : (stdinFiles ?? [])
+    const bodies = files.map((f) => (written.has(f) ? written.get(f) : stdinBody(f, base)))
+    if (bodies.some((b) => b === null)) return recipient || unreadableSends
+    return recipient || bodies.some((b) => codeApiSends(b))
+  }
   if (script !== null) {
     if (written.has(script)) return codeApiSends(written.get(script))
     const body = readScript(script, base)
-    return body === null ? true : codeApiSends(body)
+    return body === null ? unreadableSends : codeApiSends(body)
   }
   return false
 }
 
 // Segments in order; a cd/pushd/popd head moves the base of the later ones, and an
-// assignment-only segment is remembered for them.
+// assignment-only segment is remembered for them. $HOME comes from the environment.
+// The files a `cat` segment prints are the stdin of the segment piped after it.
 function segmentsSend(segments, depth, base, written) {
-  const env = new Map()
+  const env = new Map([['HOME', homedir()]])
+  let catFiles = null
   for (const toks of segments) {
     const assigned = assignments(toks, env)
     if (assigned) {
       for (const [k, v] of assigned) env.set(k, v)
+      catFiles = null
       continue
     }
+    const stdinFiles = toks.piped ? catFiles : null
     const heads = commandHeads(toks)
-    if (heads.some((h) => headIsSend(h, depth, base, written, env))) return true
+    if (heads.some((h) => headIsSend(h, depth, base, written, env, stdinFiles))) return true
+    catFiles = null
+    for (const h of heads) {
+      if (h && h.length && basename(h[0]) === 'cat') {
+        const files = h.slice(1).filter((t) => !t.startsWith('-')).map((t) => expandVars(t, env))
+        catFiles = files.length ? files : null
+      }
+    }
     for (const h of heads) {
       const [isCd, next] = cdTarget(h, base, env)
       if (isCd) { base = next; break }
@@ -531,7 +620,7 @@ function segmentsSend(segments, depth, base, written) {
   return false
 }
 
-function headIsSend(toks, depth, base, written, env) {
+function headIsSend(toks, depth, base, written, env, stdinFiles = null) {
   if (toks === null) return true // the depth bound was hit on a wrapper: audit it
   if (!toks.length) return false
   const prog = basename(toks[0])
@@ -557,7 +646,16 @@ function headIsSend(toks, depth, base, written, env) {
     }
   }
   if (candidates.some((c) => SENDPY.test(c)) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
-  if (PYTHON.test(prog) && pythonHeadSends(rest, base, written, env)) return true
+  if (PYTHON.test(prog) && pythonHeadSends(rest, base, written, env, stdinFiles)) return true
+  // a `.py` path run directly (`./x.py`; its shebang names the interpreter). Only a
+  // file that can be read counts: one that cannot be read cannot be executed either,
+  // and a bare `.py` word is also what a process substitution leaves behind
+  // (`diff <(sed ...) x.py`).
+  if (prog.endsWith('.py') && toks[0].includes('/')) {
+    const path = written.has(toks[0]) ? toks[0] : expandVars(toks[0], env)
+    const body = written.has(path) ? written.get(path) : readScript(path, base)
+    if (body !== null && codeApiSends(body)) return true
+  }
   // An interpreter or program that cannot be resolved statically ($PY, a glob,
   // a substitution) with a recipient flag: what runs is undecidable here.
   if (UNDECIDABLE_PATH.test(toks[0]) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
@@ -572,6 +670,28 @@ function headIsSend(toks, depth, base, written, env) {
 
 // True when some segment is still a wrapper at the depth bound (HEADDEPTH924),
 // so the deny says WHY -- see wrapper_depth_hit in outgoing-copy-gate.py.
+// #718: true when an unreadable script is the whole reason the command counts as a
+// send; see unreadable_script_hit in hooks/outgoing-copy-gate.py.
+export function unreadableScriptHit(cmd, cwd = null) {
+  if (!isSendInvocation(cmd, 0, cwd)) return false
+  unreadableSends = false
+  try {
+    return !isSendInvocation(cmd, 0, cwd)
+  } finally {
+    unreadableSends = true
+  }
+}
+
+export function buildUnreadableScriptMsg() {
+  return (
+    'TILTVA (governance hard-gate): a futtatott python-szkriptet nem tudom elolvasni (nincs meg, ' +
+    'nem olvashato, nem sima fajl, 2 MiB-nal nagyobb, vagy a mappaja nem kovetheto), igy nem tudom ' +
+    'eldonteni, hogy levelet kuld-e. Ez szandekosan fail-closed. Ha elgepelted az utvonalat, javitsd. ' +
+    'A relativ utvonal a munkamappadhoz (es a parancs korabbi cd-jehez) kepest ertendo: adj abszolut ' +
+    'utvonalat, ha bizonytalan.'
+  )
+}
+
 export function wrapperDepthHit(cmd) {
   let segments
   try {
@@ -603,10 +723,9 @@ export function buildWrapperDepthMsg() {
 // the literal only as a lowercase, QUOTED command word (an argv item or an os.system command),
 // so a card id like SENDMAIL... in a report's prose no longer matches. Mirrors
 // _HEREDOC_SENDER_ARGV / _heredoc_body_sends in hooks/outgoing-copy-gate.py.
-// NOT COVERED, named: a program the classifier never reads -- `python3 /tmp/x.py`,
-// `python3 < /tmp/x.py`, `cat /tmp/x.py | python3 -`, `python3 -c "exec(open('/tmp/x.py').read())"`;
-// also a here-string fed to an interpreter (`python3 <<<'import send'`) and a CommonJS
-// destructuring rename of the Graph sender (`const { sendMail: s } = require(...)`).
+// NOT COVERED, named: `python3 -c "exec(open('/tmp/x.py').read())"` and a CommonJS
+// destructuring rename of the Graph sender (`const { sendMail: s } = require(...)`). (A script
+// run by python, fed on stdin or piped from cat, and a here-string are read since #718.)
 // A heredoc fed to a SHELL (`bash <<EOF`) is a shell program: its body is judged with
 // isSendInvocation itself, one level deeper (Geri/Samu, #1855).
 // WRITTEN, THEN RUN IN THE SAME COMMAND (#1855): `cat > P <<TAG` / `cat <<TAG > P`, then an
@@ -810,7 +929,10 @@ export function gateDecision(toolName, toolInput, isVerified = null, cwd = null)
   }
   if (name === 'Bash') {
     const cmd = String(toolInput?.command ?? '')
-    if (isSendInvocation(cmd, 0, cwd)) return wrapperDepthHit(cmd) ? { deny: true, kind: 'wrapper-depth' } : { deny: true }
+    if (isSendInvocation(cmd, 0, cwd)) {
+      if (wrapperDepthHit(cmd)) return { deny: true, kind: 'wrapper-depth' }
+      return unreadableScriptHit(cmd, cwd) ? { deny: true, kind: 'unreadable-script' } : { deny: true }
+    }
   }
   return { deny: false }
 }
@@ -1088,6 +1210,7 @@ if (isInvokedDirectly()) {
     if (kind === 'unverified-recipient') deny(buildUnverifiedRecipientMsg(addresses ?? []))
     if (kind === 'draft-required') deny(buildDraftOnlyMsg(ownerName))
     if (kind === 'wrapper-depth') deny(buildWrapperDepthMsg())
+    if (kind === 'unreadable-script') deny(buildUnreadableScriptMsg())
     // Thread-scoped narrowing: only when the scaffold wired this agent's hook
     // command with the flag (capability-driven, regenerated on every spawn),
     // and only for the direct send_email tool. Bash send routes and

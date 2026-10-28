@@ -208,6 +208,9 @@ def manage_email_is_send(tool_input: dict) -> bool:
     return not _is_explicit_draft(tool_input)
 
 
+_GATE_MOD = None
+
+
 def _load_is_send_invocation():
     """Import is_send_invocation from outgoing-copy-gate.py (dashed filename,
     so importlib by path). Single implementation: the same classifier that
@@ -223,6 +226,8 @@ def _load_is_send_invocation():
             "outgoing_copy_gate", os.path.join(_HERE, "outgoing-copy-gate.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        global _GATE_MOD
+        _GATE_MOD = mod
         return mod.is_send_invocation
     except Exception as exc:  # noqa: BLE001 -- SyntaxError, missing file, anything: fail-closed
         deny("A kapu fuggosege (scripts/hooks/outgoing-copy-gate.py) nem toltheto be "
@@ -641,6 +646,10 @@ def main():
     prefix = f"({note})\n" if note else ""
     if level >= 3:
         sys.exit(0)
+    # #718: a python script that cannot be read is a send only because the gate
+    # cannot tell; say that, not "the letter" (Marveen's review 2805).
+    if tool == "Bash" and _GATE_MOD is not None and _GATE_MOD.unreadable_script_hit(cmd, cwd=cwd):
+        deny(prefix + _GATE_MOD.UNREADABLE_SCRIPT_MSG)
     if level <= 1:
         deny(prefix +
              "Az email_send autonomia-szint 1 (csak jelez): a kuldes tiltott.\n"

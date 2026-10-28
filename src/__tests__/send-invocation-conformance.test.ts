@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // @ts-expect-error -- plain .mjs hook script, no types
-import { isSendInvocation } from '../../scripts/email-send-gate.mjs'
+import { isSendInvocation, unreadableScriptHit } from '../../scripts/email-send-gate.mjs'
 
 // SUBGATEPOZ822 / msg 14289: the same command-position recognition now lives
 // in TWO languages, in two files (the main-agent copy gate in python, the
@@ -86,6 +86,63 @@ describe('#718 fail-closed: an unreadable or oversized script is a send in both 
   cases.forEach(([cmd, expected], i) => {
     it(`${cmd} -> ${expected}`, () => {
       expect(js[i], `JS verdict for: ${cmd}`).toBe(expected)
+      expect(py[i], `python verdict for: ${cmd}`).toBe(expected)
+    })
+  })
+})
+
+// #718 round 3 (Marveen's review 2805, point 4): $HOME is filled from the
+// environment, so `cd "$HOME" && python3 x.py` reads x.py instead of being an
+// undecidable cd. HOME is pointed at the fixture directory for both gates.
+describe('#718 $HOME in a cd target comes from the environment in both gates', () => {
+  const fixtures = join(ROOT, 'src', '__tests__', 'fixtures', 'send-gate')
+  const cases: Array<[string, boolean]> = [
+    ['cd "$HOME" && python3 plain.py', false],
+    ['cd $HOME && python3 gmail_reply.py', true],
+    ['cd ~ && python3 gmail_read.py --q x', false],
+  ]
+  const saved = process.env.HOME
+  let py: boolean[]
+  let js: boolean[]
+  try {
+    process.env.HOME = fixtures
+    py = pythonVerdicts(cases.map(([cmd]) => [cmd, null]))
+    js = cases.map(([cmd]) => isSendInvocation(cmd, 0, null))
+  } finally {
+    process.env.HOME = saved
+  }
+
+  cases.forEach(([cmd, expected], i) => {
+    it(`${cmd} -> ${expected}`, () => {
+      expect(js[i], `JS verdict for: ${cmd}`).toBe(expected)
+      expect(py[i], `python verdict for: ${cmd}`).toBe(expected)
+    })
+  })
+})
+
+// #718 round 3 (point 5): when an unreadable script is the WHOLE reason for the
+// verdict, both gates say so with their own message instead of the mail-send one.
+describe('#718 unreadable-script hit: the deny names the script, not a letter', () => {
+  const F = 'src/__tests__/fixtures/send-gate'
+  const cases: Array<[string, boolean]> = [
+    [`python3 ${F}/no_such_script.py`, true],
+    [`cat ${F}/no_such_script.py | python3 -`, true],
+    [`python3 ${F}/gmail_reply.py`, false], // a real send, read and matched
+    // a script path is judged by its content, a recipient flag alone never decides it
+    [`python3 ${F}/no_such_script.py --to x@example.invalid`, true],
+    [`python3 - --to x@example.invalid < ${F}/no_such_script.py`, false], // stdin: the flag decides
+    [`python3 ${F}/plain.py`, false], // not a send at all
+  ]
+  const py: boolean[] = JSON.parse(execFileSync('python3', ['-c', `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("gate", ${JSON.stringify(GATE_PY)})
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+print(json.dumps([g.unreadable_script_hit(c, cwd=sys.argv[1]) for c in json.load(sys.stdin)]))
+`, ROOT], { encoding: 'utf-8', input: JSON.stringify(cases.map(([c]) => c)) }).trim())
+
+  cases.forEach(([cmd, expected], i) => {
+    it(`${cmd} -> ${expected}`, () => {
+      expect(unreadableScriptHit(cmd, ROOT), `JS verdict for: ${cmd}`).toBe(expected)
       expect(py[i], `python verdict for: ${cmd}`).toBe(expected)
     })
   })

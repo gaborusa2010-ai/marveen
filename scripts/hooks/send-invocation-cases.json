@@ -983,7 +983,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a stdin program without a recipient flag",
-      "cmd": "python3 - < scripts/report.py",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/plain.py",
       "expected": false
     },
     {
@@ -1168,6 +1168,150 @@
     {
       "name": "#718 control: a --to time flag on a readable non-mail script through a variable",
       "cmd": "S=src/__tests__/fixtures/send-gate; python3 \"${S}/plain.py\" --to 40",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 must-block: sender script fed on stdin with python3 - <",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script fed on stdin with python3 <",
+      "cmd": "python3 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script piped from cat into python3 -",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script piped from cat into bare python3",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: stdin script that cannot be read (fail-closed)",
+      "cmd": "cat src/__tests__/fixtures/send-gate/no_such_script.py | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a here-string program with a Gmail API send",
+      "cmd": "python3 <<< \"import urllib.request as u; u.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages/send')\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: python3 -m on a local sender module (payload cwd)",
+      "cmd": "python3 -m gmail_reply",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: python3 -m on a local sender module after cd",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 -m gmail_reply",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a sender .py run directly by its path",
+      "cmd": "src/__tests__/fixtures/send-gate/gmail_exe_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a sender .py run directly as ./x.py (payload cwd)",
+      "cmd": "./gmail_exe_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Gmail send on the www.googleapis.com host",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_www_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Google client chain split over two statements",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_split_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Graph send of a saved message",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/graph_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Graph replyAll",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/graph_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 control: read-only script fed on stdin passes",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: plain script piped from cat passes",
+      "cmd": "cat src/__tests__/fixtures/send-gate/plain.py | python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: echo piped into python3 - passes",
+      "cmd": "echo 'print(1)' | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: empty stdin from /dev/null passes",
+      "cmd": "python3 - < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a benign here-string passes",
+      "cmd": "python3 <<< 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: python3 -m on a local read-only module passes",
+      "cmd": "python3 -m gmail_read",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: python3 -m on an installed module (no local file) passes",
+      "cmd": "python3 -m pytest -q",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a read-only .py run directly by its path passes",
+      "cmd": "src/__tests__/fixtures/send-gate/gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: the copy gate run on itself passes (its comments no longer match)",
+      "cmd": "python3 scripts/hooks/outgoing-copy-gate.py < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: the JS gate run on itself passes",
+      "cmd": "node scripts/email-send-gate.mjs < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: data piped into python3 -c is not a program",
+      "cmd": "cat src/__tests__/fixtures/send-gate/no_such_data.json | python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: data redirected into python3 -c is not a program",
+      "cmd": "python3 -c 'import sys; print(sys.stdin.read())' < src/__tests__/fixtures/send-gate/no_such_data.json",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a .py operand after a process substitution is not a run",
+      "cmd": "diff <(sed -n 1,5p src/__tests__/fixtures/send-gate/plain.py) src/__tests__/fixtures/send-gate/no_such_script.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a missing .py run directly cannot execute, passes",
+      "cmd": "src/__tests__/fixtures/send-gate/no_such_script.py",
       "expected": false
     }
   ]

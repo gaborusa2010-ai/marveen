@@ -132,15 +132,21 @@ _CODE_SENDER_LIT = re.compile(r"sendmail|msmtp|swaks|send\.py", re.I)
 
 
 # #718 (aaf838d6): a send straight through a mail provider's HTTP API -- the
-# Gmail API (`users.messages.send` / `drafts.send`, by REST URL or by the Google
-# client's `.messages().send(`) and Microsoft Graph `sendMail`. The URL is often
-# assembled (f-string, base + path), so host and send path are matched apart, as
-# a pair, anywhere in the code. A read (list/get, `?q=`) carries no send path.
-# Mirrored in email-send-gate.mjs (CODE_API_SEND).
+# Gmail API (users.messages.send / drafts.send, by REST URL on the gmail or www
+# googleapis host, or by the Google client's messages() / drafts() chain ending in
+# send(), in one expression or split over two) and Microsoft Graph (sendMail, or
+# send / reply / replyAll / forward on one message). The URL is often assembled
+# (f-string, base + path), so host and send path are matched apart, as a pair,
+# anywhere in the code. A read (list/get, `?q=`) carries no send path. This
+# comment names the calls without their literal spelling: the gate's own file is
+# read by the same patterns when it is run (Marveen's review 2805, item 6).
+# Mirrored in email-send-gate.mjs (CODE_API_CLIENT_SEND / CODE_API_PAIRS).
 _CODE_API_CLIENT_SEND = re.compile(r"\.(?:messages|drafts)\(\)\s*\.send\s*\(")
 _CODE_API_PAIRS = (
-    (re.compile(r"gmail\.googleapis\.com", re.I), re.compile(r"\b(?:messages|drafts)/send\b")),
-    (re.compile(r"graph\.microsoft\.com", re.I), re.compile(r"/sendMail\b")),
+    (re.compile(r"(?:gmail|www)\.googleapis\.com", re.I), re.compile(r"\b(?:messages|drafts)/send\b")),
+    (re.compile(r"\.users\(\)\s*\.(?:messages|drafts)\(\)"), re.compile(r"\.send\s*\(")),
+    (re.compile(r"graph\.microsoft\.com", re.I),
+     re.compile(r"/sendMail\b|/messages/[^/\s'\"]+/(?:send|reply|replyAll|forward)\b")),
 )
 
 
@@ -286,8 +292,13 @@ def _mask_subshell_markers(cmd: str) -> str:
     return "".join(out)
 
 
+class _Piped(list):
+    """A segment whose stdin is the previous segment's output (`a | b`)."""
+
+
 def _segments_tokens(cmd: str):
-    """[[token, ...], ...] szegmensenkent -- quote-tudatosan, poziciot orizve."""
+    """[[token, ...], ...] szegmensenkent -- quote-tudatosan, poziciot orizve.
+    A segment after a single `|` (or `|&`) is a _Piped list."""
     import shlex
     lex = shlex.shlex(_mask_subshell_markers(_HEREDOC.sub(r"\1", cmd)),
                       posix=True, punctuation_chars="();|&")
@@ -305,7 +316,8 @@ def _segments_tokens(cmd: str):
         if tok in ("|", "||", "&", "&&", ";", "(", ")", ";;", "|&") or (tok and set(tok) <= set("();|&")):
             if cur:
                 segments.append(cur)
-            cur = []
+            op = tok.rstrip("&")
+            cur = _Piped() if op.endswith("|") and not op.endswith("||") else []
         else:
             cur.append(tok)
     if cur:
@@ -411,16 +423,25 @@ def _command_heads(toks, _d: int = 0):
 
 def _segments_send(segments, depth: int, base, written) -> bool:
     """Segments in order; a cd/pushd/popd head moves the base of the later ones,
-    and an assignment-only segment (`S=/x; cd $S`) is remembered for them."""
-    env = {}
+    and an assignment-only segment (`S=/x; cd $S`) is remembered for them. $HOME
+    comes from the environment. The files a `cat` segment prints are the stdin
+    of the segment piped after it."""
+    env = {"HOME": os.path.expanduser("~")}
+    cat_files = None
     for toks in segments:
         assigned = _assignments(toks, env)
         if assigned is not None:
             env.update(assigned)
+            cat_files = None
             continue
+        stdin_files = cat_files if isinstance(toks, _Piped) else None
         heads = _command_heads(toks)
-        if any(_head_is_send(h, depth, base, written, env) for h in heads):
+        if any(_head_is_send(h, depth, base, written, env, stdin_files) for h in heads):
             return True
+        cat_files = None
+        for h in heads:
+            if h and _basename(h[0]) == "cat":
+                cat_files = [_expand_vars(t, env) for t in h[1:] if not t.startswith("-")] or None
         for h in heads:
             is_cd, new_base = _cd_target(h, base, env)
             if is_cd:
@@ -455,7 +476,7 @@ def _python_script_operand(rest):
             continue
         if t.startswith("<"):
             stdin_redirect = True
-            i += 2 if t == "<" else 1
+            i += 2 if t in ("<", "<<<", "<<", "<<-") else 1  # the word after a bare redirect
             continue
         if re.match(r"^\d*>", t):
             i += 2 if re.match(r"^\d*>>?$", t) else 1
@@ -546,7 +567,20 @@ def flatten_substitutions(cmd: str) -> str:
 # not followed (the wrong directory mostly means a missing file: fail-closed);
 # only python interpreters are read. Mirrored in email-send-gate.mjs
 # (readScript); send-invocation-cases.json binds the two.
+# Round 3 (Marveen's review 2805): the program also comes from stdin -- a `<`
+# redirect from a file (`python3 - < x.py`, `python3 < x.py`) or `cat x.py |`
+# piped into the interpreter -- and is then read the same way; /dev/null is
+# empty. A here-string (`python3 <<< "..."`) is judged like a -c code string.
+# `python3 -m mod` reads mod.py or mod/__main__.py from the base directory (an
+# installed module is not there and passes), and a `.py` path run directly
+# (`./x.py`) is read like a script. Stated limits: a script reached through a
+# command substitution (`python3 "$(echo x.py)"`), an import of another file,
+# `exec(open(...).read())` in -c, shell scripts (`bash run.sh`) and non-python
+# interpreters are not read.
 _SCRIPT_READ_LIMIT = 2 * 1024 * 1024
+# False only inside unreadable_script_hit: is a script that cannot be read the
+# whole reason a command counts as a send?
+_UNREADABLE_SENDS = True
 
 
 def _read_script(script: str, base):
@@ -610,7 +644,73 @@ def _cd_target(head, base, env):
     return True, None if base is None else os.path.normpath(os.path.join(base, target))
 
 
-def _python_head_sends(rest, base, written, env) -> bool:
+def _python_stdin(rest):
+    """("file", path) for a `<` redirect, ("code", text) for a here-string, else None."""
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        if t.startswith("<<<"):
+            return "code", t[3:] or (rest[i + 1] if i + 1 < len(rest) else "")
+        if t in ("<<", "<<-"):
+            i += 2
+            continue
+        if t.startswith("<<"):
+            i += 1
+            continue
+        if t == "<":
+            return ("file", rest[i + 1]) if i + 1 < len(rest) else None
+        if t.startswith("<"):
+            return "file", t[1:]
+        i += 1
+    return None
+
+
+def _stdin_body(path: str, base):
+    return "" if path == "/dev/null" else _read_script(path, base)
+
+
+def _python_module_sends(rest, base, env):
+    """None when no local module file runs (`python3 -m mod`), else whether it sends."""
+    mod, i = None, 0
+    while i < len(rest):
+        t = rest[i]
+        if t == "-m":
+            mod = rest[i + 1] if i + 1 < len(rest) else None
+            break
+        if t.startswith("-m"):
+            mod = t[2:]
+            break
+        if not t.startswith("-") or t.startswith("-c"):
+            return None
+        i += 2 if t in _PY_OPT_WITH_ARG else 1
+    if not mod or base is None:
+        return None
+    mod = _expand_vars(mod, env)
+    if _UNDECIDABLE_PATH.search(mod):
+        return None
+    rel = mod.replace(".", "/")
+    for cand in (rel + ".py", rel + "/__main__.py"):
+        path = os.path.join(base, cand)
+        if os.path.lexists(path):
+            body = _read_script(path, base)
+            return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
+    return None
+
+
+def _runs_code_arg(rest) -> bool:
+    """True when the program comes from -c or -m: stdin is then data, not code."""
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        if re.match(r"^-[cm]", t):
+            return True
+        if t in ("-", "--") or not t.startswith("-"):
+            return False
+        i += 2 if t in _PY_OPT_WITH_ARG else 1
+    return False
+
+
+def _python_head_sends(rest, base, written, env, stdin_files=None) -> bool:
     recipient = any(_RECIPIENT_FLAG.match(t) for t in rest)
     script, stdin, stdin_redirect = _python_script_operand(rest)
     if script is not None and script not in written:
@@ -619,17 +719,28 @@ def _python_head_sends(rest, base, written, env) -> bool:
         return recipient
     if script is not None and _UNDECIDABLE_PATH.search(script):
         return recipient or any(t != script and "$" in t for t in rest)
-    if stdin or (script is None and stdin_redirect):
-        return recipient
+    if script is None:
+        module = _python_module_sends(rest, base, env)
+        if module is not None:
+            return recipient or module
+    if stdin or (script is None and not _runs_code_arg(rest) and (stdin_redirect or stdin_files)):
+        src = _python_stdin(rest)
+        if src and src[0] == "code":
+            return recipient or _code_string_sends(src[1])
+        files = [_expand_vars(src[1], env)] if src else (stdin_files or [])
+        bodies = [written[f] if f in written else _stdin_body(f, base) for f in files]
+        if any(b is None for b in bodies):
+            return recipient or _UNREADABLE_SENDS
+        return recipient or any(_code_api_sends(b) for b in bodies)
     if script is not None:
         if script in written:
             return _code_api_sends(written[script])
         body = _read_script(script, base)
-        return True if body is None else _code_api_sends(body)
+        return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
     return False
 
 
-def _head_is_send(toks, depth: int, base, written, env) -> bool:
+def _head_is_send(toks, depth: int, base, written, env, stdin_files=None) -> bool:
     if toks is None:  # the depth bound was hit on a wrapper: audit it
         return True
     if not toks:
@@ -661,8 +772,17 @@ def _head_is_send(toks, depth: int, base, written, env) -> bool:
                 candidates.append("send.py")
     if any(_SENDPY.match(c) for c in candidates) and any(_RECIPIENT_FLAG.match(t) for t in rest):
         return True
-    if _PYTHON.match(prog) and _python_head_sends(rest, base, written, env):
+    if _PYTHON.match(prog) and _python_head_sends(rest, base, written, env, stdin_files):
         return True
+    # a `.py` path run directly (`./x.py`; its shebang names the interpreter). Only a
+    # file that can be read counts: one that cannot be read cannot be executed either,
+    # and a bare `.py` word is also what a process substitution leaves behind
+    # (`diff <(sed ...) x.py`).
+    if prog.endswith(".py") and "/" in toks[0]:
+        path = toks[0] if toks[0] in written else _expand_vars(toks[0], env)
+        body = written[path] if path in written else _read_script(path, base)
+        if body is not None and _code_api_sends(body):
+            return True
     # an interpreter or program that cannot be resolved statically ($PY, a glob,
     # a substitution) with a recipient flag: what runs is undecidable here
     if _UNDECIDABLE_PATH.search(toks[0]) and any(_RECIPIENT_FLAG.match(t) for t in rest):
@@ -678,6 +798,29 @@ def _head_is_send(toks, depth: int, base, written, env) -> bool:
     if _CURLISH.match(prog) and any(_RESEND_TARGET.match(t) for t in rest):
         return _curl_resend_verdict(prog, rest) != "read"
     return False
+
+
+def unreadable_script_hit(cmd: str, cwd=None) -> bool:
+    """True when a script that cannot be read (missing, unreadable, too big, in an
+    unknown directory) is the whole reason the command counts as a send, so the
+    deny can say so instead of talking about a letter (Marveen's review 2805)."""
+    global _UNREADABLE_SENDS
+    if not is_send_invocation(cmd, cwd=cwd):
+        return False
+    _UNREADABLE_SENDS = False
+    try:
+        return not is_send_invocation(cmd, cwd=cwd)
+    finally:
+        _UNREADABLE_SENDS = True
+
+
+UNREADABLE_SCRIPT_MSG = (
+    "TILTVA, mert a futtatott python-szkriptet nem tudom elolvasni (nincs meg, nem "
+    "olvashato, nem sima fajl, 2 MiB-nal nagyobb, vagy a mappaja nem kovetheto), igy nem "
+    "tudom eldonteni, hogy levelet kuld-e. Ez szandekosan fail-closed.\n"
+    "Ha elgepelted az utvonalat, javitsd. A relativ utvonal a munkamappadhoz (es a parancs "
+    "korabbi cd-jehez) kepest ertendo: adj abszolut utvonalat, ha bizonytalan.\n"
+)
 
 
 def wrapper_depth_hit(cmd: str) -> bool:
@@ -712,11 +855,10 @@ def wrapper_depth_hit(cmd: str) -> bool:
 # command is written. The real catch (`['python3', '.../send.py', '--to', ...]`) keeps it.
 # Development heredocs that patch or test the gates, and mention `import send` in a string,
 # still hit the module rule: that is the price of a naive rule, accepted.
-# NOT COVERED, named so nobody counts them as covered: a program the classifier never reads --
-# `python3 /tmp/x.py`, `python3 < /tmp/x.py`, `cat /tmp/x.py | python3 -`, and
-# `python3 -c "exec(open('/tmp/x.py').read())"`; also a here-string fed to an interpreter
-# (`python3 <<<'import send'`) and a CommonJS destructuring rename of the Graph sender
-# (`const { sendMail: s } = require(...)`).
+# NOT COVERED, named so nobody counts them as covered: `python3 -c "exec(open('/tmp/x.py').read())"`
+# and a CommonJS destructuring rename of the Graph sender (`const { sendMail: s } = require(...)`).
+# (A script file run by python, fed on stdin or piped from cat, and a here-string are read since
+# #718: see _read_script.)
 # A heredoc fed to a SHELL (`bash <<EOF`, `sh -s <<EOF`) is a shell program: its body is
 # judged with this classifier itself, one level deeper (Geri/Samu, #1855).
 # WRITTEN, THEN RUN IN THE SAME COMMAND (Samu/Geri, #1855: two of the three real gate-passing
@@ -1929,6 +2071,9 @@ def main():
         sys.exit(0)
 
     if unreadable or not text.strip():
+        if tool == "Bash" and unreadable_script_hit(cmd, cwd=payload_cwd(payload)):
+            sys.stderr.write("KIMENO-SZOVEG KAPU: " + UNREADABLE_SCRIPT_MSG)
+            sys.exit(2)
         if tool == "Bash" and wrapper_depth_hit(cmd):
             sys.stderr.write(
                 "KIMENO-SZOVEG KAPU: TILTVA, mert a parancs valodi fejet nem latom.\n"
