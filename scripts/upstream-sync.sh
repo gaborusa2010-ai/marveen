@@ -165,6 +165,50 @@ if [ -n "$CLASH" ]; then
   exit 0
 fi
 
+# conflict_report <space-separated paths> -- state + notify for a content
+# conflict, quiet when the same set repeats (2026-10-14 it woke marveen every
+# 15 min).
+conflict_report() {
+  NEWSTATE="tartalmi utkozes: $1"
+  if [ "$PREV_RESULT" = "conflict" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
+    state conflict "$NEWSTATE"
+    echo "$TS CONFLICT (unchanged, not notified): $1" >&2
+    return
+  fi
+  state conflict "$NEWSTATE"
+  notify "$(printf '%s\n' \
+    "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe fut a helyi munkaval." \
+    "Erintett fajlok: $1" \
+    "Nem fesultem ossze, a fa erintetlen. Ezt csak kezzel lehet feloldani, dontes kell hozza." \
+    "Amig ez all, a frissites elbukik a pull fazisban.")"
+  echo "$TS CONFLICT: $1" >&2
+}
+
+# Dry-run the merge in the object store first. A conflicting `git merge` writes
+# conflict markers INTO THE WORKING TREE before the abort takes them out again:
+# on the live checkout that left the gate scripts and web files invalid for ~1 s
+# every 15 minutes, and every hook running then failed closed (2026-10-28,
+# #721). merge-tree computes the same merge without touching the tree or the
+# index; exit 1 = conflicts, the paths follow the tree id.
+MT_OUT="$(git merge-tree --write-tree --name-only --no-messages HEAD "$REMOTE/$BRANCH" 2>&1)"
+MT_RC=$?
+if [ "$MT_RC" -eq 1 ]; then
+  conflict_report "$(printf '%s\n' "$MT_OUT" | tail -n +2 | sed '/^$/d' | tr '\n' ' ')"
+  exit 0
+fi
+if [ "$MT_RC" -ne 0 ]; then
+  # Unknown merge-tree failure (old git, broken repo): do NOT fall back to the
+  # real merge, that is the tree-touching path this check exists to avoid.
+  REASON="$(printf '%s' "$MT_OUT" | tail -n 3 | tr '\n' ' ')"
+  NEWSTATE="merge-tree hiba (rc=$MT_RC): ${REASON:-ismeretlen}"
+  if [ "$PREV_RESULT" != "error" ] || [ "$PREV_DETAIL" != "$NEWSTATE" ]; then
+    notify "[UPSTREAM-SYNC] A merge elozetes probaja (git merge-tree) hibaval allt meg, ezert nem fesultem ossze semmit. A git ezt mondta: ${REASON:-semmit}"
+  fi
+  state error "$NEWSTATE"
+  echo "$TS MERGE-TREE FAILED rc=$MT_RC: ${REASON:-unknown}" >&2
+  exit 0
+fi
+
 OLD="$(git rev-parse HEAD)"
 # MARVEEN_PROD_COMMIT_OK=1 is the pre-commit guard's own documented override
 # (.git/hooks/pre-commit.d/05-prod-tree-guard). The guard exists to stop feature
@@ -197,21 +241,8 @@ if [ "$NOW" != "$OLD" ]; then
   exit 2
 fi
 if [ -n "$CONFLICTS" ]; then
-  NEWSTATE="tartalmi utkozes: $CONFLICTS"
-  # Quiet repeat, same rule as the blocked branch: same conflict set as last
-  # tick -> state only, no wake-up (2026-10-14 it woke marveen every 15 min).
-  if [ "$PREV_RESULT" = "conflict" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
-    state conflict "$NEWSTATE"
-    echo "$TS CONFLICT (unchanged, not notified): $CONFLICTS" >&2
-    exit 0
-  fi
-  state conflict "$NEWSTATE"
-  notify "$(printf '%s\n' \
-    "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe fut a helyi munkaval." \
-    "Erintett fajlok: $CONFLICTS" \
-    "A merge visszavonva, a fa erintetlen. Ezt csak kezzel lehet feloldani, dontes kell hozza." \
-    "Amig ez all, a frissites elbukik a pull fazisban.")"
-  echo "$TS CONFLICT: $CONFLICTS" >&2
+  # merge-tree said clean, the real merge conflicted anyway: still reported.
+  conflict_report "$CONFLICTS"
   exit 0
 fi
 
