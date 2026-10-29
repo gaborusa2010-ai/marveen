@@ -256,6 +256,9 @@ export function maskSubshellMarkers(cmd) {
 
 // Quote-aware tokenizer -> [[token, ...], ...] per segment. Throws on an
 // unbalanced quote (the caller falls back to the legacy content patterns).
+// seg.op: the operator text before the segment. The stdin redirections of a
+// compound command and of `exec` are spread to the commands they feed
+// (spreadShellStdin, see _spread_shell_stdin in the python twin).
 export function segmentsTokens(cmd) {
   const s = maskSubshellMarkers(cmd.replace(HEREDOC_RE, '$1'))
   const segments = []
@@ -264,7 +267,13 @@ export function segmentsTokens(cmd) {
   let hasTok = false
   let q = null
   let piped = false // the next segment's stdin is this one's output (`a | b`): seg.piped
-  const pushTok = () => { if (hasTok) { cur.push(tok); tok = ''; hasTok = false } }
+  let ops = ''
+  const pushTok = () => {
+    if (hasTok) {
+      if (!cur.length) { cur.op = ops; ops = '' }
+      cur.push(tok); tok = ''; hasTok = false
+    }
+  }
   const pushSeg = () => {
     pushTok()
     if (cur.length) { if (piped) cur.piped = true; segments.push(cur); cur = [] }
@@ -280,8 +289,13 @@ export function segmentsTokens(cmd) {
     if (ch === "'" || ch === '"') { q = ch; hasTok = true; continue }
     if (ch === '\\' && i + 1 < s.length) { tok += s[++i]; hasTok = true; continue }
     if (ch === ' ' || ch === '\t') { pushTok(); continue }
-    if ('|&;()'.includes(ch)) {
+    // #718 (review 2823): the `&` of a redirection (`2>&1`, `>&2`, `<&3`, `&>f`)
+    // is part of the word, not a separator; see _mask_subshell_markers.
+    const redirAmp = ch === '&' && ((i > 0 && '<>'.includes(s[i - 1])) ||
+      (s[i + 1] === '>' && !(i > 0 && '&|'.includes(s[i - 1]))))
+    if ('|&;()'.includes(ch) && !redirAmp) {
       pushSeg()
+      ops += ch
       if (ch === '|') piped = s[i + 1] !== '|' && s[i - 1] !== '|'
       else if (!(ch === '&' && s[i - 1] === '|')) piped = false
       continue
@@ -291,7 +305,54 @@ export function segmentsTokens(cmd) {
   }
   if (q) throw new Error('unbalanced quote')
   pushSeg()
+  spreadShellStdin(segments)
   return segments
+}
+
+const GROUP_OPEN = new Set(['{', 'if', 'for', 'while', 'until', 'case', 'select'])
+const GROUP_CLOSE = new Set(['}', 'fi', 'done', 'esac'])
+
+// The stdin redirections among toks, each as [op, word]; see _stdin_redirects.
+function stdinRedirects(toks) {
+  const out = []
+  for (let i = 0; i < toks.length; i++) {
+    const m = REDIRECT.exec(toks[i])
+    if (m === null) continue
+    const word = m[2] ? m[2] : (toks[i + 1] ?? '')
+    const fd = toks[i].slice(0, toks[i].length - m[1].length - m[2].length)
+    if (['<', '<>', '<&', '<<<'].includes(m[1]) && (fd === '' || fd === '0')) out.push([m[1], word])
+    if (!m[2]) i++
+  }
+  return out
+}
+
+// Append redirects to every segment that reads the shell's stdin: not one fed by
+// a pipe, not an assignment-only one.
+function feedStdin(segments, redirects) {
+  for (const seg of segments) {
+    if (!seg.piped && assignments(seg, new Map()) === null) {
+      for (const [op, word] of redirects) seg.push(op, word)
+    }
+  }
+}
+
+// See _spread_shell_stdin in the python twin.
+function spreadShellStdin(segments) {
+  const stack = []
+  segments.forEach((seg, j) => {
+    let start = null
+    for (const ch of seg.op ?? '') {
+      if (ch === ')') start = stack.length ? stack.pop() : 0
+      else if (ch === '(') stack.push(j)
+    }
+    const head = seg.length ? seg[0] : ''
+    if (GROUP_CLOSE.has(head)) start = stack.length ? stack.pop() : 0
+    if (start !== null) feedStdin(segments.slice(start, j), stdinRedirects(GROUP_CLOSE.has(head) ? seg.slice(1) : seg))
+    if (GROUP_OPEN.has(head)) stack.push(j)
+    if (head === 'exec' && seg.slice(1, 2).every((t) => REDIRECT.test(t))) {
+      feedStdin(segments.slice(j + 1), stdinRedirects(seg.slice(1)))
+    }
+  })
 }
 
 const basename = (t) => t.split('/').pop()
@@ -324,7 +385,7 @@ const HEAD_DEPTH = 8
 
 // #718 (review 2814): a leading redirection (`< f python3`) is moved behind the
 // command, see _REDIRECT in the python twin.
-const REDIRECT = /^\d*(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
+const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
@@ -400,6 +461,7 @@ function commandHeads(toksIn, d = 0) {
 const PY_OPT_WITH_ARG = new Set(['-X', '-W', '--check-hash-based-pycs'])
 const RECIPIENT_FLAG = /^--to?(=|$)/
 const UNDECIDABLE_PATH = /[*?[{$]/
+const STDIN_PATHS = new Set(['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'])
 function pythonScriptOperand(rest) {
   let stdinRedirect = false
   for (let i = 0; i < rest.length; i++) {
@@ -410,8 +472,9 @@ function pythonScriptOperand(rest) {
     if (PY_OPT_WITH_ARG.has(t)) { i++; continue }
     const r = /^(\d*)(<<<|<<-|<<|<>|<&|<)([\s\S]*)$/.exec(t)
     if (r) { if (r[1] === '' || r[1] === '0') stdinRedirect = true; if (!r[3]) i++; continue } // another fd is not stdin; the word after a bare redirect
-    if (/^\d*>/.test(t)) { if (/^\d*>>?$/.test(t)) i++; continue }
+    if (/^(\d*|&)>/.test(t)) { if (/^(\d*|&)(>>?|>&|>\|)$/.test(t)) i++; continue }
     if (t.startsWith('-') && t.length > 1) continue
+    if (STDIN_PATHS.has(t)) return { script: null, stdin: true, stdinRedirect } // the program comes from stdin, as with `-`
     return { script: t, stdin: false, stdinRedirect }
   }
   return { script: null, stdin: false, stdinRedirect }
@@ -529,12 +592,26 @@ function pythonStdin(rest) {
     if (t.startsWith('<<<')) return ['code', t.slice(3) || (rest[i + 1] ?? '')]
     if (t === '<<' || t === '<<-') { i++; continue }
     if (t.startsWith('<<')) continue
-    if (t === '<') return i + 1 < rest.length ? ['file', rest[i + 1]] : null
-    if (t.startsWith('<')) return ['file', t.slice(1)]
+    if (t.startsWith('<&')) { // an fd copy: 0 is stdin itself, - closes it, others cannot be followed
+      const word = t.slice(2) || (rest[i + 1] ?? '')
+      if (word === '-') return ['file', '/dev/null']
+      if (word !== '0') return ['file', '']
+      if (!t.slice(2)) i++
+      continue
+    }
+    const u = t.startsWith('<>') ? '<' + t.slice(2) : t // opened read-write, still stdin
+    if (u === '<') return i + 1 < rest.length ? ['file', rest[i + 1]] : null
+    if (u.startsWith('<')) return ['file', u.slice(1)]
   }
   return null
 }
-const stdinBody = (path, base) => (path === '/dev/null' ? '' : readScript(path, base))
+// A here-string that is one `$(cat F)` / `$(< F)` is F's text; any other
+// substitution in it fails closed (see _HERESTRING_CAT in the python twin).
+const HERESTRING_CAT = /^\s*\$\(\s*(?:cat\s+(?:--\s+)?|<\s*)([^\s()$`]+)\s*\)\s*$/
+const HERESTRING_SUBST = /\$\(|`|\$__SUBST__/
+// Program text given inline (a here-string fed to cat), not a file name.
+const isCode = (f) => typeof f === 'object' && f !== null
+const stdinBody = (path, base) => (isCode(path) ? path.code : path === '/dev/null' ? '' : readScript(path, base))
 
 // null when no local module file runs (`python3 -m mod`), else whether it sends.
 function pythonModuleSends(rest, base, env) {
@@ -588,12 +665,17 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
     if (module !== null) return recipient || module
   }
   if (stdin || (script === null && !runsCodeArg(rest) && (stdinRedirect || stdinFiles))) {
-    const src = pythonStdin(rest)
-    if (src && src[0] === 'code') return recipient || codeStringSends(src[1])
+    let src = pythonStdin(rest)
+    if (src && src[0] === 'code') {
+      const m = HERESTRING_CAT.exec(src[1])
+      if (m) src = ['file', m[1]]
+      else if (HERESTRING_SUBST.test(src[1])) return recipient || unreadableSends
+      else return recipient || codeStringSends(src[1])
+    }
     const files = src ? [expandVars(src[1], env)] : (stdinFiles ?? [])
-    const bodies = files.map((f) => (written.has(f) ? written.get(f) : stdinBody(f, base)))
+    const bodies = files.map((f) => (!isCode(f) && written.has(f) ? written.get(f) : stdinBody(f, base)))
     if (bodies.some((b) => b === null)) return recipient || unreadableSends
-    return recipient || bodies.some((b) => codeApiSends(b))
+    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : codeApiSends(b)))
   }
   if (script !== null) {
     if (written.has(script)) return codeApiSends(written.get(script))
@@ -607,20 +689,28 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
 // assignment-only segment is remembered for them. $HOME comes from the environment.
 // The files `cat` prints: its operands and a `<` / `0<` stdin file; an output
 // redirect is not one, a heredoc word stays (see _cat_operands in the python twin).
+// A here-string is its text ({code}); `<&N` reads as unreadable; with file
+// operands the stdin file is printed only for a `-` operand.
 function catOperands(args) {
   const out = []
+  let stdin = null
   for (let i = 0; i < args.length; i++) {
     const t = args[i]
-    const m = /^(\d*)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/.exec(t)
-    if (m && m[2] === '<' && (m[1] === '' || m[1] === '0')) {
-      out.push(m[3] || (args[i + 1] ?? ''))
-      if (!m[3]) i++
+    const m = /^(\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/.exec(t)
+    if (m === null) {
+      if (t === '-' || !t.startsWith('-')) out.push(t)
       continue
     }
-    if (m && m[2].startsWith('>')) { if (!m[3]) i++; continue }
-    if (!t.startsWith('-')) out.push(t)
+    const word = m[3] || (args[i + 1] ?? '')
+    if (!m[3]) i++
+    if (m[1] !== '' && m[1] !== '0') continue
+    if (m[2] === '<' || m[2] === '<>') stdin = [word]
+    else if (m[2] === '<<<') stdin = [{ code: word }]
+    else if (m[2] === '<&') stdin = word === '0' || word === '-' ? [] : ['']
+    else if (!m[2].startsWith('>')) { out.push(t); i -= m[3] ? 0 : 1 } // a heredoc word stays (unreadable)
   }
-  return out
+  if (stdin === null) return out.filter((t) => t !== '-')
+  return out.length ? out.flatMap((t) => (t === '-' ? stdin : [t])) : stdin
 }
 
 // The files a `cat` segment prints are the stdin of the segment piped after it.
@@ -640,7 +730,7 @@ function segmentsSend(segments, depth, base, written) {
     catFiles = null
     for (const h of heads) {
       if (h && h.length && basename(h[0]) === 'cat') {
-        const files = catOperands(h.slice(1)).map((t) => expandVars(t, env))
+        const files = catOperands(h.slice(1)).map((t) => (isCode(t) ? t : expandVars(t, env)))
         catFiles = files.length ? files : null
       }
     }
@@ -658,9 +748,16 @@ function headIsSend(toks, depth, base, written, env, stdinFiles = null) {
   const prog = basename(toks[0])
   const rest = toks.slice(1)
   if (SENDER_PROG.test(prog)) return true
+  // The shell's own stdin redirect (`bash -c python3 < f`) feeds the string's
+  // commands: judged as `{ STRING; } < f` (review 2823).
   if (WRAPPER_SHELL.test(prog) && depth < 3) {
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === '-c' && rest[i + 1] && isSend(rest[i + 1], depth + 1, base)) return true
+      if (rest[i] !== '-c' || !rest[i + 1]) continue
+      const redirs = stdinRedirects([...rest.slice(0, i + 1), ...rest.slice(i + 2)])
+      const code = redirs.length
+        ? `{ ${rest[i + 1]}\n} ${redirs.map(([op, w]) => `${op} '${w.replaceAll("'", "'\\''")}'`).join(' ')}`
+        : rest[i + 1]
+      if (isSend(code, depth + 1, base)) return true
     }
   }
   if (PYTHON.test(prog) || NODEISH.test(prog)) {

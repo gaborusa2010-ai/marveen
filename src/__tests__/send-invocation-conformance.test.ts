@@ -132,6 +132,18 @@ describe('#718 unreadable-script hit: the deny names the script, not a letter', 
     [`python3 ${F}/no_such_script.py --to x@example.invalid`, true],
     [`python3 - --to x@example.invalid < ${F}/no_such_script.py`, false], // stdin: the flag decides
     [`python3 ${F}/plain.py`, false], // not a send at all
+    // review 2823 point 4: these read the script, so the deny carries the send text
+    [`python3 <> ${F}/gmail_reply.py`, false],
+    [`python3 0<> ${F}/gmail_reply.py`, false],
+    [`cat <> ${F}/gmail_reply.py | python3`, false],
+    [`python3 /dev/stdin < ${F}/gmail_reply.py`, false],
+    [`python3 /dev/fd/0 < ${F}/gmail_reply.py`, false],
+    [`python3 <<< "$(cat ${F}/gmail_reply.py)"`, false],
+    [`{ python3; } < ${F}/gmail_reply.py`, false],
+    [`python3 2>&1 < ${F}/gmail_reply.py`, false],
+    // a here-string of another substitution cannot be read: fail-closed, own message
+    ['python3 <<< "$(date)"', true],
+    [`cat <&3 | python3`, true],
   ]
   const py: boolean[] = JSON.parse(execFileSync('python3', ['-c', `
 import importlib.util, json, sys

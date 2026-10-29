@@ -1388,6 +1388,276 @@
       "name": "#718 r4 control: cat with stderr redirect piped into python3, plain script",
       "cmd": "cat src/__tests__/fixtures/send-gate/plain.py 2>/dev/null | python3 -",
       "expected": false
+    },
+    {
+      "name": "#718 r5: python3 2>&1 < A",
+      "cmd": "python3 2>&1 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 2>&1 A",
+      "cmd": "python3 2>&1 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >/dev/null 2>&1 < A",
+      "cmd": "python3 >/dev/null 2>&1 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: cat A 2>&1 | python3",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py 2>&1 | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: < A 2>&1 python3",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py 2>&1 python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: 2>&1 sendmail",
+      "cmd": "2>&1 sendmail a@b.hu",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 2>&1 send.py --to",
+      "cmd": "python3 2>&1 scripts/support-mail/send.py --to a@b.hu --subject s --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 &>/dev/null A",
+      "cmd": "python3 &>/dev/null src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 &>> log A",
+      "cmd": "python3 &>> /tmp/x.log src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >& /dev/null A",
+      "cmd": "python3 >& /dev/null src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >&2 A",
+      "cmd": "python3 >&2 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 A &> log (after)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py &> /tmp/x.log",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: python3 2>&1 R",
+      "cmd": "python3 2>&1 src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 P &>/dev/null",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py &>/dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: git status 2>&1 | head",
+      "cmd": "git status 2>&1 | head -5",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: background then plain",
+      "cmd": "sleep 1 & python3 src/__tests__/fixtures/send-gate/plain.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: plain in background",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py 2>&1 &",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: && after a redirect",
+      "cmd": "make 2>&1 >/dev/null && echo ok",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: { python3; } < A",
+      "cmd": "{ python3; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: (python3) < A",
+      "cmd": "(python3) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: { python3 -; } < A",
+      "cmd": "{ python3 -; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: ( python3 - ) < A",
+      "cmd": "( python3 - ) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: if ... fi < A",
+      "cmd": "if true; then python3; fi < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: for ... done < A",
+      "cmd": "for i in 1; do python3; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: while ... done < A",
+      "cmd": "while true; do python3; break; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: nested group < A",
+      "cmd": "( { python3; } ) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: { python3; } < R",
+      "cmd": "{ python3; } < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: script operand in a group",
+      "cmd": "(python3 src/__tests__/fixtures/send-gate/plain.py) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: { echo; } < A",
+      "cmd": "{ echo hi; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: while read loop",
+      "cmd": "while read l; do echo $l; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: group stdin goes to cat, not the piped python",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/plain.py | python3; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: exec < A; python3",
+      "cmd": "exec < src/__tests__/fixtures/send-gate/gmail_reply.py; python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: exec 0< A; python3 -",
+      "cmd": "exec 0< src/__tests__/fixtures/send-gate/gmail_reply.py; python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: bash -c python3 < A",
+      "cmd": "bash -c python3 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: < A bash -c python3",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py bash -c python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: sh -c 'python3 -' < A",
+      "cmd": "sh -c 'python3 -' < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 <<< \"$(cat A)\"",
+      "cmd": "python3 <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 - <<< \"$(< A)\"",
+      "cmd": "python3 - <<< \"$(< src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: here-string of another substitution: undecidable",
+      "cmd": "python3 <<< \"$(date)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: exec 3< A",
+      "cmd": "exec 3< src/__tests__/fixtures/send-gate/gmail_reply.py; python3 -c 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: exec < R; python3",
+      "cmd": "exec < src/__tests__/fixtures/send-gate/gmail_read.py; python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: exec >/dev/null; python3 P",
+      "cmd": "exec >/dev/null; python3 src/__tests__/fixtures/send-gate/plain.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: bash -c python3 < R",
+      "cmd": "bash -c python3 < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: bash -c 'python3 P' < A",
+      "cmd": "bash -c 'python3 src/__tests__/fixtures/send-gate/plain.py' < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 <<< \"$(cat R)\"",
+      "cmd": "python3 <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_read.py)\"",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: -c code, here-string is data",
+      "cmd": "python3 -c 'import sys' <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: python3 <> A",
+      "cmd": "python3 <> src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 0<> A",
+      "cmd": "python3 0<> src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: cat <> A | python3",
+      "cmd": "cat <> src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 /dev/stdin < A",
+      "cmd": "python3 /dev/stdin < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 /dev/fd/0 < A",
+      "cmd": "python3 /dev/fd/0 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: python3 <> R",
+      "cmd": "python3 <> src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 /dev/stdin < R",
+      "cmd": "python3 /dev/stdin < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: cat <<< code | python3",
+      "cmd": "cat <<< 'print(1)' | python3",
+      "expected": false
     }
   ]
 }
