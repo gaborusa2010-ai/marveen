@@ -1773,6 +1773,51 @@
       "name": "#718 r6: control: leading heredoc into python3, read-only Gmail list",
       "cmd": "<<'X' python3\nimport urllib.request as u\nu.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread')\nX",
       "expected": false
+    },
+    {
+      "name": "#718 r7: must-block: double-quoted heredoc tag into python3 -",
+      "cmd": "python3 - <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: leading double-quoted heredoc into python3",
+      "cmd": "<<\"X\" python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: <<- heredoc with tab-indented closer",
+      "cmd": "python3 - <<-'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\n\tX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: non-word heredoc tag END-X",
+      "cmd": "python3 - <<'END-X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nEND-X",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: nested group { { cat A; }; } | python3 -",
+      "cmd": "{ { cat src/__tests__/fixtures/send-gate/gmail_reply.py; }; } | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: control: nested group { { cat R; }; } | python3 -",
+      "cmd": "{ { cat src/__tests__/fixtures/send-gate/gmail_read.py; }; } | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: here-string into python3, later line equals its word",
+      "cmd": "python3 <<< \"x\"\nx",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: cat double-quoted heredoc printing a send URL",
+      "cmd": "cat <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: double-quoted heredoc into grep, send URL in it",
+      "cmd": "grep send <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": false
     }
   ]
 }

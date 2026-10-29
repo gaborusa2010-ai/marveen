@@ -43,8 +43,10 @@ def collect_bash_body(cmd: str):
                     f"({val[:60]}...) -- igy a parancs szoveget vizsgalnam, nem a levelet")
         parts.append(val)
     # heredoc payloads sit inline in the command string
-    for m in re.finditer(r"<<-?\s*'?(\w+)'?\n(.*?)\n\1", cmd, re.S):
-        parts.append(m.group(2))
+    # Any quoting of the tag, non-word tags, tab-indented closer after <<-
+    # (#718 round 7, review 2872).
+    for m in re.finditer(r"""(?<!<)<<(-)?\s*(['"]?)([^\s'"<>;&|()]+)\2\n(.*?)\n(?(1)\t*)\3""", cmd, re.S):
+        parts.append(m.group(4))
     # A single `<` only. Without the lookarounds a heredoc (`<<'EOF'`) matches
     # here and the quoted delimiter is taken for a filename -- caught by the
     # first live probe of this gate, which blocked with "'EOF': No such file".

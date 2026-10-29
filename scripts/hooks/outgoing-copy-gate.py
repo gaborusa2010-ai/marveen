@@ -71,7 +71,11 @@ import sys
 # resze es MEGMARAD -- csak a torzs esik ki. Enelkul (a) forditott
 # sorrendnel a torzs parancsnak latszott (FP), (b) a bevezeto sor
 # eldobasa a heredoc-taplalt VALODI kuldot vesztette volna el (FN).
-_HEREDOC = re.compile(r"(<<-?\s*'?(\w+)'?[^\n]*)\n.*?\n\2(?=\s|$)", re.S)
+# Round 7 (review 2872): the tag may be double-quoted and contain non-word
+# characters (<<"X", <<'END-X'); with <<- the closing tag may be indented by
+# tabs. Groups: 1 opener line, 2 the dash, 4 the tag, 5 the body. Not a
+# here-string (<<<).
+_HEREDOC = re.compile(r"""((?<!<)<<(-)?\s*(['"]?)([^\s'"<>;&|()]+)\3[^\n]*)\n(.*?\n)(?(2)\t*)\4(?=\s|$)""", re.S)
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 # KWSPLIT924: shell reserved words that put the NEXT word in command position.
 # The segmenter splits on operators only, so `if true; then sendmail x; fi`
@@ -352,6 +356,15 @@ _GROUP_OPEN = frozenset(("{", "if", "for", "while", "until", "case", "select"))
 _GROUP_CLOSE = frozenset(("}", "fi", "done", "esac"))
 
 
+def _lead_run(toks, words) -> int:
+    """How many leading tokens are in words: `{ { cat f; }; }` opens two groups in one segment
+    (review 2872)."""
+    n = 0
+    while n < len(toks) and toks[n] in words:
+        n += 1
+    return n
+
+
 def _stdin_redirects(toks):
     """The stdin redirections among toks (`< f`, `0<f`, `<> f`, `<&3`, `<<< s`),
     each as [op, word]; a heredoc (its body is gone) and another fd are left out."""
@@ -395,12 +408,12 @@ def _spread_shell_stdin(segments):
             elif ch == "(":
                 stack.append(j)
         head = seg[0] if seg else ""
-        if head in _GROUP_CLOSE:
+        closes = _lead_run(seg, _GROUP_CLOSE)
+        for _ in range(closes):
             start = stack.pop() if stack else 0
         if start is not None:
-            _feed_stdin(segments[start:j], _stdin_redirects(seg[1:] if head in _GROUP_CLOSE else seg))
-        if head in _GROUP_OPEN:
-            stack.append(j)
+            _feed_stdin(segments[start:j], _stdin_redirects(seg[closes:]))
+        stack += [j] * _lead_run(seg, _GROUP_OPEN)
         if head == "exec" and all(_REDIRECT.match(t) for t in seg[1:2]):
             _feed_stdin(segments[j + 1:], _stdin_redirects(seg[1:]))
 
@@ -567,14 +580,14 @@ def _segments_send(segments, depth: int, base, written) -> bool:
     # (`{ cat; } < f | python3`, review 2866). One list per open group.
     groups = []
     for toks in segments:
-        closes = toks.op.count(")") + (1 if toks and toks[0] in _GROUP_CLOSE else 0)
+        closes = toks.op.count(")") + _lead_run(toks, _GROUP_CLOSE)
         group_cats = []
         for _ in range(closes):
             if groups:
                 group_cats += groups.pop()
         if groups:
             groups[-1] += group_cats
-        groups += [[] for _ in range(toks.op.count("(") + (1 if toks and toks[0] in _GROUP_OPEN else 0))]
+        groups += [[] for _ in range(toks.op.count("(") + _lead_run(toks, _GROUP_OPEN))]
         assigned = _assignments(toks, env)
         if assigned is not None:
             env.update(assigned)
@@ -750,6 +763,10 @@ def flatten_substitutions(cmd: str) -> str:
 # after the group's closer; a leading heredoc (`<<'X' python3`) feeds the
 # program named after its tag. Stated limit: a shell function's redirect
 # (`f() { python3; }; f < x.py`) is not followed into the function body.
+# Round 7 (review 2872): a heredoc tag may be double-quoted (`<<"X"`) or a
+# non-word (`<<'END-X'`), and after `<<-` the closer may be tab-indented -- in
+# _HEREDOC, the curl `@-` body and email_extract alike; nested groups
+# (`{ { cat f; }; } | python3`) are counted as one leading run.
 _SCRIPT_READ_LIMIT = 2 * 1024 * 1024
 # False only inside unreadable_script_hit: is a script that cannot be read the
 # whole reason a command counts as a send?
@@ -1098,7 +1115,7 @@ _HEREDOC_PIPE = re.compile(r"\|\s*(?:\S*/)?(python3?(?:\.\d+)?|node|tsx|ts-node|
 # A leading heredoc (`<<'X' python3`, `0<<X bash`): nothing but an fd number stands
 # before the operator, and the program follows the tag on the opening line.
 _HEREDOC_LEAD = re.compile(r"(?:^|[;&|(])\s*\d*\s*$")
-_HEREDOC_OPENER_TAIL = re.compile(r"<<-?\s*'?\w+'?(.*)")
+_HEREDOC_OPENER_TAIL = re.compile(r"""<<-?\s*(['"]?)[^\s'"<>;&|()]+\1(.*)""")
 _HEREDOC_REDIRECT = re.compile(r"(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['\"]?)([^\s'\"<>;&|]+)\1")
 
 
@@ -1136,7 +1153,7 @@ def _heredoc_written(cmd: str) -> dict:
         opener = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()] + m.group(1)
         w = _HEREDOC_REDIRECT.search(opener)
         if w:
-            written[w.group(2)] = cmd[m.end(1) + 1:m.end() - len(m.group(2))]
+            written[w.group(2)] = m.group(5)
     return written
 
 
@@ -1144,7 +1161,7 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
     for m in _HEREDOC.finditer(cmd):
         piped = _HEREDOC_PIPE.search(m.group(1))
         if piped:
-            pbody = cmd[m.end(1) + 1:m.end() - len(m.group(2))]
+            pbody = m.group(5)
             if _WRAPPER_SHELL.match(piped.group(1)):
                 if depth < 3 and _is_send(pbody, depth + 1, base):
                     return True
@@ -1153,8 +1170,8 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
         line_start = cmd.rfind("\n", 0, m.start()) + 1
         head = cmd[line_start:m.start()]
         if _HEREDOC_LEAD.search(head):
-            head = _HEREDOC_OPENER_TAIL.match(m.group(1)).group(1)
-        body = cmd[m.end(1) + 1:m.end() - len(m.group(2))]
+            head = _HEREDOC_OPENER_TAIL.match(m.group(1)).group(2)
+        body = m.group(5)
         if _HEREDOC_INTERP.search(head):
             if _heredoc_body_sends(body):
                 return True
@@ -2116,12 +2133,12 @@ def _curl_payload_raw(cmd: str, toks, all_flags: bool = False):
         if val.startswith("@") and not is_raw_flag:
             ref = val[1:]
             if ref == "-":
-                m = re.search(r"<<-?\s*'?(\w+)'?[^\n]*\n(.*?)\n\1(?=\s|$)", cmd, re.S)
+                m = _HEREDOC.search(cmd)
                 if not m:
                     return None, "a torzs stdin-rol jon (@-), heredoc nelkul"
-                if not re.search(r"<<-?\s*'", cmd) and _IA_SUBST.search(m.group(2)):
+                if not m.group(3) and _IA_SUBST.search(m.group(5)):
                     return None, "a heredoc NEM idezett, es shell-behelyettesitest tartalmaz"
-                raw = m.group(2)
+                raw = m.group(5)[:-1]
             else:
                 path = os.path.expandvars(os.path.expanduser(_ia_resolve_local_vars(cmd, ref)))
                 if "$" in path:

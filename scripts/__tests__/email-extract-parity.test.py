@@ -186,6 +186,21 @@ env = mod.collect_email_envelope("Read", {"file_path": "/x"})
 check("envelope/non-send tool: unreadable, never silently hashable",
       env["unreadable_reason"] is not None)
 
+# --- 6. heredoc tag forms (#718 round 7, review 2872) -------------------------
+# The letter body must be read whatever the tag looks like; before round 7 only
+# a bare or single-quoted word tag with a column-0 closer was seen.
+for label, cmd in [
+    ('double-quoted tag', 'send.py --to a@b.hu <<"X"\nHEREDOC-LEVEL-TORZS\nX'),
+    ("<<- with tab-indented closer", "send.py --to a@b.hu <<-'X'\nHEREDOC-LEVEL-TORZS\n\tX"),
+    ("non-word tag", "send.py --to a@b.hu <<'END-X'\nHEREDOC-LEVEL-TORZS\nEND-X"),
+]:
+    text, reason = mod.collect_bash_body(cmd)
+    check(f"heredoc body read: {label}", "HEREDOC-LEVEL-TORZS" in (text or ""),
+          f"got {(text, reason)!r}")
+text, reason = mod.collect_bash_body("send.py --to a@b.hu <<'X'\nHEREDOC-LEVEL-TORZS\n\tX")
+check("heredoc: tab-indented closer without <<- does not close the body",
+      "HEREDOC-LEVEL-TORZS" not in (text or ""), f"got {(text, reason)!r}")
+
 print()
 if failed:
     print(f"{len(failed)} FAILED: {failed}", file=sys.stderr)

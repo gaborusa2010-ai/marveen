@@ -102,7 +102,12 @@ const SEND_PATTERNS = [
 // is KEPT -- only the body is cut. Without this, marker-first spellings
 // leaked the body into command position (FP), and dropping the intro
 // would have lost a heredoc-fed real sender (FN).
-const HEREDOC_RE = /(<<-?\s*'?(\w+)'?[^\n]*)\n[\s\S]*?\n\2(?=\s|$)/g
+// Round 7 (review 2872), as _HEREDOC in the python twin: any quoting of the tag,
+// non-word tags, a tab-indented closing tag after <<-, not a here-string (<<<).
+// JS has no conditional group, so <<- and << are two alternatives; heredoc(m)
+// gives the opener line and the body of either.
+const HEREDOC_RE = /((?<!<)<<-\s*(['"]?)([^\s'"<>;&|()]+)\2[^\n]*)\n([\s\S]*?\n)\t*\3(?=\s|$)|((?<!<)<<\s*(['"]?)([^\s'"<>;&|()]+)\6[^\n]*)\n([\s\S]*?\n)\7(?=\s|$)/g
+const heredoc = (m) => ({ open: m[1] ?? m[5], body: m[4] ?? m[8] })
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z_0-9]*=/
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
@@ -260,7 +265,7 @@ export function maskSubshellMarkers(cmd) {
 // compound command and of `exec` are spread to the commands they feed
 // (spreadShellStdin, see _spread_shell_stdin in the python twin).
 export function segmentsTokens(cmd) {
-  const s = maskSubshellMarkers(cmd.replace(HEREDOC_RE, '$1'))
+  const s = maskSubshellMarkers(cmd.replace(HEREDOC_RE, (_, a, _b, _c, _d, e) => a ?? e))
   const segments = []
   let cur = []
   let tok = ''
@@ -311,6 +316,12 @@ export function segmentsTokens(cmd) {
 
 const GROUP_OPEN = new Set(['{', 'if', 'for', 'while', 'until', 'case', 'select'])
 const GROUP_CLOSE = new Set(['}', 'fi', 'done', 'esac'])
+// How many leading tokens are in words (see _lead_run in the python twin).
+function leadRun(toks, words) {
+  let n = 0
+  while (n < toks.length && words.has(toks[n])) n++
+  return n
+}
 
 // The stdin redirections among toks, each as [op, word]; see _stdin_redirects.
 function stdinRedirects(toks) {
@@ -346,9 +357,10 @@ function spreadShellStdin(segments) {
       else if (ch === '(') stack.push(j)
     }
     const head = seg.length ? seg[0] : ''
-    if (GROUP_CLOSE.has(head)) start = stack.length ? stack.pop() : 0
-    if (start !== null) feedStdin(segments.slice(start, j), stdinRedirects(GROUP_CLOSE.has(head) ? seg.slice(1) : seg))
-    if (GROUP_OPEN.has(head)) stack.push(j)
+    const closes = leadRun(seg, GROUP_CLOSE)
+    for (let k = 0; k < closes; k++) start = stack.length ? stack.pop() : 0
+    if (start !== null) feedStdin(segments.slice(start, j), stdinRedirects(seg.slice(closes)))
+    for (let k = leadRun(seg, GROUP_OPEN); k > 0; k--) stack.push(j)
     if (head === 'exec' && seg.slice(1, 2).every((t) => REDIRECT.test(t))) {
       feedStdin(segments.slice(j + 1), stdinRedirects(seg.slice(1)))
     }
@@ -723,11 +735,11 @@ function segmentsSend(segments, depth, base, written) {
   const count = (s, ch) => s.split(ch).length - 1
   for (const toks of segments) {
     const op = toks.op || ''
-    const closes = count(op, ')') + (toks.length && GROUP_CLOSE.has(toks[0]) ? 1 : 0)
+    const closes = count(op, ')') + leadRun(toks, GROUP_CLOSE)
     let groupCats = []
     for (let k = 0; k < closes; k++) if (groups.length) groupCats = groupCats.concat(groups.pop())
     if (groups.length) groups[groups.length - 1].push(...groupCats)
-    const opens = count(op, '(') + (toks.length && GROUP_OPEN.has(toks[0]) ? 1 : 0)
+    const opens = count(op, '(') + leadRun(toks, GROUP_OPEN)
     for (let k = 0; k < opens; k++) groups.push([])
     const assigned = assignments(toks, env)
     if (assigned) {
@@ -885,7 +897,7 @@ const HEREDOC_PIPE = /\|\s*(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|b
 // A leading heredoc (`<<'X' python3`, `0<<X bash`): nothing but an fd number stands before
 // the operator, and the program follows the tag on the opening line (review 2866 probe).
 const HEREDOC_LEAD = /(?:^|[;&|(])\s*\d*\s*$/
-const HEREDOC_OPENER_TAIL = /<<-?\s*'?\w+'?(.*)/
+const HEREDOC_OPENER_TAIL = /<<-?\s*(['"]?)[^\s'"<>;&|()]+\1(.*)/
 const HEREDOC_REDIRECT = /(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['"]?)([^\s'"<>;&|]+)\1/
 function writtenThenRun(cmd, written, depth, base) {
   if (!written.size) return false
@@ -909,26 +921,26 @@ function writtenThenRun(cmd, written, depth, base) {
 function heredocWritten(cmd) {
   const written = new Map()
   for (const m of cmd.matchAll(HEREDOC_RE)) {
-    const opener = cmd.slice(cmd.lastIndexOf('\n', m.index - 1) + 1, m.index) + m[1]
+    const { open, body } = heredoc(m)
+    const opener = cmd.slice(cmd.lastIndexOf('\n', m.index - 1) + 1, m.index) + open
     const w = HEREDOC_REDIRECT.exec(opener)
-    if (w) written.set(w[2], cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length))
+    if (w) written.set(w[2], body)
   }
   return written
 }
 function heredocProgramSends(cmd, depth, base, written) {
   for (const m of cmd.matchAll(HEREDOC_RE)) {
-    const piped = HEREDOC_PIPE.exec(m[1])
+    const { open, body } = heredoc(m)
+    const piped = HEREDOC_PIPE.exec(open)
     if (piped) {
-      const pbody = cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length)
+      const pbody = body
       if (WRAPPER_SHELL.test(piped[1])) {
         if (depth < 3 && isSend(pbody, depth + 1, base)) return true
       } else if (heredocBodySends(pbody)) return true
     }
     const lineStart = cmd.lastIndexOf('\n', m.index - 1) + 1
     let head = cmd.slice(lineStart, m.index)
-    if (HEREDOC_LEAD.test(head)) head = HEREDOC_OPENER_TAIL.exec(m[1])[1]
-    const bodyStart = m.index + m[1].length + 1
-    const body = cmd.slice(bodyStart, m.index + m[0].length - m[2].length)
+    if (HEREDOC_LEAD.test(head)) head = HEREDOC_OPENER_TAIL.exec(open)[2]
     if (HEREDOC_INTERP.test(head)) {
       if (heredocBodySends(body)) return true
     } else if (HEREDOC_SHELL.test(head) && depth < 3) {
