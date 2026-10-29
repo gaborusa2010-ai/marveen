@@ -31,9 +31,9 @@
 // writeAgentSettingsFromProfile() (agent-scaffold.ts), guarded by
 // name !== MAIN_AGENT_ID, and re-applied on every spawn (respawn-safe).
 
-import { readFileSync, realpathSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { homedir } from 'node:os'
 
 // HOOKDEPLOAD1008: the ledger module is a DYNAMIC import. As a static import, a
@@ -102,7 +102,12 @@ const SEND_PATTERNS = [
 // is KEPT -- only the body is cut. Without this, marker-first spellings
 // leaked the body into command position (FP), and dropping the intro
 // would have lost a heredoc-fed real sender (FN).
-const HEREDOC_RE = /(<<-?\s*'?(\w+)'?[^\n]*)\n[\s\S]*?\n\2(?=\s|$)/g
+// Round 7 (review 2872), as _HEREDOC in the python twin: any quoting of the tag,
+// non-word tags, a tab-indented closing tag after <<-, not a here-string (<<<).
+// JS has no conditional group, so <<- and << are two alternatives; heredoc(m)
+// gives the opener line and the body of either.
+const HEREDOC_RE = /((?<!<)<<-\s*(['"]?)([^\s'"<>;&|()]+)\2[^\n]*)\n([\s\S]*?\n)\t*\3(?=\s|$)|((?<!<)<<\s*(['"]?)([^\s'"<>;&|()]+)\6[^\n]*)\n([\s\S]*?\n)\7(?=\s|$)/g
+const heredoc = (m) => ({ open: m[1] ?? m[5], body: m[4] ?? m[8] })
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z_0-9]*=/
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
@@ -214,8 +219,23 @@ const CODE_SEND_MODULE = new RegExp(
   // The same class on the Graph sender (export sendMail): renamed on import, or a string key.
   String.raw`|\bsendMail\s+as\b|\[\s*['"]sendMail['"]\s*\]`,
 )
+// #718 (aaf838d6): a send straight through a mail provider's HTTP API (Gmail
+// messages/send or drafts/send by REST URL on the gmail or www googleapis host, or the
+// Google client's messages() / drafts() chain ending in send(), also split over two
+// statements; Graph sendMail or send/reply/replyAll/forward on one message). Host and
+// send path are matched apart, as a pair, because the URL is often assembled. Mirrors
+// _code_api_sends in hooks/outgoing-copy-gate.py.
+const CODE_API_CLIENT_SEND = /\.(?:messages|drafts)\(\)\s*\.send\s*\(/
+const CODE_API_PAIRS = [
+  [/(?:gmail|www)\.googleapis\.com/i, /\b(?:messages|drafts)\/send\b/],
+  [/\.users\(\)\s*\.(?:messages|drafts)\(\)/, /\.send\s*\(/],
+  [/graph\.microsoft\.com/i, /\/sendMail\b|\/messages\/[^/\s'"]+\/(?:send|reply|replyAll|forward)\b/],
+]
+const codeApiSends = (code) =>
+  CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))
 const codeStringSends = (code) =>
-  CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
+  CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || codeApiSends(code) ||
+  (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
 
 // Unquoted newline / backtick / `$(` become segment separators; quoted text is
 // untouched (it is content). Tracks quote state by hand -- no shell involved.
@@ -241,15 +261,28 @@ export function maskSubshellMarkers(cmd) {
 
 // Quote-aware tokenizer -> [[token, ...], ...] per segment. Throws on an
 // unbalanced quote (the caller falls back to the legacy content patterns).
+// seg.op: the operator text before the segment. The stdin redirections of a
+// compound command and of `exec` are spread to the commands they feed
+// (spreadShellStdin, see _spread_shell_stdin in the python twin).
 export function segmentsTokens(cmd) {
-  const s = maskSubshellMarkers(cmd.replace(HEREDOC_RE, '$1'))
+  const s = maskSubshellMarkers(cmd.replace(HEREDOC_RE, (_, a, _b, _c, _d, e) => a ?? e))
   const segments = []
   let cur = []
   let tok = ''
   let hasTok = false
   let q = null
-  const pushTok = () => { if (hasTok) { cur.push(tok); tok = ''; hasTok = false } }
-  const pushSeg = () => { pushTok(); if (cur.length) { segments.push(cur); cur = [] } }
+  let piped = false // the next segment's stdin is this one's output (`a | b`): seg.piped
+  let ops = ''
+  const pushTok = () => {
+    if (hasTok) {
+      if (!cur.length) { cur.op = ops; ops = '' }
+      cur.push(tok); tok = ''; hasTok = false
+    }
+  }
+  const pushSeg = () => {
+    pushTok()
+    if (cur.length) { if (piped) cur.piped = true; segments.push(cur); cur = [] }
+  }
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
     if (q) {
@@ -261,13 +294,77 @@ export function segmentsTokens(cmd) {
     if (ch === "'" || ch === '"') { q = ch; hasTok = true; continue }
     if (ch === '\\' && i + 1 < s.length) { tok += s[++i]; hasTok = true; continue }
     if (ch === ' ' || ch === '\t') { pushTok(); continue }
-    if ('|&;()'.includes(ch)) { pushSeg(); continue }
+    // #718 (review 2823): the `&` of a redirection (`2>&1`, `>&2`, `<&3`, `&>f`)
+    // is part of the word, not a separator; see _mask_subshell_markers.
+    const redirAmp = ch === '&' && ((i > 0 && '<>'.includes(s[i - 1])) ||
+      (s[i + 1] === '>' && !(i > 0 && '&|'.includes(s[i - 1]))))
+    if ('|&;()'.includes(ch) && !redirAmp) {
+      pushSeg()
+      ops += ch
+      if (ch === '|') piped = s[i + 1] !== '|' && s[i - 1] !== '|'
+      else if (!(ch === '&' && s[i - 1] === '|')) piped = false
+      continue
+    }
     tok += ch
     hasTok = true
   }
   if (q) throw new Error('unbalanced quote')
   pushSeg()
+  spreadShellStdin(segments)
   return segments
+}
+
+const GROUP_OPEN = new Set(['{', 'if', 'for', 'while', 'until', 'case', 'select'])
+const GROUP_CLOSE = new Set(['}', 'fi', 'done', 'esac'])
+// How many leading tokens are in words (see _lead_run in the python twin).
+function leadRun(toks, words) {
+  let n = 0
+  while (n < toks.length && words.has(toks[n])) n++
+  return n
+}
+
+// The stdin redirections among toks, each as [op, word]; see _stdin_redirects.
+function stdinRedirects(toks) {
+  const out = []
+  for (let i = 0; i < toks.length; i++) {
+    const m = REDIRECT.exec(toks[i])
+    if (m === null) continue
+    const word = m[2] ? m[2] : (toks[i + 1] ?? '')
+    const fd = toks[i].slice(0, toks[i].length - m[1].length - m[2].length)
+    if (['<', '<>', '<&', '<<<'].includes(m[1]) && (fd === '' || fd === '0')) out.push([m[1], word])
+    if (!m[2]) i++
+  }
+  return out
+}
+
+// Append redirects to every segment that reads the shell's stdin: not one fed by
+// a pipe, not an assignment-only one.
+function feedStdin(segments, redirects) {
+  for (const seg of segments) {
+    if (!seg.piped && assignments(seg, new Map()) === null) {
+      for (const [op, word] of redirects) seg.push(op, word)
+    }
+  }
+}
+
+// See _spread_shell_stdin in the python twin.
+function spreadShellStdin(segments) {
+  const stack = []
+  segments.forEach((seg, j) => {
+    let start = null
+    for (const ch of seg.op ?? '') {
+      if (ch === ')') start = stack.length ? stack.pop() : 0
+      else if (ch === '(') stack.push(j)
+    }
+    const head = seg.length ? seg[0] : ''
+    const closes = leadRun(seg, GROUP_CLOSE)
+    for (let k = 0; k < closes; k++) start = stack.length ? stack.pop() : 0
+    if (start !== null) feedStdin(segments.slice(start, j), stdinRedirects(seg.slice(closes)))
+    for (let k = leadRun(seg, GROUP_OPEN); k > 0; k--) stack.push(j)
+    if (head === 'exec' && seg.slice(1, 2).every((t) => REDIRECT.test(t))) {
+      feedStdin(segments.slice(j + 1), stdinRedirects(seg.slice(1)))
+    }
+  })
 }
 
 const basename = (t) => t.split('/').pop()
@@ -290,18 +387,37 @@ const WRAPPERS = new Map([
   ['timeout', ['sk', ['signal', 'kill-after'], 1]],
   ['setsid', ['', [], 0]],
 ])
+// #718: `uv run [opts] CMD`; `uv run x.py` is judged as `python3 x.py` (see _UV_RUN in
+// hooks/outgoing-copy-gate.py).
+const UV_RUN = ['pfCP', ['with', 'with-editable', 'with-requirements', 'python', 'project',
+  'directory', 'env-file', 'extra', 'group', 'only-group', 'no-group',
+  'package', 'index', 'default-index', 'index-url', 'extra-index-url',
+  'find-links', 'config-setting', 'cache-dir', 'config-file'], 0]
 const HEAD_DEPTH = 8
+
+// #718 (review 2814): a leading redirection (`< f python3`) is moved behind the
+// command, see _REDIRECT in the python twin.
+const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
-  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]))) toks = toks.slice(1)
+  const moved = []
+  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
+    const m = REDIRECT.exec(toks[0])
+    const n = m === null || m[2] ? 1 : 2
+    if (m !== null) moved.push(...toks.slice(0, n))
+    toks = toks.slice(n)
+  }
+  if (moved.length && toks.length) toks = [...toks, ...moved]
   if (!toks.length) return [toks]
   const w = basename(toks[0])
   // Still a wrapper at the depth bound: counts as a send (null), see the python twin.
   if (d >= HEAD_DEPTH) return (WRAPPERS.has(w) || w === 'function' || w === 'coproc') ? [null] : [toks]
   if (w === 'function') return commandHeads(toks.slice(2), d + 1)
   if (w === 'coproc') return [...commandHeads(toks.slice(1), d + 1), ...commandHeads(toks.slice(2), d + 1)]
-  const spec = WRAPPERS.get(w)
+  let spec = WRAPPERS.get(w)
+  const uvRun = w === 'uv' && toks[1] === 'run'
+  if (uvRun) { spec = UV_RUN; toks = toks.slice(1) }
   if (!spec) return [toks]
   const [shortVal, longVal, positionals] = spec
   let i = 1
@@ -325,7 +441,8 @@ function commandHeads(toksIn, d = 0) {
     break
   }
   starts.unshift(i)
-  return starts.flatMap((s) => commandHeads(toks.slice(s + positionals), d + 1))
+  const heads = starts.flatMap((s) => commandHeads(toks.slice(s + positionals), d + 1))
+  return uvRun ? heads.map((h) => (h && h.length && h[0].endsWith('.py') ? ['python3', ...h] : h)) : heads
 }
 
 // SUBAGENTMAILGATE1016 (measured on the sub-agent gate, 2026-10-16): the
@@ -356,6 +473,7 @@ function commandHeads(toksIn, d = 0) {
 const PY_OPT_WITH_ARG = new Set(['-X', '-W', '--check-hash-based-pycs'])
 const RECIPIENT_FLAG = /^--to?(=|$)/
 const UNDECIDABLE_PATH = /[*?[{$]/
+const STDIN_PATHS = new Set(['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'])
 function pythonScriptOperand(rest) {
   let stdinRedirect = false
   for (let i = 0; i < rest.length; i++) {
@@ -364,9 +482,11 @@ function pythonScriptOperand(rest) {
     if (t === '-') return { script: null, stdin: true, stdinRedirect }
     if (/^-[cm]/.test(t)) return { script: null, stdin: false, stdinRedirect } // code string / module: judged elsewhere
     if (PY_OPT_WITH_ARG.has(t)) { i++; continue }
-    if (t.startsWith('<')) { stdinRedirect = true; if (t === '<') i++; continue }
-    if (/^\d*>/.test(t)) { if (/^\d*>>?$/.test(t)) i++; continue }
+    const r = /^(\d*)(<<<|<<-|<<|<>|<&|<)([\s\S]*)$/.exec(t)
+    if (r) { if (r[1] === '' || r[1] === '0') stdinRedirect = true; if (!r[3]) i++; continue } // another fd is not stdin; the word after a bare redirect
+    if (/^(\d*|&)>/.test(t)) { if (/^(\d*|&)(>>?|>&|>\|)$/.test(t)) i++; continue }
     if (t.startsWith('-') && t.length > 1) continue
+    if (STDIN_PATHS.has(t)) return { script: null, stdin: true, stdinRedirect } // the program comes from stdin, as with `-`
     return { script: t, stdin: false, stdinRedirect }
   }
   return { script: null, stdin: false, stdinRedirect }
@@ -414,30 +534,254 @@ export function flattenSubstitutions(cmd) {
   return out
 }
 
-function pythonHeadSends(rest) {
+// #718 (aaf838d6): the script file the interpreter runs is read and judged by the
+// provider-API send patterns only (codeApiSends; why, where the file is looked up and
+// the stated limits: _read_script in hooks/outgoing-copy-gate.py). A relative path
+// resolves against the payload's cwd, moved by an earlier cd/pushd segment; a script
+// written by a heredoc of the same command is judged by that body. FAIL-CLOSED: a
+// script that cannot be read counts as a send. base null: the directory is unknown.
+// Round 3 (Marveen's review 2805): a program fed on stdin from a file (`python3 - < x.py`,
+// `cat x.py | python3`), a here-string, `python3 -m mod` from the base directory and a
+// `.py` path run directly are read too; the stated limits are at _read_script.
+// Round 4 (review 2814): a leading redirection (`< x.py python3`) counts, and a pipe
+// other than a direct `cat` (head, tee) is a stated limit.
+const SCRIPT_READ_LIMIT = 2 * 1024 * 1024
+// False only inside unreadableScriptHit: is an unreadable script the whole reason?
+let unreadableSends = true
+const expandHome = (p) => (p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p)
+function readScript(script, base) {
+  let path = expandHome(script)
+  if (!isAbsolute(path)) {
+    if (base === null) return null
+    path = join(base, path)
+  }
+  try {
+    const st = statSync(path)
+    if (!st.isFile() || st.size > SCRIPT_READ_LIMIT) return null
+    return readFileSync(path, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+// $NAME / ${NAME} set by an earlier assignment-only segment of the same command
+// (`S=/x; cd $S`); see _expand_vars / _assignments in hooks/outgoing-copy-gate.py.
+const VAR_REF = /\$(?:\{([A-Za-z_][A-Za-z_0-9]*)\}|([A-Za-z_][A-Za-z_0-9]*))/g
+const expandVars = (tok, env) => tok.replace(VAR_REF, (m, a, b) => env.get(a || b) ?? m)
+function assignments(toks, env) {
+  const body = toks[0] === 'export' ? toks.slice(1) : toks
+  if (!body.length || !body.every((t) => ENV_ASSIGN.test(t))) return null
+  const out = new Map()
+  for (const t of body) {
+    const eq = t.indexOf('=')
+    const value = expandHome(expandVars(t.slice(eq + 1), env))
+    if (!UNDECIDABLE_PATH.test(value)) out.set(t.slice(0, eq), value)
+  }
+  return out
+}
+
+// [isCd, new base] for a cd/pushd/popd head; the base is null when it cannot be followed.
+function cdTarget(head, base, env) {
+  const w = head && head.length ? basename(head[0]) : ''
+  if (w !== 'cd' && w !== 'pushd' && w !== 'popd') return [false, base]
+  if (w === 'popd') return [true, null]
+  const args = head.slice(1)
+  while (args.length && args[0].startsWith('-') && args[0] !== '-') {
+    if (args.shift() === '--') break
+  }
+  if (!args.length) return [true, homedir()]
+  const arg = expandVars(args[0], env)
+  if (arg === '-' || UNDECIDABLE_PATH.test(arg)) return [true, null]
+  const target = expandHome(arg)
+  if (isAbsolute(target)) return [true, normalize(target)]
+  return [true, base === null ? null : join(base, target)]
+}
+
+// ['file', path] for a `<` redirect, ['code', text] for a here-string, else null.
+function pythonStdin(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i].startsWith('0<') ? rest[i].slice(1) : rest[i] // fd 0 is stdin: `0< f` is `< f`
+    if (t.startsWith('<<<')) return ['code', t.slice(3) || (rest[i + 1] ?? '')]
+    if (t === '<<' || t === '<<-') { i++; continue }
+    if (t.startsWith('<<')) continue
+    if (t.startsWith('<&')) { // an fd copy: 0 is stdin itself, - closes it, others cannot be followed
+      const word = t.slice(2) || (rest[i + 1] ?? '')
+      if (word === '-') return ['file', '/dev/null']
+      if (word !== '0') return ['file', '']
+      if (!t.slice(2)) i++
+      continue
+    }
+    const u = t.startsWith('<>') ? '<' + t.slice(2) : t // opened read-write, still stdin
+    if (u === '<') return i + 1 < rest.length ? ['file', rest[i + 1]] : null
+    if (u.startsWith('<')) return ['file', u.slice(1)]
+  }
+  return null
+}
+// A here-string that is one `$(cat F)` / `$(< F)` is F's text; any other
+// substitution in it fails closed (see _HERESTRING_CAT in the python twin).
+const HERESTRING_CAT = /^\s*\$\(\s*(?:cat\s+(?:--\s+)?|<\s*)([^\s()$`]+)\s*\)\s*$/
+const HERESTRING_SUBST = /\$\(|`|\$__SUBST__/
+// Program text given inline (a here-string fed to cat), not a file name.
+const isCode = (f) => typeof f === 'object' && f !== null
+const stdinBody = (path, base) => (isCode(path) ? path.code : path === '/dev/null' ? '' : readScript(path, base))
+
+// null when no local module file runs (`python3 -m mod`), else whether it sends.
+function pythonModuleSends(rest, base, env) {
+  let mod = null
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i]
+    if (t === '-m') { mod = rest[i + 1] ?? null; break }
+    if (t.startsWith('-m')) { mod = t.slice(2); break }
+    if (!t.startsWith('-') || t.startsWith('-c')) return null
+    if (PY_OPT_WITH_ARG.has(t)) i++
+  }
+  if (!mod || base === null) return null
+  mod = expandVars(mod, env)
+  if (UNDECIDABLE_PATH.test(mod)) return null
+  const rel = mod.replaceAll('.', '/')
+  for (const cand of [`${rel}.py`, `${rel}/__main__.py`]) {
+    const path = join(base, cand)
+    let exists = true
+    try { lstatSync(path) } catch { exists = false }
+    if (exists) {
+      const body = readScript(path, base)
+      return body === null ? unreadableSends : codeApiSends(body)
+    }
+  }
+  return null
+}
+
+// True when the program comes from -c or -m: stdin is then data, not code.
+function runsCodeArg(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i]
+    if (/^-[cm]/.test(t)) return true
+    if (t === '-' || t === '--' || !t.startsWith('-')) return false
+    if (PY_OPT_WITH_ARG.has(t)) i++
+  }
+  return false
+}
+
+function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
   const recipient = rest.some((t) => RECIPIENT_FLAG.test(t))
-  const { script, stdin, stdinRedirect } = pythonScriptOperand(rest)
+  const operand = pythonScriptOperand(rest)
+  const { stdin, stdinRedirect } = operand
+  let { script } = operand
+  if (script !== null && !written.has(script)) script = expandVars(script, env)
   if (script !== null && SENDPY.test(basename(script))) return recipient
   if (script !== null && UNDECIDABLE_PATH.test(script)) {
     return recipient || rest.some((t) => t !== script && t.includes('$'))
   }
-  if (stdin || (script === null && stdinRedirect)) return recipient
+  if (script === null) {
+    const module = pythonModuleSends(rest, base, env)
+    if (module !== null) return recipient || module
+  }
+  if (stdin || (script === null && !runsCodeArg(rest) && (stdinRedirect || stdinFiles))) {
+    let src = pythonStdin(rest)
+    if (src && src[0] === 'code') {
+      const m = HERESTRING_CAT.exec(src[1])
+      if (m) src = ['file', m[1]]
+      else if (HERESTRING_SUBST.test(src[1])) return recipient || unreadableSends
+      else return recipient || codeStringSends(src[1])
+    }
+    const files = src ? [expandVars(src[1], env)] : (stdinFiles ?? [])
+    const bodies = files.map((f) => (!isCode(f) && written.has(f) ? written.get(f) : stdinBody(f, base)))
+    if (bodies.some((b) => b === null)) return recipient || unreadableSends
+    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : codeApiSends(b)))
+  }
+  if (script !== null) {
+    if (written.has(script)) return codeApiSends(written.get(script))
+    const body = readScript(script, base)
+    return body === null ? unreadableSends : codeApiSends(body)
+  }
   return false
 }
 
-function segmentIsSend(toksIn, depth) {
-  return commandHeads(toksIn).some((h) => headIsSend(h, depth))
+// Segments in order; a cd/pushd/popd head moves the base of the later ones, and an
+// assignment-only segment is remembered for them. $HOME comes from the environment.
+// The files `cat` prints: its operands and a `<` / `0<` stdin file; an output
+// redirect is not one, a heredoc word stays (see _cat_operands in the python twin).
+// A here-string is its text ({code}); `<&N` reads as unreadable; with file
+// operands the stdin file is printed only for a `-` operand.
+function catOperands(args) {
+  const out = []
+  let stdin = null
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i]
+    const m = /^(\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/.exec(t)
+    if (m === null) {
+      if (t === '-' || !t.startsWith('-')) out.push(t)
+      continue
+    }
+    const word = m[3] || (args[i + 1] ?? '')
+    if (!m[3]) i++
+    if (m[1] !== '' && m[1] !== '0') continue
+    if (m[2] === '<' || m[2] === '<>') stdin = [word]
+    else if (m[2] === '<<<') stdin = [{ code: word }]
+    else if (m[2] === '<&') stdin = word === '0' || word === '-' ? [] : ['']
+    else if (!m[2].startsWith('>')) { out.push(t); i -= m[3] ? 0 : 1 } // a heredoc word stays (unreadable)
+  }
+  if (stdin === null) return out.filter((t) => t !== '-')
+  return out.length ? out.flatMap((t) => (t === '-' ? stdin : [t])) : stdin
 }
 
-function headIsSend(toks, depth) {
+// The files a `cat` segment prints are the stdin of the segment piped after it.
+function segmentsSend(segments, depth, base, written) {
+  const env = new Map([['HOME', homedir()]])
+  let catFiles = null
+  // The files of each `cat` inside a compound command are the stdin of the segment
+  // piped after its closer (`{ cat; } < f | python3`, review 2866). One list per open group.
+  const groups = []
+  const count = (s, ch) => s.split(ch).length - 1
+  for (const toks of segments) {
+    const op = toks.op || ''
+    const closes = count(op, ')') + leadRun(toks, GROUP_CLOSE)
+    let groupCats = []
+    for (let k = 0; k < closes; k++) if (groups.length) groupCats = groupCats.concat(groups.pop())
+    if (groups.length) groups[groups.length - 1].push(...groupCats)
+    const opens = count(op, '(') + leadRun(toks, GROUP_OPEN)
+    for (let k = 0; k < opens; k++) groups.push([])
+    const assigned = assignments(toks, env)
+    if (assigned) {
+      for (const [k, v] of assigned) env.set(k, v)
+      catFiles = null
+      continue
+    }
+    const stdinFiles = toks.piped ? catFiles : null
+    const heads = commandHeads(toks)
+    if (heads.some((h) => headIsSend(h, depth, base, written, env, stdinFiles))) return true
+    catFiles = groupCats.length ? groupCats : null
+    for (const h of heads) {
+      if (h && h.length && basename(h[0]) === 'cat') {
+        const files = catOperands(h.slice(1)).map((t) => (isCode(t) ? t : expandVars(t, env)))
+        catFiles = files.length ? files : null
+        if (groups.length && catFiles) groups[groups.length - 1].push(...catFiles)
+      }
+    }
+    for (const h of heads) {
+      const [isCd, next] = cdTarget(h, base, env)
+      if (isCd) { base = next; break }
+    }
+  }
+  return false
+}
+
+function headIsSend(toks, depth, base, written, env, stdinFiles = null) {
   if (toks === null) return true // the depth bound was hit on a wrapper: audit it
   if (!toks.length) return false
   const prog = basename(toks[0])
   const rest = toks.slice(1)
   if (SENDER_PROG.test(prog)) return true
+  // The shell's own stdin redirect (`bash -c python3 < f`) feeds the string's
+  // commands: judged as `{ STRING; } < f` (review 2823).
   if (WRAPPER_SHELL.test(prog) && depth < 3) {
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === '-c' && rest[i + 1] && isSendInvocation(rest[i + 1], depth + 1)) return true
+      if (rest[i] !== '-c' || !rest[i + 1]) continue
+      const redirs = stdinRedirects([...rest.slice(0, i + 1), ...rest.slice(i + 2)])
+      const code = redirs.length
+        ? `{ ${rest[i + 1]}\n} ${redirs.map(([op, w]) => `${op} '${w.replaceAll("'", "'\\''")}'`).join(' ')}`
+        : rest[i + 1]
+      if (isSend(code, depth + 1, base)) return true
     }
   }
   if (PYTHON.test(prog) || NODEISH.test(prog)) {
@@ -455,7 +799,16 @@ function headIsSend(toks, depth) {
     }
   }
   if (candidates.some((c) => SENDPY.test(c)) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
-  if (PYTHON.test(prog) && pythonHeadSends(rest)) return true
+  if (PYTHON.test(prog) && pythonHeadSends(rest, base, written, env, stdinFiles)) return true
+  // a `.py` path run directly (`./x.py`; its shebang names the interpreter). Only a
+  // file that can be read counts: one that cannot be read cannot be executed either,
+  // and a bare `.py` word is also what a process substitution leaves behind
+  // (`diff <(sed ...) x.py`).
+  if (prog.endsWith('.py') && toks[0].includes('/')) {
+    const path = written.has(toks[0]) ? toks[0] : expandVars(toks[0], env)
+    const body = written.has(path) ? written.get(path) : readScript(path, base)
+    if (body !== null && codeApiSends(body)) return true
+  }
   // An interpreter or program that cannot be resolved statically ($PY, a glob,
   // a substitution) with a recipient flag: what runs is undecidable here.
   if (UNDECIDABLE_PATH.test(toks[0]) && rest.some((t) => RECIPIENT_FLAG.test(t))) return true
@@ -470,6 +823,28 @@ function headIsSend(toks, depth) {
 
 // True when some segment is still a wrapper at the depth bound (HEADDEPTH924),
 // so the deny says WHY -- see wrapper_depth_hit in outgoing-copy-gate.py.
+// #718: true when an unreadable script is the whole reason the command counts as a
+// send; see unreadable_script_hit in hooks/outgoing-copy-gate.py.
+export function unreadableScriptHit(cmd, cwd = null) {
+  if (!isSendInvocation(cmd, 0, cwd)) return false
+  unreadableSends = false
+  try {
+    return !isSendInvocation(cmd, 0, cwd)
+  } finally {
+    unreadableSends = true
+  }
+}
+
+export function buildUnreadableScriptMsg() {
+  return (
+    'TILTVA (governance hard-gate): a futtatott python-szkriptet nem tudom elolvasni (nincs meg, ' +
+    'nem olvashato, nem sima fajl, 2 MiB-nal nagyobb, vagy a mappaja nem kovetheto), igy nem tudom ' +
+    'eldonteni, hogy levelet kuld-e. Ez szandekosan fail-closed. Ha elgepelted az utvonalat, javitsd. ' +
+    'A relativ utvonal a munkamappadhoz (es a parancs korabbi cd-jehez) kepest ertendo: adj abszolut ' +
+    'utvonalat, ha bizonytalan.'
+  )
+}
+
 export function wrapperDepthHit(cmd) {
   let segments
   try {
@@ -479,7 +854,9 @@ export function wrapperDepthHit(cmd) {
   }
   // Only when the bound is the WHOLE reason: a visible send in another segment wins.
   const heads = segments.flatMap((toks) => commandHeads(toks))
-  return heads.some((h) => h === null) && !heads.some((h) => h !== null && headIsSend(h, 0))
+  const base = process.cwd()
+  const written = heredocWritten(cmd)
+  return heads.some((h) => h === null) && !heads.some((h) => h !== null && headIsSend(h, 0, base, written, new Map()))
 }
 
 export function buildWrapperDepthMsg() {
@@ -499,10 +876,9 @@ export function buildWrapperDepthMsg() {
 // the literal only as a lowercase, QUOTED command word (an argv item or an os.system command),
 // so a card id like SENDMAIL... in a report's prose no longer matches. Mirrors
 // _HEREDOC_SENDER_ARGV / _heredoc_body_sends in hooks/outgoing-copy-gate.py.
-// NOT COVERED, named: a program the classifier never reads -- `python3 /tmp/x.py`,
-// `python3 < /tmp/x.py`, `cat /tmp/x.py | python3 -`, `python3 -c "exec(open('/tmp/x.py').read())"`;
-// also a here-string fed to an interpreter (`python3 <<<'import send'`) and a CommonJS
-// destructuring rename of the Graph sender (`const { sendMail: s } = require(...)`).
+// NOT COVERED, named: `python3 -c "exec(open('/tmp/x.py').read())"` and a CommonJS
+// destructuring rename of the Graph sender (`const { sendMail: s } = require(...)`). (A script
+// run by python, fed on stdin or piped from cat, and a here-string are read since #718.)
 // A heredoc fed to a SHELL (`bash <<EOF`) is a shell program: its body is judged with
 // isSendInvocation itself, one level deeper (Geri/Samu, #1855).
 // WRITTEN, THEN RUN IN THE SAME COMMAND (#1855): `cat > P <<TAG` / `cat <<TAG > P`, then an
@@ -511,13 +887,19 @@ export function buildWrapperDepthMsg() {
 // PIPED (#1855): `cat <<'EOF' | bash` or `| python3 -` hands the body over the pipe on the
 // heredoc's opening line; it is judged the same way.
 const HEREDOC_SENDER_ARGV = /['"](?:[^'"\s]*\/)?(?:sendmail|msmtp|swaks|send\.py)(?=['"\s])/
+// The provider-API patterns too, as for -c and a here-string (review 2866).
 const heredocBodySends = (body) =>
-  CODE_SEND.test(body) || CODE_SEND_MODULE.test(body) || (CODE_EXECISH.test(body) && HEREDOC_SENDER_ARGV.test(body))
+  CODE_SEND.test(body) || CODE_SEND_MODULE.test(body) || codeApiSends(body) ||
+  (CODE_EXECISH.test(body) && HEREDOC_SENDER_ARGV.test(body))
 const HEREDOC_SHELL = /(?:^|[\s;&|(])(?:\S*\/)?(?:bash|sh|zsh|dash)\b[^\n<]*$/i
 const HEREDOC_INTERP = /(?:^|[\s;&|(])(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun)\b[^\n<]*$/i
 const HEREDOC_PIPE = /\|\s*(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun|bash|sh|zsh|dash)\b/i
+// A leading heredoc (`<<'X' python3`, `0<<X bash`): nothing but an fd number stands before
+// the operator, and the program follows the tag on the opening line (review 2866 probe).
+const HEREDOC_LEAD = /(?:^|[;&|(])\s*\d*\s*$/
+const HEREDOC_OPENER_TAIL = /<<-?\s*(['"]?)[^\s'"<>;&|()]+\1(.*)/
 const HEREDOC_REDIRECT = /(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['"]?)([^\s'"<>;&|]+)\1/
-function writtenThenRun(cmd, written, depth) {
+function writtenThenRun(cmd, written, depth, base) {
   if (!written.size) return false
   let segments
   try { segments = segmentsTokens(cmd) } catch { return false }
@@ -530,39 +912,53 @@ function writtenThenRun(cmd, written, depth) {
       if (!args.length || !written.has(args[0])) continue
       const body = written.get(args[0])
       if ((PYTHON.test(prog) || NODEISH.test(prog)) && heredocBodySends(body)) return true
-      if (WRAPPER_SHELL.test(prog) && depth < 3 && isSendInvocation(body, depth + 1)) return true
+      if (WRAPPER_SHELL.test(prog) && depth < 3 && isSend(body, depth + 1, base)) return true
     }
   }
   return false
 }
-function heredocProgramSends(cmd, depth = 0) {
+// path token -> body, for every heredoc the command writes to a file.
+function heredocWritten(cmd) {
   const written = new Map()
   for (const m of cmd.matchAll(HEREDOC_RE)) {
-    const opener = cmd.slice(cmd.lastIndexOf('\n', m.index - 1) + 1, m.index) + m[1]
+    const { open, body } = heredoc(m)
+    const opener = cmd.slice(cmd.lastIndexOf('\n', m.index - 1) + 1, m.index) + open
     const w = HEREDOC_REDIRECT.exec(opener)
-    if (w) written.set(w[2], cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length))
-    const piped = HEREDOC_PIPE.exec(m[1])
+    if (w) written.set(w[2], body)
+  }
+  return written
+}
+function heredocProgramSends(cmd, depth, base, written) {
+  for (const m of cmd.matchAll(HEREDOC_RE)) {
+    const { open, body } = heredoc(m)
+    const piped = HEREDOC_PIPE.exec(open)
     if (piped) {
-      const pbody = cmd.slice(m.index + m[1].length + 1, m.index + m[0].length - m[2].length)
+      const pbody = body
       if (WRAPPER_SHELL.test(piped[1])) {
-        if (depth < 3 && isSendInvocation(pbody, depth + 1)) return true
+        if (depth < 3 && isSend(pbody, depth + 1, base)) return true
       } else if (heredocBodySends(pbody)) return true
     }
     const lineStart = cmd.lastIndexOf('\n', m.index - 1) + 1
-    const head = cmd.slice(lineStart, m.index)
-    const bodyStart = m.index + m[1].length + 1
-    const body = cmd.slice(bodyStart, m.index + m[0].length - m[2].length)
+    let head = cmd.slice(lineStart, m.index)
+    if (HEREDOC_LEAD.test(head)) head = HEREDOC_OPENER_TAIL.exec(open)[2]
     if (HEREDOC_INTERP.test(head)) {
       if (heredocBodySends(body)) return true
     } else if (HEREDOC_SHELL.test(head) && depth < 3) {
-      if (isSendInvocation(body, depth + 1)) return true
+      if (isSend(body, depth + 1, base)) return true
     }
   }
-  return writtenThenRun(cmd, written, depth)
+  return writtenThenRun(cmd, written, depth, base)
 }
 
-export function isSendInvocation(cmd, depth = 0) {
-  if (heredocProgramSends(cmd, depth)) return true
+// cwd: the directory the command runs in (the hook payload's cwd); a relative script
+// path resolves against it. Null: this process's cwd.
+export function isSendInvocation(cmd, depth = 0, cwd = null) {
+  return isSend(cmd, depth, cwd || process.cwd())
+}
+
+function isSend(cmd, depth, base) {
+  const written = heredocWritten(cmd)
+  if (heredocProgramSends(cmd, depth, base, written)) return true
   let segments
   try {
     segments = segmentsTokens(cmd)
@@ -571,13 +967,13 @@ export function isSendInvocation(cmd, depth = 0) {
     // this path the gate is exactly as strict as before -- never weaker.
     return SEND_PATTERNS.some((re) => re.test(cmd))
   }
-  if (segments.some((toks) => segmentIsSend(toks, depth))) return true
+  if (segmentsSend(segments, depth, base, written)) return true
   // The same command with every substitution as one undecidable word (see
   // flattenSubstitutions): the outer command keeps the word it would run.
   const flat = flattenSubstitutions(cmd)
   if (flat === cmd) return false
   try {
-    return segmentsTokens(flat).some((toks) => segmentIsSend(toks, depth))
+    return segmentsSend(segmentsTokens(flat), depth, base, written)
   } catch {
     return SEND_PATTERNS.some((re) => re.test(cmd))
   }
@@ -637,7 +1033,7 @@ function ledgerLookup() {
 // (the only path the thread-reply capability below can narrow),
 // 'unverified-recipient' is a draft/manage_email address with no recorded
 // source, and everything else is the sub-agent governance block.
-export function gateDecision(toolName, toolInput, isVerified = null) {
+export function gateDecision(toolName, toolInput, isVerified = null, cwd = null) {
   const name = String(toolName ?? '')
   // Lazy: only build the ledger lookup when a call actually carries addresses,
   // so a read-shaped tool call never pays a file read.
@@ -693,7 +1089,10 @@ export function gateDecision(toolName, toolInput, isVerified = null) {
   }
   if (name === 'Bash') {
     const cmd = String(toolInput?.command ?? '')
-    if (isSendInvocation(cmd)) return wrapperDepthHit(cmd) ? { deny: true, kind: 'wrapper-depth' } : { deny: true }
+    if (isSendInvocation(cmd, 0, cwd)) {
+      if (wrapperDepthHit(cmd)) return { deny: true, kind: 'wrapper-depth' }
+      return unreadableScriptHit(cmd, cwd) ? { deny: true, kind: 'unreadable-script' } : { deny: true }
+    }
   }
   return { deny: false }
 }
@@ -953,7 +1352,8 @@ if (isInvokedDirectly()) {
   }
   let decision
   try {
-    decision = gateDecision(payload?.tool_name, payload?.tool_input)
+    const cwd = typeof payload?.cwd === 'string' && isAbsolute(payload.cwd) ? payload.cwd : null
+    decision = gateDecision(payload?.tool_name, payload?.tool_input, null, cwd)
   } catch (err) {
     // HOOKDEPLOAD1008: the call needed the ledger, and the ledger module did
     // not load. Anything else that throws here is not this branch's to judge.
@@ -970,6 +1370,7 @@ if (isInvokedDirectly()) {
     if (kind === 'unverified-recipient') deny(buildUnverifiedRecipientMsg(addresses ?? []))
     if (kind === 'draft-required') deny(buildDraftOnlyMsg(ownerName))
     if (kind === 'wrapper-depth') deny(buildWrapperDepthMsg())
+    if (kind === 'unreadable-script') deny(buildUnreadableScriptMsg())
     // Thread-scoped narrowing: only when the scaffold wired this agent's hook
     // command with the flag (capability-driven, regenerated on every spawn),
     // and only for the direct send_email tool. Bash send routes and

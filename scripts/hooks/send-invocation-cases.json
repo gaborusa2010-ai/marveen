@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'.",
+  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'. #718: a case may carry `cwd` (relative to the repo root): the directory the command runs in, the hook payload's cwd; without it the test process's cwd (the repo root).",
   "cases": [
     {
       "name": "inter-agent curl, content mentions the mail script",
@@ -878,7 +878,7 @@
     },
     {
       "name": "#1855 control: the written sender script is not run, another path is",
-      "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\npython3 $S/other.py",
+      "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\npython3 src/__tests__/fixtures/send-gate/plain.py",
       "expected": false
     },
     {
@@ -953,12 +953,12 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: an interpreter option before another script",
-      "cmd": "python3 -u scripts/other.py --verbose",
+      "cmd": "python3 -u src/__tests__/fixtures/send-gate/plain.py --verbose",
       "expected": false
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: -X before another script with a --top flag",
-      "cmd": "python3 -X utf8 scripts/tool.py --top 5",
+      "cmd": "python3 -X utf8 src/__tests__/fixtures/send-gate/plain.py --top 5",
       "expected": false
     },
     {
@@ -968,7 +968,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a --to-date flag is not a recipient flag",
-      "cmd": "python3 scripts/x.py --to-date 2026-10-16",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py --to-date 2026-10-16",
       "expected": false
     },
     {
@@ -983,7 +983,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a stdin program without a recipient flag",
-      "cmd": "python3 - < scripts/report.py",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/plain.py",
       "expected": false
     },
     {
@@ -1023,7 +1023,7 @@
     },
     {
       "name": "SUBAGENTMAILGATE1016 control: a substitution as a plain argument",
-      "cmd": "python3 scripts/x.py --date $(date +%F)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py --date $(date +%F)",
       "expected": false
     },
     {
@@ -1034,6 +1034,789 @@
     {
       "name": "SUBAGENTMAILGATE1016 control: a variable command without a recipient flag",
       "cmd": "$EDITOR notes.md",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: ad-hoc Gmail API sender script with a recipient flag (the 2026-10-28 incident shape)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py --to office@example.invalid --body 'Thanks, see you Monday'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: the same Gmail API sender with the recipient inside the script",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py --body 'hello'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: Gmail send through the Google client library (users().messages().send)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_client_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: Gmail API send path in a -c code string",
+      "cmd": "python3 -c \"import urllib.request as u; u.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\"",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: a script that cannot be read, with a recipient flag (undecidable)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/no_such_script.py --to office@example.invalid",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a read-only Gmail API script (search) passes",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_read.py --q 'from:office@example.invalid'",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: a script that cannot be found, without a recipient flag (fail-closed; the sender may carry its recipient inside)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/no_such_script.py --q x",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a mail gate's own test file (mailer names as literals) passes; script content is judged by the provider-API patterns only",
+      "cmd": "python3 scripts/__tests__/email-approval-gate.test.py",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative sender script after a leading cd (Marveen's review repro)",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: relative sender script after cd with ; and a flag",
+      "cmd": "cd -P src/__tests__/fixtures/send-gate; python3 -u gmail_reply.py --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 control: relative read-only script after a leading cd passes",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative sender script resolved against the payload cwd",
+      "cmd": "python3 gmail_reply.py --body hi",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 control: relative read-only script resolved against the payload cwd passes",
+      "cmd": "python3 gmail_read.py --q x",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: relative script after a cd that cannot be followed (cd -)",
+      "cmd": "cd - && python3 gmail_read.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: relative script after a cd to a variable",
+      "cmd": "cd \"$WORK\" && python3 gmail_read.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run python on the sender script",
+      "cmd": "uv run python src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run python3 with a valued uv flag first",
+      "cmd": "uv run --with requests python3 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: uv run on the .py script itself",
+      "cmd": "uv run src/__tests__/fixtures/send-gate/gmail_client_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 control: uv run python on the read-only script passes",
+      "cmd": "uv run python src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 control: a script written by a heredoc of the same command is judged by that body (benign)",
+      "cmd": "cat > /tmp/send-gate-718-x.py <<'EOF'\nprint('hello')\nEOF\npython3 /tmp/send-gate-718-x.py",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: a script written by a heredoc of the same command, Gmail API send in the body",
+      "cmd": "cat > /tmp/send-gate-718-x.py <<'EOF'\nURL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'\nEOF\npython3 /tmp/send-gate-718-x.py",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: bash -c with its own cd to the sender script",
+      "cmd": "bash -c 'cd src/__tests__/fixtures/send-gate && python3 gmail_reply.py'",
+      "expected": true
+    },
+    {
+      "name": "#718 must-block: a cd to a variable set earlier in the same command, then the relative sender",
+      "cmd": "S=src/__tests__/fixtures/send-gate; cd $S && python3 gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a cd to a variable set earlier in the same command, then the relative read-only script",
+      "cmd": "S=src/__tests__/fixtures/send-gate; cd \"$S\" && python3 gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 must-block: the sender script path through a variable set earlier in the same command",
+      "cmd": "export S=src/__tests__/fixtures/send-gate; python3 $S/gmail_reply.py --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 control: a --to time flag on a readable non-mail script through a variable",
+      "cmd": "S=src/__tests__/fixtures/send-gate; python3 \"${S}/plain.py\" --to 40",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 must-block: sender script fed on stdin with python3 - <",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script fed on stdin with python3 <",
+      "cmd": "python3 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script piped from cat into python3 -",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: sender script piped from cat into bare python3",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: stdin script that cannot be read (fail-closed)",
+      "cmd": "cat src/__tests__/fixtures/send-gate/no_such_script.py | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a here-string program with a Gmail API send",
+      "cmd": "python3 <<< \"import urllib.request as u; u.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages/send')\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: python3 -m on a local sender module (payload cwd)",
+      "cmd": "python3 -m gmail_reply",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: python3 -m on a local sender module after cd",
+      "cmd": "cd src/__tests__/fixtures/send-gate && python3 -m gmail_reply",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a sender .py run directly by its path",
+      "cmd": "src/__tests__/fixtures/send-gate/gmail_exe_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: a sender .py run directly as ./x.py (payload cwd)",
+      "cmd": "./gmail_exe_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Gmail send on the www.googleapis.com host",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_www_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Google client chain split over two statements",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_split_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Graph send of a saved message",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/graph_send.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 must-block: Graph replyAll",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/graph_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r3 control: read-only script fed on stdin passes",
+      "cmd": "python3 - < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: plain script piped from cat passes",
+      "cmd": "cat src/__tests__/fixtures/send-gate/plain.py | python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: echo piped into python3 - passes",
+      "cmd": "echo 'print(1)' | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: empty stdin from /dev/null passes",
+      "cmd": "python3 - < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a benign here-string passes",
+      "cmd": "python3 <<< 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: python3 -m on a local read-only module passes",
+      "cmd": "python3 -m gmail_read",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: python3 -m on an installed module (no local file) passes",
+      "cmd": "python3 -m pytest -q",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a read-only .py run directly by its path passes",
+      "cmd": "src/__tests__/fixtures/send-gate/gmail_read.py --q x",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: the copy gate run on itself passes (its comments no longer match)",
+      "cmd": "python3 scripts/hooks/outgoing-copy-gate.py < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: the JS gate run on itself passes",
+      "cmd": "node scripts/email-send-gate.mjs < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: data piped into python3 -c is not a program",
+      "cmd": "cat src/__tests__/fixtures/send-gate/no_such_data.json | python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: data redirected into python3 -c is not a program",
+      "cmd": "python3 -c 'import sys; print(sys.stdin.read())' < src/__tests__/fixtures/send-gate/no_such_data.json",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a .py operand after a process substitution is not a run",
+      "cmd": "diff <(sed -n 1,5p src/__tests__/fixtures/send-gate/plain.py) src/__tests__/fixtures/send-gate/no_such_script.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r3 control: a missing .py run directly cannot execute, passes",
+      "cmd": "src/__tests__/fixtures/send-gate/no_such_script.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 MUST: leading stdin redirect before the interpreter",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 MUST: leading fd-0 redirect before the interpreter",
+      "cmd": "0< src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading glued redirect, explicit -",
+      "cmd": "<src/__tests__/fixtures/send-gate/gmail_reply.py python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: fd-0 redirect after the interpreter",
+      "cmd": "python3 0< src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading redirect before a wrapper",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py sudo python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading redirect after an assignment",
+      "cmd": "X=1 < src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading output redirect before a script run",
+      "cmd": ">/dev/null python3 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r4: leading stderr + stdin redirects",
+      "cmd": "2>/dev/null < src/__tests__/fixtures/send-gate/gmail_reply.py python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 minor: cat with a stdin redirect piped into python3",
+      "cmd": "cat < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r4 control: leading redirect of a read-only Gmail script passes",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_read.py python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: leading redirect of a plain script passes",
+      "cmd": "< src/__tests__/fixtures/send-gate/plain.py python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: another fd is not stdin, -c code runs",
+      "cmd": "3< src/__tests__/fixtures/send-gate/gmail_reply.py python3 -c 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: fd 3 ignored, stdin is /dev/null",
+      "cmd": "python3 - 3< src/__tests__/fixtures/send-gate/gmail_reply.py < /dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: leading redirect into cat is not a send",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py cat",
+      "expected": false
+    },
+    {
+      "name": "#718 r4 control: cat with stderr redirect piped into python3, plain script",
+      "cmd": "cat src/__tests__/fixtures/send-gate/plain.py 2>/dev/null | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: python3 2>&1 < A",
+      "cmd": "python3 2>&1 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 2>&1 A",
+      "cmd": "python3 2>&1 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >/dev/null 2>&1 < A",
+      "cmd": "python3 >/dev/null 2>&1 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: cat A 2>&1 | python3",
+      "cmd": "cat src/__tests__/fixtures/send-gate/gmail_reply.py 2>&1 | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: < A 2>&1 python3",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py 2>&1 python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: 2>&1 sendmail",
+      "cmd": "2>&1 sendmail a@b.hu",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 2>&1 send.py --to",
+      "cmd": "python3 2>&1 scripts/support-mail/send.py --to a@b.hu --subject s --body hi",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 &>/dev/null A",
+      "cmd": "python3 &>/dev/null src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 &>> log A",
+      "cmd": "python3 &>> /tmp/x.log src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >& /dev/null A",
+      "cmd": "python3 >& /dev/null src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 >&2 A",
+      "cmd": "python3 >&2 src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 A &> log (after)",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/gmail_reply.py &> /tmp/x.log",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: python3 2>&1 R",
+      "cmd": "python3 2>&1 src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 P &>/dev/null",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py &>/dev/null",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: git status 2>&1 | head",
+      "cmd": "git status 2>&1 | head -5",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: background then plain",
+      "cmd": "sleep 1 & python3 src/__tests__/fixtures/send-gate/plain.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: plain in background",
+      "cmd": "python3 src/__tests__/fixtures/send-gate/plain.py 2>&1 &",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: && after a redirect",
+      "cmd": "make 2>&1 >/dev/null && echo ok",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: { python3; } < A",
+      "cmd": "{ python3; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: (python3) < A",
+      "cmd": "(python3) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: { python3 -; } < A",
+      "cmd": "{ python3 -; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: ( python3 - ) < A",
+      "cmd": "( python3 - ) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: if ... fi < A",
+      "cmd": "if true; then python3; fi < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: for ... done < A",
+      "cmd": "for i in 1; do python3; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: while ... done < A",
+      "cmd": "while true; do python3; break; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: nested group < A",
+      "cmd": "( { python3; } ) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: { python3; } < R",
+      "cmd": "{ python3; } < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: script operand in a group",
+      "cmd": "(python3 src/__tests__/fixtures/send-gate/plain.py) < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: { echo; } < A",
+      "cmd": "{ echo hi; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: while read loop",
+      "cmd": "while read l; do echo $l; done < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: group stdin goes to cat, not the piped python",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/plain.py | python3; } < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: exec < A; python3",
+      "cmd": "exec < src/__tests__/fixtures/send-gate/gmail_reply.py; python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: exec 0< A; python3 -",
+      "cmd": "exec 0< src/__tests__/fixtures/send-gate/gmail_reply.py; python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: bash -c python3 < A",
+      "cmd": "bash -c python3 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: < A bash -c python3",
+      "cmd": "< src/__tests__/fixtures/send-gate/gmail_reply.py bash -c python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: sh -c 'python3 -' < A",
+      "cmd": "sh -c 'python3 -' < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 <<< \"$(cat A)\"",
+      "cmd": "python3 <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 - <<< \"$(< A)\"",
+      "cmd": "python3 - <<< \"$(< src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: here-string of another substitution: undecidable",
+      "cmd": "python3 <<< \"$(date)\"",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: exec 3< A",
+      "cmd": "exec 3< src/__tests__/fixtures/send-gate/gmail_reply.py; python3 -c 'print(1)'",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: exec < R; python3",
+      "cmd": "exec < src/__tests__/fixtures/send-gate/gmail_read.py; python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: exec >/dev/null; python3 P",
+      "cmd": "exec >/dev/null; python3 src/__tests__/fixtures/send-gate/plain.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: bash -c python3 < R",
+      "cmd": "bash -c python3 < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: bash -c 'python3 P' < A",
+      "cmd": "bash -c 'python3 src/__tests__/fixtures/send-gate/plain.py' < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 <<< \"$(cat R)\"",
+      "cmd": "python3 <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_read.py)\"",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: -c code, here-string is data",
+      "cmd": "python3 -c 'import sys' <<< \"$(cat src/__tests__/fixtures/send-gate/gmail_reply.py)\"",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: python3 <> A",
+      "cmd": "python3 <> src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 0<> A",
+      "cmd": "python3 0<> src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: cat <> A | python3",
+      "cmd": "cat <> src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 /dev/stdin < A",
+      "cmd": "python3 /dev/stdin < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: python3 /dev/fd/0 < A",
+      "cmd": "python3 /dev/fd/0 < src/__tests__/fixtures/send-gate/gmail_reply.py",
+      "expected": true
+    },
+    {
+      "name": "#718 r5: control: python3 <> R",
+      "cmd": "python3 <> src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: python3 /dev/stdin < R",
+      "cmd": "python3 /dev/stdin < src/__tests__/fixtures/send-gate/gmail_read.py",
+      "expected": false
+    },
+    {
+      "name": "#718 r5: control: cat <<< code | python3",
+      "cmd": "cat <<< 'print(1)' | python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: must-block: python3 - heredoc, Gmail API send",
+      "cmd": "python3 - <<'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: python3 heredoc, Gmail API send",
+      "cmd": "python3 <<'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: unquoted heredoc tag, Gmail API send",
+      "cmd": "python3 - <<X\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: heredoc piped into python3 -, Gmail API send",
+      "cmd": "cat <<'X' | python3 -\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: node heredoc, Graph sendMail",
+      "cmd": "node <<'X'\nfetch('https://graph.microsoft.com/v1.0/me/sendMail', {method: 'POST'})\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: python3 heredoc, client chain send",
+      "cmd": "python3 - <<'X'\nsvc.users().messages().send(userId='me', body={}).execute()\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: heredoc only printed by cat, send URL in it",
+      "cmd": "cat <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: heredoc into grep, send URL in it",
+      "cmd": "grep -c send <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: python3 heredoc, read-only Gmail list",
+      "cmd": "python3 - <<'X'\nimport urllib.request as u\nu.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread')\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: { cat; } < A | python3",
+      "cmd": "{ cat; } < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: if ... cat; fi < A | python3",
+      "cmd": "if true; then cat; fi < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: ( cat ) < A | python3",
+      "cmd": "( cat ) < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: { cat A; echo; } | python3 -",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_reply.py; echo; } | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: while ... cat ... done < A | python3",
+      "cmd": "while true; do cat; break; done < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: { cat; } < R | python3",
+      "cmd": "{ cat; } < src/__tests__/fixtures/send-gate/gmail_read.py | python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: { cat A; } | grep x",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_reply.py; } | grep x",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: { cat R; echo; } | python3 -",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_read.py; echo; } | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc into python3, Gmail API send",
+      "cmd": "<<'X' python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc into python3 -, mail library send",
+      "cmd": "<<'X' python3 -\nimport smtplib\ns = smtplib.SMTP('localhost')\ns.sendmail('a@example.invalid', ['b@example.invalid'], 'x')\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: fd 0 leading heredoc into python3, Gmail API send",
+      "cmd": "0<<X python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc after && into python3",
+      "cmd": "cd /tmp && <<'X' python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: leading heredoc into cat, send URL in it",
+      "cmd": "<<'X' cat\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: leading heredoc into python3, read-only Gmail list",
+      "cmd": "<<'X' python3\nimport urllib.request as u\nu.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread')\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: must-block: double-quoted heredoc tag into python3 -",
+      "cmd": "python3 - <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: leading double-quoted heredoc into python3",
+      "cmd": "<<\"X\" python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: <<- heredoc with tab-indented closer",
+      "cmd": "python3 - <<-'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\n\tX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: non-word heredoc tag END-X",
+      "cmd": "python3 - <<'END-X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nEND-X",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: must-block: nested group { { cat A; }; } | python3 -",
+      "cmd": "{ { cat src/__tests__/fixtures/send-gate/gmail_reply.py; }; } | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: control: nested group { { cat R; }; } | python3 -",
+      "cmd": "{ { cat src/__tests__/fixtures/send-gate/gmail_read.py; }; } | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: here-string into python3, later line equals its word",
+      "cmd": "python3 <<< \"x\"\nx",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: cat double-quoted heredoc printing a send URL",
+      "cmd": "cat <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r7: control: double-quoted heredoc into grep, send URL in it",
+      "cmd": "grep send <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
       "expected": false
     }
   ]
