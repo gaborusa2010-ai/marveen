@@ -1658,6 +1658,121 @@
       "name": "#718 r5: control: cat <<< code | python3",
       "cmd": "cat <<< 'print(1)' | python3",
       "expected": false
+    },
+    {
+      "name": "#718 r6: must-block: python3 - heredoc, Gmail API send",
+      "cmd": "python3 - <<'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: python3 heredoc, Gmail API send",
+      "cmd": "python3 <<'X'\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: unquoted heredoc tag, Gmail API send",
+      "cmd": "python3 - <<X\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: heredoc piped into python3 -, Gmail API send",
+      "cmd": "cat <<'X' | python3 -\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: node heredoc, Graph sendMail",
+      "cmd": "node <<'X'\nfetch('https://graph.microsoft.com/v1.0/me/sendMail', {method: 'POST'})\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: python3 heredoc, client chain send",
+      "cmd": "python3 - <<'X'\nsvc.users().messages().send(userId='me', body={}).execute()\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: heredoc only printed by cat, send URL in it",
+      "cmd": "cat <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: heredoc into grep, send URL in it",
+      "cmd": "grep -c send <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: python3 heredoc, read-only Gmail list",
+      "cmd": "python3 - <<'X'\nimport urllib.request as u\nu.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread')\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: { cat; } < A | python3",
+      "cmd": "{ cat; } < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: if ... cat; fi < A | python3",
+      "cmd": "if true; then cat; fi < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: ( cat ) < A | python3",
+      "cmd": "( cat ) < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: { cat A; echo; } | python3 -",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_reply.py; echo; } | python3 -",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: while ... cat ... done < A | python3",
+      "cmd": "while true; do cat; break; done < src/__tests__/fixtures/send-gate/gmail_reply.py | python3",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: { cat; } < R | python3",
+      "cmd": "{ cat; } < src/__tests__/fixtures/send-gate/gmail_read.py | python3",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: { cat A; } | grep x",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_reply.py; } | grep x",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: { cat R; echo; } | python3 -",
+      "cmd": "{ cat src/__tests__/fixtures/send-gate/gmail_read.py; echo; } | python3 -",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc into python3, Gmail API send",
+      "cmd": "<<'X' python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc into python3 -, mail library send",
+      "cmd": "<<'X' python3 -\nimport smtplib\ns = smtplib.SMTP('localhost')\ns.sendmail('a@example.invalid', ['b@example.invalid'], 'x')\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: fd 0 leading heredoc into python3, Gmail API send",
+      "cmd": "0<<X python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: must-block: leading heredoc after && into python3",
+      "cmd": "cd /tmp && <<'X' python3\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r6: control: leading heredoc into cat, send URL in it",
+      "cmd": "<<'X' cat\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": false
+    },
+    {
+      "name": "#718 r6: control: leading heredoc into python3, read-only Gmail list",
+      "cmd": "<<'X' python3\nimport urllib.request as u\nu.urlopen('https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread')\nX",
+      "expected": false
     }
   ]
 }

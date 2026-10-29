@@ -562,7 +562,19 @@ def _segments_send(segments, depth: int, base, written) -> bool:
     of the segment piped after it."""
     env = {"HOME": os.path.expanduser("~")}
     cat_files = None
+    # A compound command's output is that of every command in it, so the files of
+    # each `cat` inside it are the stdin of the segment piped after its closer
+    # (`{ cat; } < f | python3`, review 2866). One list per open group.
+    groups = []
     for toks in segments:
+        closes = toks.op.count(")") + (1 if toks and toks[0] in _GROUP_CLOSE else 0)
+        group_cats = []
+        for _ in range(closes):
+            if groups:
+                group_cats += groups.pop()
+        if groups:
+            groups[-1] += group_cats
+        groups += [[] for _ in range(toks.op.count("(") + (1 if toks and toks[0] in _GROUP_OPEN else 0))]
         assigned = _assignments(toks, env)
         if assigned is not None:
             env.update(assigned)
@@ -572,11 +584,13 @@ def _segments_send(segments, depth: int, base, written) -> bool:
         heads = _command_heads(toks)
         if any(_head_is_send(h, depth, base, written, env, stdin_files) for h in heads):
             return True
-        cat_files = None
+        cat_files = group_cats or None
         for h in heads:
             if h and _basename(h[0]) == "cat":
                 cat_files = [t if isinstance(t, _Code) else _expand_vars(t, env)
                              for t in _cat_operands(h[1:])] or None
+                if groups and cat_files:
+                    groups[-1] += cat_files
         for h in heads:
             is_cd, new_base = _cd_target(h, base, env)
             if is_cd:
@@ -730,6 +744,12 @@ def flatten_substitutions(cmd: str) -> str:
 # `$(< f)` reads f, any other substitution there counts as unreadable. Stated
 # limits: an fd copy `<&N` is unreadable; an unquoted `<<< $(cat f)` gives the
 # unreadable message; the group range errs toward more segments, not fewer.
+# Round 6 (review 2866): a heredoc body is judged by the provider-API patterns
+# too, not only by the mail-library set; a `cat f` inside a compound command
+# (`{ cat; } < f | python3`, `if ..; then cat; fi < f | python3`) feeds the pipe
+# after the group's closer; a leading heredoc (`<<'X' python3`) feeds the
+# program named after its tag. Stated limit: a shell function's redirect
+# (`f() { python3; }; f < x.py`) is not followed into the function body.
 _SCRIPT_READ_LIMIT = 2 * 1024 * 1024
 # False only inside unreadable_script_hit: is a script that cannot be read the
 # whole reason a command counts as a send?
@@ -1062,7 +1082,8 @@ _HEREDOC_SENDER_ARGV = re.compile(r"""['"](?:[^'"\s]*/)?(?:sendmail|msmtp|swaks|
 
 
 def _heredoc_body_sends(body: str) -> bool:
-    if _CODE_SEND.search(body) or _CODE_SEND_MODULE.search(body):
+    # The provider-API patterns too, as for -c and a here-string (review 2866).
+    if _CODE_SEND.search(body) or _CODE_SEND_MODULE.search(body) or _code_api_sends(body):
         return True
     return bool(_CODE_EXECISH.search(body) and _HEREDOC_SENDER_ARGV.search(body))
 
@@ -1074,6 +1095,10 @@ _HEREDOC_INTERP = re.compile(
 
 
 _HEREDOC_PIPE = re.compile(r"\|\s*(?:\S*/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun|bash|sh|zsh|dash)\b", re.I)
+# A leading heredoc (`<<'X' python3`, `0<<X bash`): nothing but an fd number stands
+# before the operator, and the program follows the tag on the opening line.
+_HEREDOC_LEAD = re.compile(r"(?:^|[;&|(])\s*\d*\s*$")
+_HEREDOC_OPENER_TAIL = re.compile(r"<<-?\s*'?\w+'?(.*)")
 _HEREDOC_REDIRECT = re.compile(r"(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['\"]?)([^\s'\"<>;&|]+)\1")
 
 
@@ -1127,6 +1152,8 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
                 return True
         line_start = cmd.rfind("\n", 0, m.start()) + 1
         head = cmd[line_start:m.start()]
+        if _HEREDOC_LEAD.search(head):
+            head = _HEREDOC_OPENER_TAIL.match(m.group(1)).group(1)
         body = cmd[m.end(1) + 1:m.end() - len(m.group(2))]
         if _HEREDOC_INTERP.search(head):
             if _heredoc_body_sends(body):

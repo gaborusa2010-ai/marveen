@@ -717,7 +717,18 @@ function catOperands(args) {
 function segmentsSend(segments, depth, base, written) {
   const env = new Map([['HOME', homedir()]])
   let catFiles = null
+  // The files of each `cat` inside a compound command are the stdin of the segment
+  // piped after its closer (`{ cat; } < f | python3`, review 2866). One list per open group.
+  const groups = []
+  const count = (s, ch) => s.split(ch).length - 1
   for (const toks of segments) {
+    const op = toks.op || ''
+    const closes = count(op, ')') + (toks.length && GROUP_CLOSE.has(toks[0]) ? 1 : 0)
+    let groupCats = []
+    for (let k = 0; k < closes; k++) if (groups.length) groupCats = groupCats.concat(groups.pop())
+    if (groups.length) groups[groups.length - 1].push(...groupCats)
+    const opens = count(op, '(') + (toks.length && GROUP_OPEN.has(toks[0]) ? 1 : 0)
+    for (let k = 0; k < opens; k++) groups.push([])
     const assigned = assignments(toks, env)
     if (assigned) {
       for (const [k, v] of assigned) env.set(k, v)
@@ -727,11 +738,12 @@ function segmentsSend(segments, depth, base, written) {
     const stdinFiles = toks.piped ? catFiles : null
     const heads = commandHeads(toks)
     if (heads.some((h) => headIsSend(h, depth, base, written, env, stdinFiles))) return true
-    catFiles = null
+    catFiles = groupCats.length ? groupCats : null
     for (const h of heads) {
       if (h && h.length && basename(h[0]) === 'cat') {
         const files = catOperands(h.slice(1)).map((t) => (isCode(t) ? t : expandVars(t, env)))
         catFiles = files.length ? files : null
+        if (groups.length && catFiles) groups[groups.length - 1].push(...catFiles)
       }
     }
     for (const h of heads) {
@@ -863,11 +875,17 @@ export function buildWrapperDepthMsg() {
 // PIPED (#1855): `cat <<'EOF' | bash` or `| python3 -` hands the body over the pipe on the
 // heredoc's opening line; it is judged the same way.
 const HEREDOC_SENDER_ARGV = /['"](?:[^'"\s]*\/)?(?:sendmail|msmtp|swaks|send\.py)(?=['"\s])/
+// The provider-API patterns too, as for -c and a here-string (review 2866).
 const heredocBodySends = (body) =>
-  CODE_SEND.test(body) || CODE_SEND_MODULE.test(body) || (CODE_EXECISH.test(body) && HEREDOC_SENDER_ARGV.test(body))
+  CODE_SEND.test(body) || CODE_SEND_MODULE.test(body) || codeApiSends(body) ||
+  (CODE_EXECISH.test(body) && HEREDOC_SENDER_ARGV.test(body))
 const HEREDOC_SHELL = /(?:^|[\s;&|(])(?:\S*\/)?(?:bash|sh|zsh|dash)\b[^\n<]*$/i
 const HEREDOC_INTERP = /(?:^|[\s;&|(])(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun)\b[^\n<]*$/i
 const HEREDOC_PIPE = /\|\s*(?:\S*\/)?(python3?(?:\.\d+)?|node|tsx|ts-node|deno|bun|bash|sh|zsh|dash)\b/i
+// A leading heredoc (`<<'X' python3`, `0<<X bash`): nothing but an fd number stands before
+// the operator, and the program follows the tag on the opening line (review 2866 probe).
+const HEREDOC_LEAD = /(?:^|[;&|(])\s*\d*\s*$/
+const HEREDOC_OPENER_TAIL = /<<-?\s*'?\w+'?(.*)/
 const HEREDOC_REDIRECT = /(?:^|[\s;&|(])(?:cat|tee)\b[^\n]*?(?:>>?|\btee(?:\s+-a)?)\s*(['"]?)([^\s'"<>;&|]+)\1/
 function writtenThenRun(cmd, written, depth, base) {
   if (!written.size) return false
@@ -907,7 +925,8 @@ function heredocProgramSends(cmd, depth, base, written) {
       } else if (heredocBodySends(pbody)) return true
     }
     const lineStart = cmd.lastIndexOf('\n', m.index - 1) + 1
-    const head = cmd.slice(lineStart, m.index)
+    let head = cmd.slice(lineStart, m.index)
+    if (HEREDOC_LEAD.test(head)) head = HEREDOC_OPENER_TAIL.exec(m[1])[1]
     const bodyStart = m.index + m[1].length + 1
     const body = cmd.slice(bodyStart, m.index + m[0].length - m[2].length)
     if (HEREDOC_INTERP.test(head)) {
