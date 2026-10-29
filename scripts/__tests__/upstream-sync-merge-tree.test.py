@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""scripts/upstream-sync.sh must not touch the working tree on a conflict (#721).
+
+Before the fix a conflicting tick ran the real `git merge`, which wrote conflict
+markers into the live checkout and took them out again with `git merge --abort`:
+~1 s every 15 minutes in which gate scripts and web files were invalid. Now a
+`git merge-tree --write-tree` dry run decides first.
+
+Each case builds a throwaway repo with a bare "origin", copies the script into
+it (BASE is derived from the script's own path) next to a recording stub of
+agent-msg.sh, and runs it. Measured, not inferred: file bytes AND mtime, the
+reflog (a merge --abort leaves "reset: moving to HEAD"), the state file, and the
+number of notifications.
+
+Run:  python3 scripts/__tests__/upstream-sync-merge-tree.test.py
+"""
+import json, os, shutil, subprocess, sys, tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(os.path.dirname(HERE), 'upstream-sync.sh')
+FAILS = []
+ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+ENV.update(GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t')
+
+
+def check(name, cond, detail=''):
+    print(('PASS  ' if cond else 'FAIL  ') + name + (('  -- ' + str(detail)) if detail and not cond else ''))
+    if not cond:
+        FAILS.append(name)
+
+
+def git(cwd, *args):
+    return subprocess.run(['git', *args], cwd=cwd, env=ENV, check=True, capture_output=True, text=True).stdout
+
+
+def write(path, text):
+    with open(path, 'w') as fh:
+        fh.write(text)
+
+
+def repo(td, upstream_file):
+    """Local main and origin/main diverged; upstream edits `upstream_file`, local edits f."""
+    seed = os.path.join(td, 'seed')
+    os.makedirs(seed)
+    git(seed, 'init', '-q', '-b', 'main')
+    write(os.path.join(seed, 'f'), 'base\n')
+    write(os.path.join(seed, 'h'), 'base\n')
+    git(seed, 'add', '.')
+    git(seed, 'commit', '-qm', 'base')
+    git(td, 'clone', '-q', '--bare', seed, 'origin.git')
+    work = os.path.join(td, 'work')
+    git(td, 'clone', '-q', os.path.join(td, 'origin.git'), work)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\n')
+    write(os.path.join(seed, upstream_file), 'upstream\n')
+    git(seed, 'commit', '-qam', 'upstream')
+    git(seed, 'push', '-q', os.path.join(td, 'origin.git'), 'main')
+    write(os.path.join(work, 'f'), 'local\n')
+    git(work, 'commit', '-qam', 'local')
+    os.makedirs(os.path.join(work, 'scripts'))
+    os.makedirs(os.path.join(work, 'store'))
+    shutil.copy(SCRIPT, os.path.join(work, 'scripts', 'upstream-sync.sh'))
+    write(os.path.join(work, 'scripts', 'agent-msg.sh'),
+          'cat >> "$(dirname "$0")/../store/notify.log"; echo "---" >> "$(dirname "$0")/../store/notify.log"; echo "OK id=1"\n')
+    return work
+
+
+def run(work, env=None):
+    return subprocess.run(['bash', os.path.join(work, 'scripts', 'upstream-sync.sh')], cwd=work,
+                          env=env or ENV, capture_output=True, text=True, timeout=120)
+
+
+def state(work):
+    with open(os.path.join(work, 'store', 'upstream-sync.json')) as fh:
+        return json.load(fh)
+
+
+def notes(work):
+    p = os.path.join(work, 'store', 'notify.log')
+    return open(p).read().count('---\n') if os.path.exists(p) else 0
+
+
+# --- 1. content conflict: the tree is not touched, one notification ----------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, 'f')
+    fpath = os.path.join(work, 'f')
+    before = (open(fpath).read(), os.stat(fpath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    p = run(work)
+    check('conflict: exit 0', p.returncode == 0, p.stderr)
+    st = state(work)
+    check('conflict: state result=conflict naming f', st['result'] == 'conflict' and 'f' in st['detail'].split(), st)
+    after = (open(fpath).read(), os.stat(fpath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    check('conflict: f bytes, mtime and HEAD unchanged', before == after, (before, after))
+    check('conflict: no merge was run (no abort in the reflog)', 'reset: moving to HEAD' not in git(work, 'reflog'))
+    check('conflict: no MERGE_HEAD left', not os.path.exists(os.path.join(work, '.git', 'MERGE_HEAD')))
+    check('conflict: one notification', notes(work) == 1, notes(work))
+    p = run(work)
+    check('conflict repeat: quiet (still one notification), state kept',
+          notes(work) == 1 and state(work)['result'] == 'conflict' and 'unchanged' in p.stderr, (notes(work), p.stderr))
+
+# --- 2. clean divergence: merged as before ------------------------------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, 'h')
+    p = run(work)
+    st = state(work)
+    parents = git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()
+    check('clean: state merged, HEAD is a two-parent merge', st['result'] == 'merged' and len(parents) == 3, (st, parents))
+    check('clean: upstream change present, local change kept',
+          open(os.path.join(work, 'h')).read() == 'upstream\n' and open(os.path.join(work, 'f')).read() == 'local\n')
+    check('clean: one notification', notes(work) == 1, notes(work))
+
+# --- 3. merge-tree itself fails: no fallback to the real merge ----------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, 'f')
+    shim = os.path.join(td, 'bin')
+    os.makedirs(shim)
+    real = shutil.which('git')
+    write(os.path.join(shim, 'git'),
+          '#!/bin/sh\nif [ "$1" = merge-tree ]; then echo "fatal: simulated" >&2; exit 128; fi\nexec %s "$@"\n' % real)
+    os.chmod(os.path.join(shim, 'git'), 0o755)
+    env = dict(ENV, PATH=shim + os.pathsep + ENV['PATH'])
+    fpath = os.path.join(work, 'f')
+    before = (open(fpath).read(), os.stat(fpath).st_mtime_ns)
+    p = run(work, env)
+    st = state(work)
+    check('merge-tree error: state error with git message', st['result'] == 'error' and 'simulated' in st['detail'], st)
+    check('merge-tree error: tree untouched, no merge run',
+          before == (open(fpath).read(), os.stat(fpath).st_mtime_ns) and 'reset: moving to HEAD' not in git(work, 'reflog'))
+    run(work, env)
+    check('merge-tree error repeat: one notification', notes(work) == 1, notes(work))
+
+print()
+if FAILS:
+    print('%d FAILED: %s' % (len(FAILS), FAILS), file=sys.stderr)
+    sys.exit(1)
+print('All upstream-sync merge-tree tests passed.')
