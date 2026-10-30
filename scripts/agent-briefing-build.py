@@ -19,7 +19,9 @@ WHAT IT WILL NOT DO
 -------------------
 1. It NEVER overwrites an existing briefing file. A hand-written handover is
    always better than a generated list, and the generated one must not be able
-   to eat it. Existing file -> exit 0, print, change nothing.
+   to eat it. Existing file -> exit 0, print, change nothing. The one exception
+   is a STALE file (older than 12 h and not from today, #732): it is renamed to
+   <file>.stale-<mtime> and a fresh briefing is built.
 2. It NEVER invents work. If the agent has no open card and no open message,
    the briefing says exactly that and tells the agent to ASK rather than find
    itself something to do -- an agent that invents a task spends the owner's
@@ -312,11 +314,37 @@ def notify_main(agent, tok):
         return json.loads(r.read().decode()).get("id")
 
 
+# #732, measured 2026-10-30 06:00: a briefing built 10-29 09:37 and never delivered
+# went out to cody a day later unchanged, because an existing file is never
+# overwritten. A file is stale when it is BOTH older than STALE_HOURS and not from
+# today: an evening hand-written handover for the next 06:00 start is ~9 h old and
+# stays; yesterday's morning sheet is ~20 h old and is set aside (not deleted).
+STALE_HOURS = 12
+
+
+def is_stale(p, now=None):
+    now = now or datetime.now()
+    m = datetime.fromtimestamp(os.path.getmtime(p))
+    return (now - m).total_seconds() > STALE_HOURS * 3600 and m.date() != now.date()
+
+
+def retire(p):
+    m = datetime.fromtimestamp(os.path.getmtime(p))
+    dst = "%s.stale-%s" % (p, m.strftime("%Y%m%d-%H%M"))
+    os.replace(p, dst)
+    return dst
+
+
 def build(agent, tok, force=False, dry=False, quiet_when_empty=False):
     path = os.path.join(STORE, "briefing-%s.txt" % agent)
     legacy = os.path.join(STORE, "night-briefing-%s.txt" % agent)
     for p in (path, legacy):
         if os.path.exists(p) and os.path.getsize(p) > 0 and not force:
+            if is_stale(p):
+                old = retire(p)
+                print("%s: ELAVULT eligazitas (%s), felreteve -> %s, ujat irok"
+                      % (agent, os.path.basename(p), os.path.basename(old)))
+                continue
             print("%s: MAR VAN eligazitas (%s), nem irom felul" % (agent, os.path.basename(p)))
             return 0
     cards = open_cards(tok, agent)
