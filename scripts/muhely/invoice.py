@@ -248,16 +248,21 @@ def money(v):
     return f"{v:,.2f}"
 
 
-def render(kind, job, business, out_path):
+def render(kind, job, business, out_path, preview=False):
     is_invoice = kind == "invoice"
     title = "INVOICE" if is_invoice else "QUOTATION"
+    lines = job.get("lines", [])
+    too_long = [str(line.get("desc", "")) for line in lines
+                if len(str(line.get("desc", ""))) > 64]
+    if too_long:
+        raise ValueError(f"64 karakternel hosszabb szamlasor: {too_long[0]}")
     # Peek at the number, do NOT consume it yet. Anything below can still raise
     # (a malformed job file, a font/layout error), and a burnt reference leaves a
     # permanent hole in the sequence -- the one thing HMRC numbering must not do.
     # The counter is bumped only after the PDF is on disk. Measured 2026-08-23:
     # a job file with a bad line still advanced the counter from 10010 to 10011.
     explicit_ref = job.get("reference")
-    ref = explicit_ref or next_number(kind, business, bump=False)
+    ref = "DRAFT" if preview else (explicit_ref or next_number(kind, business, bump=False))
 
     issued = job.get("date") or date.today().isoformat()
     issued_d = datetime.strptime(issued, "%Y-%m-%d").date()
@@ -268,7 +273,6 @@ def render(kind, job, business, out_path):
         days = int(job.get("valid_days", business.get("quote_valid_days", 30)))
         second_label, second_date = "Valid until", issued_d + timedelta(days=days)
 
-    lines = job.get("lines", [])
     subtotal = sum(float(l["qty"]) * float(l["unit"]) for l in lines)
 
     # Construction Industry Scheme. The contractor deducts at source, but ONLY
@@ -304,6 +308,9 @@ def render(kind, job, business, out_path):
 
     pg.text(L, y, business.get("trading_name") or business["legal_name"], size=16, font="F2")
     pg.text(R, y, title, size=20, font="F2", align="right")
+    if preview:
+        pg.text(R, y - 27, "DRAFT", size=18, font="F2", align="right",
+                colour=(0.75, 0.15, 0.15))
     y -= 18
     if business.get("trading_name") and business.get("legal_name") != business.get("trading_name"):
         pg.text(L, y, business["legal_name"], size=8.5, colour=(0.35, 0.35, 0.35))
@@ -348,7 +355,7 @@ def render(kind, job, business, out_path):
 
     for l in lines:
         amt = float(l["qty"]) * float(l["unit"])
-        pg.text(L + 6, y, str(l["desc"])[:64], size=9)
+        pg.text(L + 6, y, str(l["desc"]), size=9)
         pg.text(R - 190, y, f"{float(l['qty']):g}", size=9, align="right")
         pg.text(R - 105, y, money(float(l["unit"])), size=9, align="right")
         pg.text(R - 6, y, money(amt), size=9, align="right")
@@ -410,6 +417,11 @@ def render(kind, job, business, out_path):
         pg.text(R, 42, extra, size=7.5, colour=(0.5, 0.5, 0.5), align="right")
 
     write_pdf(out_path, [pg], title=f"{title} {ref}")
+    if preview:
+        return {"reference": "DRAFT", "subtotal": round(subtotal, 2), "vat": vat,
+                "cis_rate": cis_rate, "cis_base": cis_base, "cis": cis,
+                "total": total, "deposit": deposit, "balance": balance,
+                "vat_registered": bool(vat_no), "pdf": out_path}
     # PDF exists: only now is the reference actually spent.
     if not explicit_ref:
         consumed = next_number(kind, business)
@@ -615,7 +627,7 @@ def save_source(job, ref, out_path):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("quote", "invoice", "next-number"):
+    if len(argv) < 2 or argv[1] not in ("quote", "invoice", "preview", "next-number"):
         print(__doc__)
         return 2
     business = load_business()
@@ -623,10 +635,12 @@ def main(argv):
         kind = argv[2] if len(argv) > 2 else "invoice"
         print(next_number(kind, business, bump=False))
         return 0
-    kind = argv[1]
+    preview = argv[1] == "preview"
+    kind = "invoice" if preview else argv[1]
     with open(argv[2]) as fh:
         job = json.load(fh)
-    out = argv[argv.index("--out") + 1] if "--out" in argv else f"{kind}.pdf"
+    out = argv[argv.index("--out") + 1] if "--out" in argv else (
+        "preview.pdf" if preview else f"{kind}.pdf")
 
     # A SECOND INVOICE FOR THE SAME JOB SPENDS A NEW NUMBER, and until 2026-09-10
     # nothing here noticed. Measured that day in a sandbox copy: job #11, already
@@ -643,7 +657,7 @@ def main(argv):
     # must be a decision somebody made, not a side effect of running the same
     # command twice. Quotes are excluded on purpose: a customer may be re-quoted
     # any number of times, and a quote spends nothing that says what the work WAS.
-    if kind == "invoice" and "--force" not in argv:
+    if kind == "invoice" and not preview and "--force" not in argv:
         # EVERY day this file names, not just the first. A multi-day invoice
         # that re-used one already-billed day would otherwise walk straight
         # through the guard, which is the case this guard exists for.
@@ -665,7 +679,11 @@ def main(argv):
                   f"--force kapcsoloval.", file=sys.stderr)
             return 3
 
-    r = render(kind, job, business, out)
+    try:
+        r = render(kind, job, business, out, preview=preview)
+    except ValueError as e:
+        print(f"A szamlat nem keszitem el: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(r, indent=2, ensure_ascii=False))
     return 0
 
