@@ -2505,6 +2505,65 @@
       "cmd": "a[1]=1 python3 smtp_import_only.py",
       "cwd": "src/__tests__/fixtures/send-gate",
       "expected": false
+    },
+    {
+      "name": "#725 review 2: must-block: a spaced array index prefix (a[1 2]=x) before plain sendmail",
+      "cmd": "a[1 2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a spaced array index prefix before a quote-split sendmail",
+      "cmd": "a[1 2]=x send''mail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a spaced array index prefix before a curl POST to Resend",
+      "cmd": "a[1 2]=x curl -X POST https://api.resend.com/emails -d @/tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a leading-space array index prefix (a[ 1]=x) still runs the script",
+      "cmd": "a[ 1]=x python3 smtp_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a tab inside the array index",
+      "cmd": "a[1\t2]+=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a nested bracket with a space in the index (a[b[1] 2]=x)",
+      "cmd": "a[b[1] 2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a substitution with a space in the index",
+      "cmd": "b[$(echo 1) 2]=x python3 smtp_lmtp.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: must-block: a spaced array index after a plain assignment",
+      "cmd": "X=1 a[1 2]=x python3 smtp_from_import.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 2: control: a spaced array index prefix before an import-only script",
+      "cmd": "a[1 2]=x python3 smtp_import_only.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#725 review 2: control: a spaced array index with no = is the command name (bash: command not found)",
+      "cmd": "a[1 2] sendmail b@y",
+      "expected": false
+    },
+    {
+      "name": "#725 review 2: control: a spaced array index prefix before echo naming sendmail",
+      "cmd": "a[1 2]=x echo sendmail",
+      "expected": false
     }
   ]
 }

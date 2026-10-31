@@ -112,6 +112,21 @@ const ENV_ASSIGN = /^[A-Za-z_][A-Za-z_0-9]*=/
 // A word stepped over before the command, also `a[i]=v` and `a+=v`; see _ASSIGN_PREFIX
 // in hooks/outgoing-copy-gate.py (review 3034).
 const ASSIGN_PREFIX = /^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=/
+// How many tokens the leading assignment word spans (0: none): bash keeps `a[1 2]=x`
+// one word up to the matching ]; see _assign_prefix_len in the python twin.
+function assignPrefixLen(toks) {
+  if (ASSIGN_PREFIX.test(toks[0])) return 1
+  if (!/^[A-Za-z_][A-Za-z_0-9]*\[/.test(toks[0])) return 0
+  let depth = 0
+  for (let n = 0; n < toks.length; n++) {
+    const tok = toks[n]
+    for (let i = 0; i < tok.length; i++) {
+      if (tok[i] === '[') depth++
+      else if (tok[i] === ']' && --depth === 0) return /^\+?=/.test(tok.slice(i + 1)) ? n + 1 : 0
+    }
+  }
+  return 0
+}
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
 // full rationale at _CMD_POSITION_KEYWORDS in outgoing-copy-gate.py (the python
@@ -414,9 +429,9 @@ const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
   const moved = []
-  while (toks.length && (ASSIGN_PREFIX.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
+  while (toks.length && (assignPrefixLen(toks) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
     const m = REDIRECT.exec(toks[0])
-    const n = m === null || m[2] ? 1 : 2
+    const n = assignPrefixLen(toks) || (m === null || m[2] ? 1 : 2)
     if (m !== null) moved.push(...toks.slice(0, n))
     toks = toks.slice(n)
   }

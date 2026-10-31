@@ -81,6 +81,28 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 # command after `a[1]=1` (it only prints "not a valid identifier"), so
 # `a[1]=1 python3 x.py` ran x.py unseen (review 3034, the r13 adv11b rows).
 _ASSIGN_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=")
+_SUBSCRIPT_OPEN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*\[")
+
+
+def _assign_prefix_len(toks) -> int:
+    """How many tokens the leading assignment word spans (0: none). bash keeps
+    `a[1 2]=x` one word up to the matching ], spaces and nested [ ] included,
+    then runs the command after it; the tokenizer split it at the space, so
+    `a[1 2]=x sendmail b` had the program `a[1` (review 2, the r725b cases4 rows)."""
+    if _ASSIGN_PREFIX.match(toks[0]):
+        return 1
+    if not _SUBSCRIPT_OPEN.match(toks[0]):
+        return 0
+    depth = 0
+    for n, tok in enumerate(toks, 1):
+        for i, ch in enumerate(tok):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return n if re.match(r"\+?=", tok[i + 1:]) else 0
+    return 0
 # KWSPLIT924: shell reserved words that put the NEXT word in command position.
 # The segmenter splits on operators only, so `if true; then sendmail x; fi`
 # gave the segment [then, sendmail, x] whose "program" was `then`: the send was
@@ -496,10 +518,10 @@ def _command_heads(toks, _d: int = 0):
     leading assignments, command-position keywords, redirections and wrappers are
     stepped over."""
     moved = []
-    while toks and (_ASSIGN_PREFIX.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS
+    while toks and (_assign_prefix_len(toks) or toks[0] in _CMD_POSITION_KEYWORDS
                     or _REDIRECT.match(toks[0])):
         m = _REDIRECT.match(toks[0])
-        n = 1 if m is None or m.group(2) else 2
+        n = _assign_prefix_len(toks) or (1 if m is None or m.group(2) else 2)
         if m is not None:
             moved += toks[:n]
         toks = toks[n:]
@@ -1869,8 +1891,8 @@ def _http_channel_segment(cmd: str):
     except ValueError:
         return None, None
     for toks in segments:
-        while toks and _ASSIGN_PREFIX.match(toks[0]):
-            toks = toks[1:]
+        while toks and _assign_prefix_len(toks):
+            toks = toks[_assign_prefix_len(toks):]
         if not toks or not _CURLISH.match(_basename(toks[0])):
             continue
         rest = toks[1:]
@@ -2182,8 +2204,8 @@ def _ia_segment(cmd: str):
     except ValueError:
         return None
     for toks in segments:
-        while toks and _ASSIGN_PREFIX.match(toks[0]):
-            toks = toks[1:]
+        while toks and _assign_prefix_len(toks):
+            toks = toks[_assign_prefix_len(toks):]
         if toks and _CURLISH.match(_basename(toks[0])) and any(_IA_TARGET.match(t) for t in toks[1:]):
             return toks
     return None
