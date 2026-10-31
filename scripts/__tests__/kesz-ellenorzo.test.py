@@ -252,4 +252,94 @@ lower = text_result.stdout.lower()
 check("no verdict wording", "minden rendben" not in lower and "kesz" not in lower)
 temp.cleanup()
 
+temp, root = repo()
+commit(root, "scripts/quiet.py", "value = 5\n")
+write(os.path.join(root, "scripts/__tests__/quiet.test.py"), "pass\n")
+result = run(root, "--json")
+parsed = data(result)
+item = next(r for r in parsed["rows"] if r["name"].endswith("quiet.test.py"))
+check("exit 0 without counts is NEM MERT", result.returncode == 2 and item["status"] == "NEM MERT")
+temp.cleanup()
+
+temp, root = repo()
+fake(root, "vitest", "#!/bin/sh\nexit 0\n")
+commit(root, "src/b.test.ts", "test('b', () => {})\n")
+result = run(root, "--json")
+vr = next(r for r in data(result)["rows"] if r["name"].startswith("vitest"))
+check("vitest exit 0 without report is NEM MERT", result.returncode == 2 and vr["status"] == "NEM MERT")
+temp.cleanup()
+
+temp, root = repo()
+write(os.path.join(root, "store/claudeclaw.db"), "")
+commit(root, "scripts/live.py", "value = 6\n")
+write(os.path.join(root, "scripts/__tests__/live.test.py"), "open('ran.txt', 'w').write('x')\nprint('  ok   live')\n")
+comment = os.path.join(root, "..", os.path.basename(root) + "-live.txt")
+result = run(root, "--json", "--e2e", "--komment", comment)
+parsed = data(result)
+names = {r["name"]: r["status"] for r in parsed["rows"]}
+with open(comment, encoding="utf-8") as handle:
+    live_comment = handle.read()
+os.unlink(comment)
+check("live checkout runs no script test", result.returncode == 2 and not os.path.exists(os.path.join(root, "ran.txt"))
+      and names.get("scripts/__tests__/live.test.py") == "MEGTAGADVA" and names.get("ELES CHECKOUT") == "MEGTAGADVA"
+      and names.get("playwright e2e") == "MEGTAGADVA" and "ELES CHECKOUT" in live_comment)
+temp.cleanup()
+
+temp, root = repo()
+commit(root, "scripts/__tests__/always.test.py", "print('  ok   always')\n")
+call(["git", "branch", "-q", "-f", "main", "feat"], root)
+result = run(root, "--json", "--mind")
+names = {r["name"]: r["status"] for r in data(result)["rows"]}
+check("--mind without changes runs the full set", names.get("scripts/__tests__/always.test.py") == "OK")
+temp.cleanup()
+
+temp, root = repo()
+write(os.path.join(root, "README.md"), "x\n")
+comment = os.path.join(root, "comment.txt")
+run(root, "--komment", comment)
+with open(comment, encoding="utf-8") as handle:
+    text = handle.read()
+check("plain checkout is not labelled live", "ELES CHECKOUT" not in text and "sima checkout" in text)
+temp.cleanup()
+
+temp, root = repo()
+call(["git", "checkout", "-q", "--orphan", "lonely"], root)
+call(["git", "commit", "-q", "-m", "orphan"], root)
+result = run(root)
+check("no merge-base says why", result.returncode == 2 and "kozos os" in result.stderr)
+temp.cleanup()
+
+temp, root = repo()
+commit(root, "scripts/cached.py", "value = 7\n")
+write(os.path.join(root, "scripts/__tests__/cached.test.py"),
+      "import sys\nsys.path.insert(0, 'scripts')\nimport cached\nprint('  ok   cached')\n")
+result = run(root, "--json")
+caches = [d for d, _, _ in os.walk(root) if os.path.basename(d) == "__pycache__"]
+check("no __pycache__ written", result.returncode == 0 and not caches)
+temp.cleanup()
+
+temp, root = repo()
+write(os.path.join(root, "notes.txt"), "trailing \n")
+result = run(root, "--json")
+item = next((r for r in data(result)["rows"] if r["name"] == "git diff --check (untracked)"), None)
+check("untracked whitespace checked", result.returncode == 1 and item and item["status"] == "FAIL"
+      and any("trailing whitespace" in line for line in item["tail"]))
+temp.cleanup()
+
+import importlib.util
+sys.dont_write_bytecode = True  # loading the tool must not leave __pycache__ in scripts/
+spec = importlib.util.spec_from_file_location("kesz", TOOL)
+kesz = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kesz)
+real_killpg = os.killpg
+def gone(*_args):
+    raise ProcessLookupError()
+os.killpg = gone
+try:
+    with tempfile.TemporaryDirectory() as folder:
+        item = kesz.run_step(folder, "slow", ["sleep", "1"], 0.2)
+finally:
+    os.killpg = real_killpg
+check("killpg race still TIMEOUT", item["status"] == "TIMEOUT")
+
 sys.exit(1 if fails else 0)

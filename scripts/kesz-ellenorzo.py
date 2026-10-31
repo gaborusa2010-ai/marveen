@@ -3,6 +3,9 @@
 
 Usage: kesz-ellenorzo.py [--repo DIR] [--base REF] [--mind] [--build] [--e2e]
                          [--json] [--komment FILE] [--timeout SEC]
+
+Exit: 0 every row measured and green; 1 FAIL, TIMEOUT or NINCS TESZT; 2 not measured
+(NEM MERT, KIHAGYVA, MEGTAGADVA, no rows, or a live checkout, where no test is run).
 """
 import argparse
 import datetime as dt
@@ -20,7 +23,10 @@ from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-STATUSES = ("OK", "FAIL", "TIMEOUT", "NINCS TESZT", "KIHAGYVA", "MEGTAGADVA")
+STATUSES = ("OK", "FAIL", "TIMEOUT", "NINCS TESZT", "NEM MERT", "KIHAGYVA", "MEGTAGADVA")
+LIVE_REASON = "eles checkout: tesztet itt nem futtat, futtasd worktree-bol (git worktree add)"
+# compile in memory: py_compile would write __pycache__ into the checked repo
+COMPILE = "import sys; compile(open(sys.argv[1], 'rb').read(), sys.argv[1], 'exec')"
 TS_TEST_RE = re.compile(r"^src/.*\.(?:test|spec)\.ts$|^src/.*\.test\.mts$")
 SCRIPT_TEST_RE = re.compile(r"(?:^|/)(?:test_[^/]*\.py|[^/]*\.test\.(?:py|sh)|[^/]*_test\.(?:py|sh))$")
 
@@ -83,17 +89,22 @@ def command_text(command):
     return " ".join(str(item) for item in command)
 
 
-def run_step(repo, name, command, timeout, files=None, scope="", parse=None):
+def run_step(repo, name, command, timeout, files=None, scope="", parse=None, counted=False):
+    # counted: a test runner; exit 0 without a countable result is NEM MERT, not OK
     started = time.monotonic()
     try:
         process = subprocess.Popen(command, cwd=repo, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                   errors="replace", start_new_session=True)
+                                   errors="replace", start_new_session=True,
+                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             status = "OK" if process.returncode == 0 else "FAIL"
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # the group exited between the timeout and the kill
             stdout, stderr = process.communicate()
             status = "TIMEOUT"
     except OSError as exc:
@@ -106,7 +117,10 @@ def run_step(repo, name, command, timeout, files=None, scope="", parse=None):
     output = stderr if stderr.strip() else stdout
     result = row(name, status, command, process.returncode, seconds, *counts,
                  files=files, scope=scope)
-    if status in ("FAIL", "TIMEOUT"):
+    if counted and status == "OK" and sum(counts[i] or 0 for i in range(3)) == 0:
+        result["status"] = "NEM MERT"
+        result["reason"] = "exit 0, de a kimenetben nincs megszamolhato teszt-eredmeny"
+    if result["status"] in ("FAIL", "TIMEOUT", "NEM MERT"):
         result["tail"] = output.splitlines()[-20:]
     return result
 
@@ -171,7 +185,7 @@ def vitest_step(repo, name, command, timeout, files, source_names=None, argument
         except (OSError, ValueError, TypeError):
             return None, None, None, None
 
-    result = run_step(repo, name, command, timeout, files, parse=parse_report)
+    result = run_step(repo, name, command, timeout, files, parse=parse_report, counted=True)
     try:
         os.unlink(report.name)
     except OSError:
@@ -226,6 +240,21 @@ def info_for(repo, changed, deleted):
             "line_cap": [list(item) for item in sorted(caps)]}
 
 
+def untracked_check(repo, paths):
+    # git diff --check <base> does not see untracked files; --no-index does, one file at a time
+    started = time.monotonic()
+    problems = []
+    for path in paths:
+        process = git(repo, "diff", "--no-index", "--check", "/dev/null", path, check=False)
+        problems += [line for line in process.stdout.splitlines() if not line.startswith("+")]
+    command = ["git", "diff", "--no-index", "--check", "/dev/null", "<untracked>"]
+    result = row("git diff --check (untracked)", "FAIL" if problems else "OK", command,
+                 1 if problems else 0, time.monotonic() - started, files=paths,
+                 reason=f"{len(paths)} untracked fajl")
+    result["tail"] = problems[-20:]
+    return result
+
+
 def package_has_script(repo, name):
     try:
         with open(os.path.join(repo, "package.json"), encoding="utf-8") as handle:
@@ -237,6 +266,9 @@ def package_has_script(repo, name):
 def collect(args, repo, header, changed, deleted):
     rows = []
     covered = set()
+    live = header["live_install"]
+    if live:
+        rows.append(row("ELES CHECKOUT", "MEGTAGADVA", reason=LIVE_REASON))
     existing = [path for path in changed if path not in deleted]
     ts_config = any(re.search(r"(?:^|/)tsconfig[^/]*\.json$", p) for p in existing)
     ts_files = [p for p in existing if p.endswith((".ts", ".mts", ".cts", ".tsx"))]
@@ -264,7 +296,7 @@ def collect(args, repo, header, changed, deleted):
         vitest_files = ts_tests + sources + [path for path, refs in referenced.items() if refs]
         covered.update(vitest_files)
         vitest = path_tool(repo, "vitest")
-        if header["live_install"]:
+        if live:
             reason = "eles checkout, a suite itt megtagadja a futast (src/__tests__/setup/assert-not-live-install.ts); futtasd worktree-bol"
             rows.append(row("vitest", "MEGTAGADVA", files=vitest_files, reason=reason))
         elif not vitest:
@@ -289,15 +321,18 @@ def collect(args, repo, header, changed, deleted):
         if test in ran_tests:
             return
         ran_tests.add(test)
+        if live:
+            rows.append(row(test, "MEGTAGADVA", files=files, reason=LIVE_REASON))
+            return
         tool, label, parse = ((python, "python3", parse_python) if test.endswith(".py")
                               else (bash, "bash", parse_shell))
-        rows.append(run_step(repo, test, [tool, test], args.timeout, files, parse=parse) if tool
+        rows.append(run_step(repo, test, [tool, test], args.timeout, files, parse=parse, counted=True) if tool
                     else row(test, "KIHAGYVA", files=files, reason=label + " nincs a PATH-ban"))
 
     for path in script_files:
         covered.add(path)
         if path.endswith(".py"):
-            name, tool, label, command = "py_compile " + path, python, "python3", [python, "-m", "py_compile", path]
+            name, tool, label, command = "compile " + path, python, "python3", [python, "-c", COMPILE, path]
         else:
             name, tool, label, command = "bash -n " + path, bash, "bash", [bash, "-n", path]
         rows.append(run_step(repo, name, command, args.timeout, [path]) if tool
@@ -311,6 +346,10 @@ def collect(args, repo, header, changed, deleted):
     for test in changed_script_tests:
         covered.add(test)
         run_test(test, [test])
+    if args.mind and not live:
+        tracked = git(repo, "ls-files", "-z", "scripts").stdout.split("\0")
+        for test in sorted(p for p in tracked if p and SCRIPT_TEST_RE.search(p)):
+            run_test(test, [test])
 
     node = shutil.which("node")
     for path in [p for p in existing if p.endswith((".js", ".mjs", ".cjs")) and not p.startswith("src/")]:
@@ -319,12 +358,16 @@ def collect(args, repo, header, changed, deleted):
                     if node else row("node --check " + path, "KIHAGYVA", files=[path], reason="node nincs a PATH-ban"))
 
     rows.append(run_step(repo, "git diff --check", ["git", "diff", "--check", header["base"]], args.timeout))
+    untracked = [p for p in git(repo, "ls-files", "-z", "--others", "--exclude-standard").stdout.split("\0")
+                 if p and p in existing]
+    if untracked:
+        rows.append(untracked_check(repo, untracked))
     if args.mind and package_has_script(repo, "syntax-check"):
         npm = shutil.which("npm")
         rows.append(run_step(repo, "npm run syntax-check", [npm, "run", "syntax-check"], args.timeout)
                     if npm else row("npm run syntax-check", "KIHAGYVA", reason="npm nincs a PATH-ban"))
     if args.build:
-        if header["live_install"]:
+        if live:
             rows.append(row("npm run build", "MEGTAGADVA", reason="a build az eles fa dist/ mappajat irja"))
         else:
             npm = shutil.which("npm")
@@ -332,8 +375,12 @@ def collect(args, repo, header, changed, deleted):
                         if npm else row("npm run build", "KIHAGYVA", reason="npm nincs a PATH-ban"))
     if args.e2e:
         tool = path_tool(repo, "playwright")
-        rows.append(run_step(repo, "playwright e2e", [tool, "test", "--config=playwright.config.ts"],
-                             args.timeout, parse=parse_playwright) if tool else missing_tool("playwright"))
+        if live:
+            rows.append(row("playwright e2e", "MEGTAGADVA", reason=LIVE_REASON))
+        else:
+            rows.append(run_step(repo, "playwright e2e", [tool, "test", "--config=playwright.config.ts"],
+                                 args.timeout, parse=parse_playwright, counted=True)
+                        if tool else missing_tool("playwright"))
     return rows, sorted(set(existing) - covered)
 
 
@@ -350,7 +397,7 @@ def print_text(result):
     print("Worktree: " + ("igen" if h["worktree"] else "nem"))
     print("Live install: " + ("igen" if h["live_install"] else "nem"))
     if h["live_install"]:
-        print("ELES CHECKOUT: a vitest es a build itt nem futtathato, futtasd worktree-bol")
+        print("ELES CHECKOUT: tesztek, vitest, build es e2e itt nem futnak, futtasd worktree-bol")
     if not result["changed"]:
         print("Nincs valtozott fajl a base ota")
     else:
@@ -387,7 +434,7 @@ def write_comment(path, result):
     h = result["header"]
     now = dt.datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d %H:%M")
     tree = "tiszta" if h["clean"] else f"{len(h['dirty'])} piszkos fajl"
-    place = "worktree" if h["worktree"] else "ELES CHECKOUT"
+    place = "ELES CHECKOUT" if h["live_install"] else ("worktree" if h["worktree"] else "sima checkout (nem worktree)")
     lines = [f"Kesz-ellenorzo (scripts/kesz-ellenorzo.py), {now} Europe/London",
              f"Mert: ag {h['branch']}, HEAD {h['head'][:8]}, base {h['base'][:8]} ({h['base_ref']}), fa {tree}, {place}"]
     for item in result["rows"]:
@@ -409,7 +456,10 @@ def main(argv=None):
         probe = git(repo, "rev-parse", "--verify", args.base + "^{commit}", check=False)
         if probe.returncode:
             raise UsageError("ismeretlen base ref: " + args.base)
-        base = git(repo, "merge-base", "HEAD", args.base).stdout.strip()
+        merge = git(repo, "merge-base", "HEAD", args.base, check=False)
+        if merge.returncode or not merge.stdout.strip():
+            raise UsageError(f"nincs kozos os HEAD es {args.base} kozott (git merge-base exit {merge.returncode})")
+        base = merge.stdout.strip()
         branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         head = git(repo, "rev-parse", "HEAD").stdout.strip()
         dirty = git(repo, "status", "--porcelain").stdout.splitlines()
@@ -426,11 +476,13 @@ def main(argv=None):
         print(str(exc), file=sys.stderr)
         return 2
     deleted = [path for path in changed if not os.path.lexists(os.path.join(repo, path))]
-    rows, uncovered = collect(args, repo, header, changed, deleted) if changed else ([], [])
+    rows, uncovered = collect(args, repo, header, changed, deleted) if changed or args.mind else ([], [])
     counts = {status: sum(item["status"] == status for item in rows) for status in STATUSES}
-    if counts["FAIL"] or counts["TIMEOUT"] or counts["NINCS TESZT"]:
+    if live:
+        exit_code = 2  # tests were not run, whatever the static rows say
+    elif counts["FAIL"] or counts["TIMEOUT"] or counts["NINCS TESZT"]:
         exit_code = 1
-    elif counts["KIHAGYVA"] or counts["MEGTAGADVA"] or not rows:
+    elif counts["NEM MERT"] or counts["KIHAGYVA"] or counts["MEGTAGADVA"] or not rows:
         exit_code = 2
     else:
         exit_code = 0
