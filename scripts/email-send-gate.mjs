@@ -109,6 +109,24 @@ const SEND_PATTERNS = [
 const HEREDOC_RE = /((?<!<)<<-\s*(['"]?)([^\s'"<>;&|()]+)\2[^\n]*)\n([\s\S]*?\n)\t*\3(?=\s|$)|((?<!<)<<\s*(['"]?)([^\s'"<>;&|()]+)\6[^\n]*)\n([\s\S]*?\n)\7(?=\s|$)/g
 const heredoc = (m) => ({ open: m[1] ?? m[5], body: m[4] ?? m[8] })
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z_0-9]*=/
+// A word stepped over before the command, also `a[i]=v` and `a+=v`; see _ASSIGN_PREFIX
+// in hooks/outgoing-copy-gate.py (review 3034).
+const ASSIGN_PREFIX = /^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=/
+// How many tokens the leading assignment word spans (0: none): bash keeps `a[1 2]=x`
+// one word up to the matching ]; see _assign_prefix_len in the python twin.
+function assignPrefixLen(toks) {
+  if (ASSIGN_PREFIX.test(toks[0])) return 1
+  if (!/^[A-Za-z_][A-Za-z_0-9]*\[/.test(toks[0])) return 0
+  let depth = 0
+  for (let n = 0; n < toks.length; n++) {
+    const tok = toks[n]
+    for (let i = 0; i < tok.length; i++) {
+      if (tok[i] === '[') depth++
+      else if (tok[i] === ']' && --depth === 0) return /^\+?=/.test(tok.slice(i + 1)) ? n + 1 : 0
+    }
+  }
+  return 0
+}
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
 // full rationale at _CMD_POSITION_KEYWORDS in outgoing-copy-gate.py (the python
@@ -233,6 +251,15 @@ const CODE_API_PAIRS = [
 ]
 const codeApiSends = (code) =>
   CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))
+// #725: a script FILE that imports the stdlib mail client and both connects and
+// sends with it is a sender. Mirrors _script_sends in hooks/outgoing-copy-gate.py;
+// the split literals keep this file's own text from matching when it is read.
+const SCRIPT_SMTP_IMPORT = new RegExp('^[ \\t]*(?:import[ \\t][^\\n#]*\\bsmtp' + 'lib\\b|from\\s+smtp' + 'lib\\s+import\\b)', 'm')
+const SCRIPT_SMTP_CLIENT = /\b(?:SMTP(?:_SSL)?|LMTP)\s*\(/ // LMTP is an SMTP subclass (review 3034)
+const SCRIPT_SMTP_SEND = new RegExp('\\.(?:send' + 'mail|send_message)\\s*\\(')
+const scriptSends = (code, path) =>
+  codeApiSends(code) ||
+  (!SENDPY.test(basename(path)) && SCRIPT_SMTP_IMPORT.test(code) && SCRIPT_SMTP_CLIENT.test(code) && SCRIPT_SMTP_SEND.test(code))
 const codeStringSends = (code) =>
   CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || codeApiSends(code) ||
   (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
@@ -402,9 +429,9 @@ const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
   const moved = []
-  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
+  while (toks.length && (assignPrefixLen(toks) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
     const m = REDIRECT.exec(toks[0])
-    const n = m === null || m[2] ? 1 : 2
+    const n = assignPrefixLen(toks) || (m === null || m[2] ? 1 : 2)
     if (m !== null) moved.push(...toks.slice(0, n))
     toks = toks.slice(n)
   }
@@ -534,6 +561,48 @@ export function flattenSubstitutions(cmd) {
   return out
 }
 
+// The command with every unquoted `name[...]` subscript as part of one word: the
+// separators inside it become `_`. In command position bash reads `a[1;2]=x` up to
+// the matching ] as one word and runs what follows (#725 review 3); elsewhere it
+// splits, so this is an extra reading next to the plain one. See join_subscripts in
+// the python twin (an unclosed `[` joins nothing; one pass pairs the brackets).
+const SUBSCRIPT_START = /[A-Za-z_][A-Za-z_0-9]*\[/y
+export function joinSubscripts(cmd) {
+  const n = cmd.length
+  const plain = new Array(n).fill(false) // unquoted and not escaped
+  const close = new Map()
+  const stack = []
+  let q = null
+  for (let i = 0; i < n; i++) {
+    const ch = cmd[i]
+    if (q) {
+      if (ch === '\\' && q === '"') i++
+      else if (ch === q) q = null
+    } else if (ch === "'" || ch === '"') q = ch
+    else if (ch === '\\') i++
+    else {
+      plain[i] = true
+      if (ch === '[') stack.push(i)
+      else if (ch === ']' && stack.length) close.set(stack.pop(), i)
+    }
+  }
+  const out = cmd.split('')
+  for (let i = 0; i < n; i++) {
+    if (!plain[i] || (i > 0 && !(/\s/.test(cmd[i - 1]) || ';&|('.includes(cmd[i - 1])))) continue
+    SUBSCRIPT_START.lastIndex = i
+    const m = SUBSCRIPT_START.exec(cmd)
+    if (m === null) continue
+    const open = i + m[0].length - 1
+    const end = close.get(open)
+    if (end === undefined) { i = open; continue }
+    for (let k = open + 1; k < end; k++) {
+      if (plain[k] && ';|&()\n`'.includes(cmd[k])) out[k] = '_'
+    }
+    i = end
+  }
+  return out.join('')
+}
+
 // #718 (aaf838d6): the script file the interpreter runs is read and judged by the
 // provider-API send patterns only (codeApiSends; why, where the file is looked up and
 // the stated limits: _read_script in hooks/outgoing-copy-gate.py). A relative path
@@ -645,7 +714,7 @@ function pythonModuleSends(rest, base, env) {
     try { lstatSync(path) } catch { exists = false }
     if (exists) {
       const body = readScript(path, base)
-      return body === null ? unreadableSends : codeApiSends(body)
+      return body === null ? unreadableSends : scriptSends(body, path)
     }
   }
   return null
@@ -687,12 +756,12 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
     const files = src ? [expandVars(src[1], env)] : (stdinFiles ?? [])
     const bodies = files.map((f) => (!isCode(f) && written.has(f) ? written.get(f) : stdinBody(f, base)))
     if (bodies.some((b) => b === null)) return recipient || unreadableSends
-    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : codeApiSends(b)))
+    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : scriptSends(b, files[k])))
   }
   if (script !== null) {
-    if (written.has(script)) return codeApiSends(written.get(script))
+    if (written.has(script)) return scriptSends(written.get(script), script)
     const body = readScript(script, base)
-    return body === null ? unreadableSends : codeApiSends(body)
+    return body === null ? unreadableSends : scriptSends(body, script)
   }
   return false
 }
@@ -807,7 +876,7 @@ function headIsSend(toks, depth, base, written, env, stdinFiles = null) {
   if (prog.endsWith('.py') && toks[0].includes('/')) {
     const path = written.has(toks[0]) ? toks[0] : expandVars(toks[0], env)
     const body = written.has(path) ? written.get(path) : readScript(path, base)
-    if (body !== null && codeApiSends(body)) return true
+    if (body !== null && scriptSends(body, path)) return true
   }
   // An interpreter or program that cannot be resolved statically ($PY, a glob,
   // a substitution) with a recipient flag: what runs is undecidable here.
@@ -950,9 +1019,70 @@ function heredocProgramSends(cmd, depth, base, written) {
   return writtenThenRun(cmd, written, depth, base)
 }
 
+// #725 coarse rule (Marveen msg 14989, GO 14995): a send-capable token ANYWHERE in the
+// text AND a construct this parser has repeatedly got wrong (heredoc of any kind,
+// backslash-newline, an extglob paren, [[, case, a #, a $( ) or backtick substitution spanning
+// a line) is not decided: it counts as a send. Thirteen review rounds found a hole every
+// time in this family; on ambiguity the gate stops guessing. Deliberately a text match,
+// not a parse. Mirrors ambiguous_send_text in hooks/outgoing-copy-gate.py, bound by
+// send-invocation-cases.json. send.py only as a whole file name (review 3034): seeme-send.py,
+// telegram_fallback_send.py and check-before-send.py are not the mailer.
+const AMBIGUOUS_LITERALS = /(?<![\w.-])send\.py\b|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b|\bsmtplib\b|\bsendMail\s*\(/i
+const AMBIGUOUS_CONSTRUCTS = [
+  /(?<!<)<<(?!<)/, // heredoc, not a here-string
+  /\\\n/, // backslash-newline
+  /[@?*+!]\(/, // extglob-like paren
+  /\[\[/,
+  /(?:^|[\s;&|(])case\s/,
+  /#/, // comment rules (reviews 2942, 2945)
+]
+
+function multilineSubstitution(cmd) {
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < cmd.length; i++) {
+    if (cmd.startsWith('$(', i) && !cmd.startsWith('$((', i)) {
+      if (depth === 0) start = i
+      depth++
+    } else if (cmd[i] === ')' && depth) {
+      depth--
+      if (depth === 0 && cmd.slice(start, i).includes('\n')) return true
+    }
+  }
+  const ticks = [...cmd.matchAll(/(?<!\\)`/g)].map((m) => m.index)
+  for (let k = 0; k + 1 < ticks.length; k += 2) {
+    if (cmd.slice(ticks[k], ticks[k + 1]).includes('\n')) return true
+  }
+  return false
+}
+
+export function ambiguousSendText(cmd) {
+  if (!(AMBIGUOUS_LITERALS.test(cmd) || CODE_SEND.test(cmd) || CODE_SEND_MODULE.test(cmd) ||
+        codeApiSends(cmd) || /\bgraph-mail\b/i.test(cmd))) return false
+  return AMBIGUOUS_CONSTRUCTS.some((re) => re.test(cmd)) || multilineSubstitution(cmd)
+}
+
+// True when the coarse rule is the whole reason the command counts as a send.
+export function ambiguousSendHit(cmd, cwd = null) {
+  return ambiguousSendText(cmd) && !isSend(cmd, 0, cwd || process.cwd())
+}
+
+export function buildAmbiguousSendMsg() {
+  return (
+    'TILTVA (governance hard-gate): a parancs levelkuldesre utalo szot (sendmail, smtplib, send.py, ' +
+    'levelezo API...) ES nehezen elemezheto szerkezetet (heredoc, sor vegi backslash, [[, case, extglob, #, ' +
+    'tobbsoros $( ) vagy backtick) tartalmaz egyszerre. Ilyenkor a kapu nem probalja eldonteni, hogy ' +
+    'kuldes-e: kuldeskent kezeli (#725, Marveen msg 14989). Ha ez NEM kuldes (kartya-, uzenet- vagy ' +
+    'jegyzet-szoveg, teszt-fixture): a szoveget a Write toollal ird fajlba, es a parancs a fajlra ' +
+    'hivatkozzon; a Write-ot ez a kapu nem nezi. Ha kuldes: sub-agentkent Bash-bol amugy sem kuldhetsz, ' +
+    'a kimeno emailt a fo-agens kuldi.'
+  )
+}
+
 // cwd: the directory the command runs in (the hook payload's cwd); a relative script
 // path resolves against it. Null: this process's cwd.
 export function isSendInvocation(cmd, depth = 0, cwd = null) {
+  if (depth === 0 && ambiguousSendText(cmd)) return true
   return isSend(cmd, depth, cwd || process.cwd())
 }
 
@@ -969,14 +1099,17 @@ function isSend(cmd, depth, base) {
   }
   if (segmentsSend(segments, depth, base, written)) return true
   // The same command with every substitution as one undecidable word (see
-  // flattenSubstitutions): the outer command keeps the word it would run.
-  const flat = flattenSubstitutions(cmd)
-  if (flat === cmd) return false
-  try {
-    return segmentsSend(segmentsTokens(flat), depth, base, written)
-  } catch {
-    return SEND_PATTERNS.some((re) => re.test(cmd))
+  // flattenSubstitutions): the outer command keeps the word it would run; and with
+  // every subscript kept as one word (joinSubscripts).
+  for (const alt of [flattenSubstitutions(cmd), joinSubscripts(cmd)]) {
+    if (alt === cmd) continue
+    try {
+      if (segmentsSend(segmentsTokens(alt), depth, base, written)) return true
+    } catch {
+      return SEND_PATTERNS.some((re) => re.test(cmd))
+    }
   }
+  return false
 }
 
 // Outbound-shaped operations of the multiplexed manage_email tool. Each of
@@ -1090,6 +1223,7 @@ export function gateDecision(toolName, toolInput, isVerified = null, cwd = null)
   if (name === 'Bash') {
     const cmd = String(toolInput?.command ?? '')
     if (isSendInvocation(cmd, 0, cwd)) {
+      if (ambiguousSendHit(cmd, cwd)) return { deny: true, kind: 'ambiguous-send' }
       if (wrapperDepthHit(cmd)) return { deny: true, kind: 'wrapper-depth' }
       return unreadableScriptHit(cmd, cwd) ? { deny: true, kind: 'unreadable-script' } : { deny: true }
     }
@@ -1371,6 +1505,7 @@ if (isInvokedDirectly()) {
     if (kind === 'draft-required') deny(buildDraftOnlyMsg(ownerName))
     if (kind === 'wrapper-depth') deny(buildWrapperDepthMsg())
     if (kind === 'unreadable-script') deny(buildUnreadableScriptMsg())
+    if (kind === 'ambiguous-send') deny(buildAmbiguousSendMsg())
     // Thread-scoped narrowing: only when the scaffold wired this agent's hook
     // command with the flag (capability-driven, regenerated on every spawn),
     // and only for the direct send_email tool. Bash send routes and

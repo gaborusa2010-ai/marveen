@@ -390,3 +390,43 @@ is refused by the other.
 
 A 409 means: do not send, and check the sent mailbox before deciding anything,
 because the earlier attempt may already have gone out.
+
+# Mail gates: an ambiguous command counts as a send (#725)
+
+Both send recognizers (`is_send_invocation` in `scripts/hooks/outgoing-copy-gate.py`,
+`isSendInvocation` in `scripts/email-send-gate.mjs`) first apply a deliberately coarse
+text rule: if a command names a send-capable token anywhere (a mailer binary, the
+stdlib mail library, the support-mail script, a provider send endpoint, graph-mail)
+AND contains one of the constructs the parser kept getting wrong (any heredoc but not
+a `<<<` here-string, a backslash-newline, an extglob paren, `[[`, `case`, a `#`, a
+`$( )` or backtick substitution spanning a line), it counts as a send without further
+analysis. On a sub-agent it is the hard deny that routes mail through the main agent.
+On the main agent it goes to the copy audit, and a harmless hit has no mail body to
+pull, so it is a hard deny there too (exit 2, e.g. `grep -rn` for the mail library
+piped through `grep -v '#'`): the Write tool is the way out on both. The deny says the
+coarse rule was the reason (`ambiguous-send`). The send-tool token is the support-mail
+script's file name `send.py` as a whole word; `seeme-send.py` or
+`check-before-send.py` does not count.
+
+**Why a text match and not a parser fix.** Thirteen review rounds on #725 found a new
+hole in this family every time; rebuilding bash grammar from text did not converge.
+The cost was measured before the decision (Marveen msg 14989, GO 14995) and again on
+the final rule: a 7-day replay of every fleet Bash command (21145 invocations) gives
+50 new sends, all of them gate work itself (card notes, review messages, test
+fixtures), and 0 commands that the previous gate called a send and this one does not.
+
+**What to do when it stops you.** Text that names send tokens (a card comment, an
+inter-agent message, a test fixture) is written with the Write tool into a file, and
+the command refers to the file (`--body-file`, `--fajl`, `--data-binary @file`). The
+Write tool is not seen by these gates. A bash heredoc carrying that text is exactly
+what the rule cannot tell apart from a real send.
+
+**Script files.** A Python script file that imports the stdlib mail client and both
+connects and sends with it is a sender when it is run (by path, on stdin, or as a
+module); an import alone is not. The client is `SMTP`, `SMTP_SSL` or `LMTP`. Fixtures:
+`src/__tests__/fixtures/send-gate/smtp_*.py`. Known limit: a script that builds the
+module name at run time (`importlib.import_module("smtp" + "lib")`, `getattr`) is not
+recognised; reading a file's text cannot follow that.
+
+The shared contract is `scripts/hooks/send-invocation-cases.json`; rows tagged
+`#725 coarse` are the intended over-block.

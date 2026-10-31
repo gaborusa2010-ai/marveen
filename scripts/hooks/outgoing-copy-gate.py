@@ -77,6 +77,32 @@ import sys
 # here-string (<<<).
 _HEREDOC = re.compile(r"""((?<!<)<<(-)?\s*(['"]?)([^\s'"<>;&|()]+)\3[^\n]*)\n(.*?\n)(?(2)\t*)\4(?=\s|$)""", re.S)
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+# A word stepped over before the command: also `a[i]=v` and `a+=v`. bash runs the
+# command after `a[1]=1` (it only prints "not a valid identifier"), so
+# `a[1]=1 python3 x.py` ran x.py unseen (review 3034, the r13 adv11b rows).
+_ASSIGN_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=")
+_SUBSCRIPT_OPEN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*\[")
+
+
+def _assign_prefix_len(toks) -> int:
+    """How many tokens the leading assignment word spans (0: none). bash keeps
+    `a[1 2]=x` one word up to the matching ], spaces and nested [ ] included,
+    then runs the command after it; the tokenizer split it at the space, so
+    `a[1 2]=x sendmail b` had the program `a[1` (review 2, the r725b cases4 rows)."""
+    if _ASSIGN_PREFIX.match(toks[0]):
+        return 1
+    if not _SUBSCRIPT_OPEN.match(toks[0]):
+        return 0
+    depth = 0
+    for n, tok in enumerate(toks, 1):
+        for i, ch in enumerate(tok):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return n if re.match(r"\+?=", tok[i + 1:]) else 0
+    return 0
 # KWSPLIT924: shell reserved words that put the NEXT word in command position.
 # The segmenter splits on operators only, so `if true; then sendmail x; fi`
 # gave the segment [then, sendmail, x] whose "program" was `then`: the send was
@@ -158,6 +184,22 @@ def _code_api_sends(code: str) -> bool:
     if _CODE_API_CLIENT_SEND.search(code):
         return True
     return any(host.search(code) and path.search(code) for host, path in _CODE_API_PAIRS)
+
+
+# #725: a script FILE that imports the stdlib mail client and both connects and
+# sends with it is a sender (fixtures smtp_send.py, smtp_from_import.py; an
+# import alone is not: smtp_import_only.py). The split literals keep this
+# file's own text from matching when the gate reads itself.
+_SCRIPT_SMTP_IMPORT = re.compile(r"^[ \t]*(?:import[ \t][^\n#]*\bsmtp" r"lib\b|from\s+smtp" r"lib\s+import\b)", re.M)
+_SCRIPT_SMTP_CLIENT = re.compile(r"\b(?:SMTP(?:_SSL)?|LMTP)\s*\(")  # LMTP is an SMTP subclass (review 3034)
+_SCRIPT_SMTP_SEND = re.compile(r"\.(?:send" r"mail|send_message)\s*\(")
+
+
+def _script_sends(code: str, path: str) -> bool:
+    """A script file's text: the provider-API patterns and the mail-library rule above."""
+    return _code_api_sends(code) or bool(
+        not _SENDPY.match(_basename(path)) and _SCRIPT_SMTP_IMPORT.search(code)
+        and _SCRIPT_SMTP_CLIENT.search(code) and _SCRIPT_SMTP_SEND.search(code))
 
 
 def _code_string_sends(code: str) -> bool:
@@ -324,6 +366,11 @@ def _segments_tokens(cmd: str):
     lex = shlex.shlex(_mask_subshell_markers(_HEREDOC.sub(r"\1", cmd)),
                       posix=True, punctuation_chars="();|&")
     lex.whitespace_split = True
+    # #725 (review 3034): shlex's default `#` comment started mid-word (`a#b`,
+    # `${#a}`) and, with newlines already turned into `;`, ate the rest of the
+    # command, so `# hi\nsend''mail ...` lost its send. `#` is an ordinary
+    # character here, as in the JS twin's tokenizer.
+    lex.commenters = ""
     segments, cur, ops = [], _Seg(), ""
     for tok in lex:
         tok = tok.replace(_AMP, "&")
@@ -471,10 +518,10 @@ def _command_heads(toks, _d: int = 0):
     leading assignments, command-position keywords, redirections and wrappers are
     stepped over."""
     moved = []
-    while toks and (_ENV_ASSIGN.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS
+    while toks and (_assign_prefix_len(toks) or toks[0] in _CMD_POSITION_KEYWORDS
                     or _REDIRECT.match(toks[0])):
         m = _REDIRECT.match(toks[0])
-        n = 1 if m is None or m.group(2) else 2
+        n = _assign_prefix_len(toks) or (1 if m is None or m.group(2) else 2)
         if m is not None:
             moved += toks[:n]
         toks = toks[n:]
@@ -716,6 +763,58 @@ def flatten_substitutions(cmd: str) -> str:
     return "".join(out)
 
 
+_SUBSCRIPT_START = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\[")
+
+
+def join_subscripts(cmd: str) -> str:
+    """The command with every unquoted `name[...]` subscript as part of one word:
+    the separators inside it (; | & ( ) newline backtick) become `_`. In command
+    position bash reads `a[1;2]=x` up to the matching ] as ONE word, prints "not
+    a valid identifier" and runs what follows, so `a[1;2]=x sendmail b` sent
+    while the segmenter cut at the `;` (#725 review 3). Elsewhere (`echo a[1;b]`)
+    bash does split, so this is an EXTRA reading next to the plain one, never a
+    replacement. An unclosed `[` joins nothing (bash stops at EOF there). One
+    pass pairs the brackets, so a long hostile command stays linear. See
+    joinSubscripts in email-send-gate.mjs (the JS twin)."""
+    n = len(cmd)
+    plain = [False] * n  # unquoted and not escaped
+    close, stack, q, i = {}, [], None, 0
+    while i < n:
+        ch = cmd[i]
+        if q:
+            if ch == "\\" and q == '"':
+                i += 1
+            elif ch == q:
+                q = None
+        elif ch in ("'", '"'):
+            q = ch
+        elif ch == "\\":
+            i += 1
+        else:
+            plain[i] = True
+            if ch == "[":
+                stack.append(i)
+            elif ch == "]" and stack:
+                close[stack.pop()] = i
+        i += 1
+    out = list(cmd)
+    i = 0
+    while i < n:
+        if not plain[i] or (i and not (cmd[i - 1].isspace() or cmd[i - 1] in ";&|(")):
+            i += 1
+            continue
+        m = _SUBSCRIPT_START.match(cmd, i)
+        end = close.get(m.end() - 1) if m else None
+        if end is None:
+            i = m.end() if m else i + 1
+            continue
+        for k in range(m.end(), end):
+            if plain[k] and cmd[k] in ";|&()\n`":
+                out[k] = "_"
+        i = end + 1
+    return "".join(out)
+
+
 # #718 (aaf838d6): an ad-hoc script (a scratchpad gmail_reply.py) sent through
 # the Gmail API and passed: only send.py was known by name, and the script's
 # CONTENT was never read. Now a script file the interpreter runs is read and
@@ -904,7 +1003,7 @@ def _python_module_sends(rest, base, env):
         path = os.path.join(base, cand)
         if os.path.lexists(path):
             body = _read_script(path, base)
-            return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
+            return _UNREADABLE_SENDS if body is None else _script_sends(body, path)
     return None
 
 
@@ -949,13 +1048,13 @@ def _python_head_sends(rest, base, written, env, stdin_files=None) -> bool:
                   for f in files]
         if any(b is None for b in bodies):
             return recipient or _UNREADABLE_SENDS
-        return recipient or any(_code_string_sends(b) if isinstance(f, _Code) else _code_api_sends(b)
+        return recipient or any(_code_string_sends(b) if isinstance(f, _Code) else _script_sends(b, f)
                                 for f, b in zip(files, bodies))
     if script is not None:
         if script in written:
-            return _code_api_sends(written[script])
+            return _script_sends(written[script], script)
         body = _read_script(script, base)
-        return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
+        return _UNREADABLE_SENDS if body is None else _script_sends(body, script)
     return False
 
 
@@ -1007,7 +1106,7 @@ def _head_is_send(toks, depth: int, base, written, env, stdin_files=None) -> boo
     if prog.endswith(".py") and "/" in toks[0]:
         path = toks[0] if toks[0] in written else _expand_vars(toks[0], env)
         body = written[path] if path in written else _read_script(path, base)
-        if body is not None and _code_api_sends(body):
+        if body is not None and _script_sends(body, path):
             return True
     # an interpreter or program that cannot be resolved statically ($PY, a glob,
     # a substitution) with a recipient flag: what runs is undecidable here
@@ -1181,9 +1280,87 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
     return _written_then_run(cmd, written, depth, base)
 
 
+# #725 coarse rule (Marveen msg 14989, GO 14995): a command that names a
+# send-capable token ANYWHERE in its text AND contains a construct this parser
+# has repeatedly got wrong (heredoc of any kind, backslash-newline, an extglob
+# paren, [[, case, a #, a $( ) or backtick substitution spanning a line) is not
+# decided here: it counts as a send (sub-agent: the hard deny that routes it
+# through the main agent; main agent: the copy audit, which hard-denies a send
+# it cannot pull a mail body from, so there too the way out is the Write tool,
+# review 3034). Thirteen review rounds found a hole
+# every time in exactly this family; rebuilding bash grammar from text does not
+# converge, so on ambiguity the gate stops guessing. Plain single-line commands
+# keep the full analysis in _is_send. The text match is deliberate: it does not
+# parse. Measured over-block before the GO (725-szabaly1-tulterheles, 7 days,
+# 21699 invocations): 57 new approvals, all about the gate work itself. The
+# final rule (with #, which the comment-rule reviews 2942/2945 kept hitting),
+# replayed old vs new over 7 days / 21145 invocations: 50 new sends, all gate
+# work, 0 sends lost. Text naming send tokens is written with the Write tool,
+# which this hook does not see. Mirrored in email-send-gate.mjs (ambiguousSendText);
+# docs/security-hardening.md "Mail gates: an ambiguous command counts as a send".
+_AMBIGUOUS_CONSTRUCTS = (
+    re.compile(r"(?<!<)<<(?!<)"),             # heredoc, not a here-string
+    re.compile(r"\\\n"),                      # backslash-newline
+    re.compile(r"[@?*+!]\("),                 # extglob-like paren
+    re.compile(r"\[\["),
+    re.compile(r"(?:^|[\s;&|(])case\s"),
+    re.compile(r"#"),                         # comment rules (reviews 2942, 2945)
+)
+# The send tokens: _FALLBACK_LITERALS with send.py only as a whole file name
+# (review 3034): seeme-send.py, telegram_fallback_send.py, check-before-send.py
+# are not the mailer. Mirrors AMBIGUOUS_LITERALS in email-send-gate.mjs.
+_AMBIGUOUS_LITERALS = re.compile(
+    r"(?<![\w.-])send\.py\b|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b"
+    r"|\bsmtplib\b|\bsendMail\s*\(", re.I
+)
+_GRAPHMAIL_WORD = re.compile(r"\bgraph-mail\b", re.I)
+
+
+def _multiline_substitution(cmd: str) -> bool:
+    depth, start = 0, 0
+    for i, ch in enumerate(cmd):
+        if ch == "$" and cmd.startswith("$(", i) and not cmd.startswith("$((", i):
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+            if depth == 0 and "\n" in cmd[start:i]:
+                return True
+    ticks = [m.start() for m in re.finditer(r"(?<!\\)`", cmd)]
+    return any("\n" in cmd[a:b] for a, b in zip(ticks[::2], ticks[1::2]))
+
+
+def ambiguous_send_text(cmd: str) -> bool:
+    if not (_AMBIGUOUS_LITERALS.search(cmd) or _CODE_SEND.search(cmd)
+            or _CODE_SEND_MODULE.search(cmd) or _code_api_sends(cmd)
+            or _GRAPHMAIL_WORD.search(cmd)):
+        return False
+    return any(p.search(cmd) for p in _AMBIGUOUS_CONSTRUCTS) or _multiline_substitution(cmd)
+
+
+def ambiguous_send_hit(cmd: str, cwd=None) -> bool:
+    """True when the coarse rule is the whole reason the command counts as a
+    send, so a deny can say so (and name the Write-tool habit) instead of
+    talking about a letter."""
+    return ambiguous_send_text(cmd) and not _is_send(cmd, 0, cwd or os.getcwd())
+
+
+AMBIGUOUS_SEND_MSG = (
+    "A parancs levelkuldesre utalo szot (sendmail, smtplib, send.py, levelezo API...) ES "
+    "nehezen elemezheto szerkezetet (heredoc, sor vegi backslash, [[, case, extglob, #, tobbsoros "
+    "$( ) vagy backtick) tartalmaz egyszerre. Ilyenkor a kapu nem probalja eldonteni, hogy "
+    "kuldes-e: kuldeskent kezeli (#725, Marveen msg 14989).\n"
+    "Ha ez NEM kuldes (kartya-, uzenet- vagy jegyzet-szoveg, teszt-fixture): a szoveget a "
+    "Write toollal ird fajlba, es a parancs a fajlra hivatkozzon; a Write-ot ez a kapu nem nezi.\n"
+)
+
+
 def is_send_invocation(cmd: str, _depth: int = 0, cwd=None) -> bool:
     """cwd: the directory the command runs in (the hook payload's cwd); a
     relative script path resolves against it. None: this process's cwd."""
+    if _depth == 0 and ambiguous_send_text(cmd):
+        return True
     return _is_send(cmd, _depth, cwd or os.getcwd())
 
 
@@ -1202,14 +1379,17 @@ def _is_send(cmd: str, _depth: int, base) -> bool:
     if _segments_send(segments, _depth, base, written):
         return True
     # the same command with every substitution as one undecidable word
-    # (flatten_substitutions): the outer command keeps the word it would run
-    flat = flatten_substitutions(cmd)
-    if flat == cmd:
-        return False
-    try:
-        return _segments_send(_segments_tokens(flat), _depth, base, written)
-    except ValueError:
-        return bool(_FALLBACK_LITERALS.search(cmd))
+    # (flatten_substitutions): the outer command keeps the word it would run;
+    # and with every subscript kept as one word (join_subscripts)
+    for alt in (flatten_substitutions(cmd), join_subscripts(cmd)):
+        if alt == cmd:
+            continue
+        try:
+            if _segments_send(_segments_tokens(alt), _depth, base, written):
+                return True
+        except ValueError:
+            return bool(_FALLBACK_LITERALS.search(cmd))
+    return False
 
 # --- Hungarian detection (accent-insensitive markers) -----------------------
 # These fire on both the correct and the stripped spelling, so a transliterated
@@ -1766,8 +1946,8 @@ def _http_channel_segment(cmd: str):
     except ValueError:
         return None, None
     for toks in segments:
-        while toks and _ENV_ASSIGN.match(toks[0]):
-            toks = toks[1:]
+        while toks and _assign_prefix_len(toks):
+            toks = toks[_assign_prefix_len(toks):]
         if not toks or not _CURLISH.match(_basename(toks[0])):
             continue
         rest = toks[1:]
@@ -2079,8 +2259,8 @@ def _ia_segment(cmd: str):
     except ValueError:
         return None
     for toks in segments:
-        while toks and _ENV_ASSIGN.match(toks[0]):
-            toks = toks[1:]
+        while toks and _assign_prefix_len(toks):
+            toks = toks[_assign_prefix_len(toks):]
         if toks and _CURLISH.match(_basename(toks[0])) and any(_IA_TARGET.match(t) for t in toks[1:]):
             return toks
     return None
@@ -2318,6 +2498,10 @@ def main():
                 "(< /teljes/ut/body.txt), vagy --body-ban atadott szoveg.\n"
             )
             sys.exit(2)
+        if tool == "Bash" and ambiguous_send_hit(cmd, cwd=payload_cwd(payload)):
+            sys.stderr.write("KIMENO-SZOVEG KAPU: TILTVA, a levelet nem tudtam megvizsgalni.\n"
+                             + AMBIGUOUS_SEND_MSG)
+            sys.exit(2)
         reason = unreadable or "a hook nem talalt vizsgalhato szoveget a hivasban"
         sys.stderr.write(
             "KIMENO-SZOVEG KAPU: TILTVA, mert a levelet nem tudtam megvizsgalni.\n"
@@ -2353,6 +2537,8 @@ def main():
             + "\n".join(f"  - {p}" for p in problems)
             + "\n\nJavitsd a szoveget es kuldd ujra. Ekezetes magyar szoveg a vevo fele "
               "nem stiluskerdes: Szabi 2026-08-10-en ket kulon esetben kerte szamon.\n"
+            + ("\n" + AMBIGUOUS_SEND_MSG
+               if tool == "Bash" and ambiguous_send_hit(cmd, cwd=payload_cwd(payload)) else "")
         )
         sys.exit(2)
 

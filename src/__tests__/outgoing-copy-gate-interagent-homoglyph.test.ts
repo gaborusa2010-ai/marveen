@@ -165,9 +165,12 @@ describe('inter-agent message: an UNINTERPRETABLE body PASSES, loudly (fail-open
 describe('scope: the email contract is unchanged', () => {
   it('the conformance list keeps inter-agent curls expected:false, and SAYS what changed outside it', () => {
     const cases = JSON.parse(readFileSync(join(ROOT, 'scripts', 'hooks', 'send-invocation-cases.json'), 'utf-8'))
+    // #725 coarse: an inter-agent post built in a heredoc that names a send
+    // token counts as a send; those rows are tagged, every other one stays false.
+    const isCoarse = (c: { name: string }) => c.name.includes('#725 coarse')
     const ia = cases.cases.filter((c: { cmd: string }) => c.cmd.includes('/api/messages'))
-    expect(ia.length).toBeGreaterThan(0)
-    for (const c of ia) expect(c.expected).toBe(false)
+    expect(ia.filter((c: { name: string }) => !isCoarse(c)).length).toBeGreaterThan(0)
+    for (const c of ia) expect(c.expected).toBe(isCoarse(c))
     expect(cases._comment).toContain('INTERAGENTHOMOGLIF923')
     expect(cases._comment).toContain('homoglyph-only')
   })
