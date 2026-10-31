@@ -117,7 +117,10 @@ def run_step(repo, name, command, timeout, files=None, scope="", parse=None, cou
     output = stderr if stderr.strip() else stdout
     result = row(name, status, command, process.returncode, seconds, *counts,
                  files=files, scope=scope)
-    if counted and status == "OK" and sum(counts[i] or 0 for i in range(3)) == 0:
+    if status == "OK" and (counts[1] or 0) > 0:
+        result["status"] = "FAIL"
+        result["reason"] = f"exit 0, de a kimenet {counts[1]} bukott tesztet szamolt"
+    elif counted and status == "OK" and sum(counts[i] or 0 for i in range(3)) == 0:
         result["status"] = "NEM MERT"
         result["reason"] = "exit 0, de a kimenetben nincs megszamolhato teszt-eredmeny"
     if result["status"] in ("FAIL", "TIMEOUT", "NEM MERT"):
