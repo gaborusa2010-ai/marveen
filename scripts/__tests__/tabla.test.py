@@ -34,6 +34,7 @@ cards = [
 requests = []
 memory_header = "strict=true; relaxed=true"
 messages = [{"id": 7, "from_agent": "alice", "to_agent": "tester", "status": "pending", "created_at": 100, "content": "hello"}]
+message_answer = None  # raw 200 body for /api/messages instead of the dataset
 
 
 def message_page(query):
@@ -43,11 +44,12 @@ def message_page(query):
     status = query.get("status", [""])[0]
     limit = min(int(query.get("limit", ["50"])[0]), 200)
     rows = sorted(messages, key=lambda m: m["id"], reverse=True)
+    # `also`: a row that changes status between two reads shows up under both
     if status == "pending":
-        rows = [m for m in rows if m["status"] == "pending"]
+        rows = [m for m in rows if "pending" in [m["status"]] + m.get("also", [])]
     else:
         if status:
-            rows = [m for m in rows if m["status"] == status]
+            rows = [m for m in rows if status in [m["status"]] + m.get("also", [])]
         if "before" in query:
             rows = [m for m in rows if m["id"] < int(query["before"][0])]
         rows = rows[:limit]
@@ -108,6 +110,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         if path.startswith("/api/messages/"):
             return self.send(200, {"id": 7, "from_agent": "alice", "to_agent": "tester", "status": "pending", "created_at": 100, "content": "full message"})
+        if path == "/api/messages" and message_answer is not None:
+            raw = message_answer.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html" if raw.startswith(b"<") else "application/json")
+            self.end_headers()
+            return self.wfile.write(raw)
         if path == "/api/messages":
             return self.send(200, *message_page(urllib.parse.parse_qs(parsed.query)))
         if path == "/api/memories" and self.command == "GET":
@@ -196,13 +204,13 @@ def last_move():
 
 
 london = ZoneInfo("Europe/London")
-r = run("mozgat", "2", "waiting", "--ok", "marveen review", "--hatarido", "2026-11-02")
-until = int(dt.datetime(2026, 11, 2, 23, 59, tzinfo=london).timestamp())
+r = run("mozgat", "2", "waiting", "--ok", "marveen review", "--hatarido", "2030-11-04")
+until = int(dt.datetime(2030, 11, 4, 23, 59, tzinfo=london).timestamp())
 check("waiting with a date sends a date wait at 23:59 London",
       r.returncode == 0 and last_move().get("wait") == {"kind": "date", "note": "marveen review", "until": until})
-r = run("mozgat", "2", "waiting", "--ok", "x", "--hatarido", "2026-10-20 14:30")
+r = run("mozgat", "2", "waiting", "--ok", "x", "--hatarido", "2030-06-14 14:30")
 check("date with a time is London local time (BST)",
-      r.returncode == 0 and last_move()["wait"]["until"] == int(dt.datetime(2026, 10, 20, 13, 30, tzinfo=dt.timezone.utc).timestamp()))
+      r.returncode == 0 and last_move()["wait"]["until"] == int(dt.datetime(2030, 6, 14, 13, 30, tzinfo=dt.timezone.utc).timestamp()))
 r = run("mozgat", "2", "waiting", "--ok", "  Ariel  ")
 check("waiting without a date sends an external wait",
       r.returncode == 0 and last_move().get("wait") == {"kind": "external", "note": "Ariel"})
@@ -210,8 +218,10 @@ r = run("mozgat", "2", "testing")
 check("a non-waiting move sends no wait", r.returncode == 0 and "wait" not in last_move())
 for name, extra in (("waiting without --ok", ("waiting",)),
                     ("--ok on a non-waiting move", ("testing", "--ok", "x")),
-                    ("--hatarido on a non-waiting move", ("testing", "--hatarido", "2026-11-02")),
+                    ("--hatarido on a non-waiting move", ("testing", "--hatarido", "2030-11-04")),
                     ("a bad date", ("waiting", "--ok", "x", "--hatarido", "2026-13-01")),
+                    ("a past date", ("waiting", "--ok", "x", "--hatarido", "2020-01-01")),
+                    ("a date before 1970", ("waiting", "--ok", "x", "--hatarido", "1960-01-01")),
                     ("a blank --ok", ("waiting", "--ok", "   ")),
                     ("an --ok over 200 characters", ("waiting", "--ok", "y" * 201))):
     before = len(requests)
@@ -316,6 +326,23 @@ messages[:] = [msg(i, "delivered") for i in range(1, 5201)]
 r = run("uzenetek", "--nyitott", "--json")
 check("the page cap stops with a warning and the cursor",
       r.returncode == 0 and len(json_rows(r) or []) == 5000 and "stopped after 25 pages" in r.stderr and "--before 201" in r.stderr)
+
+# A message delivered between the pending and the delivered read is listed once.
+messages[:] = [dict(msg(9, "delivered"), also=["pending"]), msg(8, "pending"), msg(6, "delivered")]
+r = run("uzenetek", "--nyitott", "--json")
+check("--nyitott lists a message seen in both reads once",
+      r.returncode == 0 and [m["id"] for m in json_rows(r) or []] == [9, 8, 6])
+
+# A 200 that is not a message list is an error, not an empty mailbox.
+for name, answer in (("an HTML page", "<p>oops</p>"), ("an error object", '{"error": "x"}'),
+                     ("a list of non-objects", "[1, 2]")):
+    message_answer = answer
+    for args in (("uzenetek",), ("uzenetek", "--nyitott")):
+        r = run(*args)
+        check("%s from /api/messages fails cleanly (%s)" % (name, " ".join(args)),
+              r.returncode == 1 and "unexpected /api/messages answer" in r.stderr
+              and "Traceback" not in r.stderr and r.stdout == "")
+message_answer = None
 
 no_root = tempfile.mkdtemp()
 r = run("lista", cwd=no_root, env={k: v for k, v in base_env.items() if k != "CLAW_DIR"})

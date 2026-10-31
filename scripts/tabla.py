@@ -255,7 +255,10 @@ def deadline_ts(value):
             continue
         if end_of_day:
             moment = moment.replace(hour=23, minute=59)
-        return int(moment.replace(tzinfo=TZ).timestamp())
+        until = int(moment.replace(tzinfo=TZ).timestamp())
+        if until <= dt.datetime.now(dt.timezone.utc).timestamp():
+            raise UsageError("--hatarido must be in the future")
+        return until
     raise UsageError("--hatarido must be YYYY-MM-DD or 'YYYY-MM-DD HH:MM'")
 
 
@@ -310,8 +313,12 @@ def fetch_messages(identity, status=None, limit=None, before=None, all_pages=Fal
                 path += f"&{key}={value}"
         code, body, headers = call(identity, "GET", path)
         require_ok(code, body)
-        if isinstance(body, dict):
-            body = body.get("messages", [])
+        if isinstance(body, dict) and isinstance(body.get("messages"), list):
+            body = body["messages"]
+        if not isinstance(body, list) or not all(isinstance(m, dict) for m in body):
+            # an HTML page or an {"error": ...} with a 200 is not an empty mailbox
+            print("unexpected /api/messages answer: " + error_text(body)[:500], file=sys.stderr)
+            raise SystemExit(1)
         fresh = [m for m in body if m.get("id") not in seen]
         seen.update(m.get("id") for m in fresh)
         rows += fresh
@@ -335,6 +342,8 @@ def cmd_uzenetek(args, identity):
             part, part_cut = fetch_messages(identity, status, PAGE_LIMIT, all_pages=True)
             rows += part
             cut = cut or part_cut
+        # a message delivered between the two reads is in both
+        rows = list({m.get("id"): m for m in reversed(rows)}.values())
         rows.sort(key=lambda m: m.get("id") or 0, reverse=True)
         if cut:
             print(f"warning: stopped after {MAX_PAGES} pages; older open messages may exist (--before {cut})",
