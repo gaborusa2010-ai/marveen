@@ -77,6 +77,10 @@ import sys
 # here-string (<<<).
 _HEREDOC = re.compile(r"""((?<!<)<<(-)?\s*(['"]?)([^\s'"<>;&|()]+)\3[^\n]*)\n(.*?\n)(?(2)\t*)\4(?=\s|$)""", re.S)
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+# A word stepped over before the command: also `a[i]=v` and `a+=v`. bash runs the
+# command after `a[1]=1` (it only prints "not a valid identifier"), so
+# `a[1]=1 python3 x.py` ran x.py unseen (review 3034, the r13 adv11b rows).
+_ASSIGN_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=")
 # KWSPLIT924: shell reserved words that put the NEXT word in command position.
 # The segmenter splits on operators only, so `if true; then sendmail x; fi`
 # gave the segment [then, sendmail, x] whose "program" was `then`: the send was
@@ -165,7 +169,7 @@ def _code_api_sends(code: str) -> bool:
 # import alone is not: smtp_import_only.py). The split literals keep this
 # file's own text from matching when the gate reads itself.
 _SCRIPT_SMTP_IMPORT = re.compile(r"^[ \t]*(?:import[ \t][^\n#]*\bsmtp" r"lib\b|from\s+smtp" r"lib\s+import\b)", re.M)
-_SCRIPT_SMTP_CLIENT = re.compile(r"\bSMTP(?:_SSL)?\s*\(")
+_SCRIPT_SMTP_CLIENT = re.compile(r"\b(?:SMTP(?:_SSL)?|LMTP)\s*\(")  # LMTP is an SMTP subclass (review 3034)
 _SCRIPT_SMTP_SEND = re.compile(r"\.(?:send" r"mail|send_message)\s*\(")
 
 
@@ -340,6 +344,11 @@ def _segments_tokens(cmd: str):
     lex = shlex.shlex(_mask_subshell_markers(_HEREDOC.sub(r"\1", cmd)),
                       posix=True, punctuation_chars="();|&")
     lex.whitespace_split = True
+    # #725 (review 3034): shlex's default `#` comment started mid-word (`a#b`,
+    # `${#a}`) and, with newlines already turned into `;`, ate the rest of the
+    # command, so `# hi\nsend''mail ...` lost its send. `#` is an ordinary
+    # character here, as in the JS twin's tokenizer.
+    lex.commenters = ""
     segments, cur, ops = [], _Seg(), ""
     for tok in lex:
         tok = tok.replace(_AMP, "&")
@@ -487,7 +496,7 @@ def _command_heads(toks, _d: int = 0):
     leading assignments, command-position keywords, redirections and wrappers are
     stepped over."""
     moved = []
-    while toks and (_ENV_ASSIGN.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS
+    while toks and (_ASSIGN_PREFIX.match(toks[0]) or toks[0] in _CMD_POSITION_KEYWORDS
                     or _REDIRECT.match(toks[0])):
         m = _REDIRECT.match(toks[0])
         n = 1 if m is None or m.group(2) else 2
@@ -1201,9 +1210,10 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
 # send-capable token ANYWHERE in its text AND contains a construct this parser
 # has repeatedly got wrong (heredoc of any kind, backslash-newline, an extglob
 # paren, [[, case, a #, a $( ) or backtick substitution spanning a line) is not
-# decided here: it counts as a send, so it takes the approval path (sub-agent:
-# the hard deny that routes it through the main agent; main agent: the
-# level-2 approval and the copy audit). Thirteen review rounds found a hole
+# decided here: it counts as a send (sub-agent: the hard deny that routes it
+# through the main agent; main agent: the copy audit, which hard-denies a send
+# it cannot pull a mail body from, so there too the way out is the Write tool,
+# review 3034). Thirteen review rounds found a hole
 # every time in exactly this family; rebuilding bash grammar from text does not
 # converge, so on ambiguity the gate stops guessing. Plain single-line commands
 # keep the full analysis in _is_send. The text match is deliberate: it does not
@@ -1221,6 +1231,13 @@ _AMBIGUOUS_CONSTRUCTS = (
     re.compile(r"\[\["),
     re.compile(r"(?:^|[\s;&|(])case\s"),
     re.compile(r"#"),                         # comment rules (reviews 2942, 2945)
+)
+# The send tokens: _FALLBACK_LITERALS with send.py only as a whole file name
+# (review 3034): seeme-send.py, telegram_fallback_send.py, check-before-send.py
+# are not the mailer. Mirrors AMBIGUOUS_LITERALS in email-send-gate.mjs.
+_AMBIGUOUS_LITERALS = re.compile(
+    r"(?<![\w.-])send\.py\b|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b"
+    r"|\bsmtplib\b|\bsendMail\s*\(", re.I
 )
 _GRAPHMAIL_WORD = re.compile(r"\bgraph-mail\b", re.I)
 
@@ -1241,7 +1258,7 @@ def _multiline_substitution(cmd: str) -> bool:
 
 
 def ambiguous_send_text(cmd: str) -> bool:
-    if not (_FALLBACK_LITERALS.search(cmd) or _CODE_SEND.search(cmd)
+    if not (_AMBIGUOUS_LITERALS.search(cmd) or _CODE_SEND.search(cmd)
             or _CODE_SEND_MODULE.search(cmd) or _code_api_sends(cmd)
             or _GRAPHMAIL_WORD.search(cmd)):
         return False
@@ -1852,7 +1869,7 @@ def _http_channel_segment(cmd: str):
     except ValueError:
         return None, None
     for toks in segments:
-        while toks and _ENV_ASSIGN.match(toks[0]):
+        while toks and _ASSIGN_PREFIX.match(toks[0]):
             toks = toks[1:]
         if not toks or not _CURLISH.match(_basename(toks[0])):
             continue
@@ -2165,7 +2182,7 @@ def _ia_segment(cmd: str):
     except ValueError:
         return None
     for toks in segments:
-        while toks and _ENV_ASSIGN.match(toks[0]):
+        while toks and _ASSIGN_PREFIX.match(toks[0]):
             toks = toks[1:]
         if toks and _CURLISH.match(_basename(toks[0])) and any(_IA_TARGET.match(t) for t in toks[1:]):
             return toks

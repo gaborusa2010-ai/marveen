@@ -109,6 +109,9 @@ const SEND_PATTERNS = [
 const HEREDOC_RE = /((?<!<)<<-\s*(['"]?)([^\s'"<>;&|()]+)\2[^\n]*)\n([\s\S]*?\n)\t*\3(?=\s|$)|((?<!<)<<\s*(['"]?)([^\s'"<>;&|()]+)\6[^\n]*)\n([\s\S]*?\n)\7(?=\s|$)/g
 const heredoc = (m) => ({ open: m[1] ?? m[5], body: m[4] ?? m[8] })
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z_0-9]*=/
+// A word stepped over before the command, also `a[i]=v` and `a+=v`; see _ASSIGN_PREFIX
+// in hooks/outgoing-copy-gate.py (review 3034).
+const ASSIGN_PREFIX = /^[A-Za-z_][A-Za-z_0-9]*(?:\[[^\]]*\])?\+?=/
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
 // full rationale at _CMD_POSITION_KEYWORDS in outgoing-copy-gate.py (the python
@@ -237,7 +240,7 @@ const codeApiSends = (code) =>
 // sends with it is a sender. Mirrors _script_sends in hooks/outgoing-copy-gate.py;
 // the split literals keep this file's own text from matching when it is read.
 const SCRIPT_SMTP_IMPORT = new RegExp('^[ \\t]*(?:import[ \\t][^\\n#]*\\bsmtp' + 'lib\\b|from\\s+smtp' + 'lib\\s+import\\b)', 'm')
-const SCRIPT_SMTP_CLIENT = /\bSMTP(?:_SSL)?\s*\(/
+const SCRIPT_SMTP_CLIENT = /\b(?:SMTP(?:_SSL)?|LMTP)\s*\(/ // LMTP is an SMTP subclass (review 3034)
 const SCRIPT_SMTP_SEND = new RegExp('\\.(?:send' + 'mail|send_message)\\s*\\(')
 const scriptSends = (code, path) =>
   codeApiSends(code) ||
@@ -411,7 +414,7 @@ const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
   const moved = []
-  while (toks.length && (ENV_ASSIGN.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
+  while (toks.length && (ASSIGN_PREFIX.test(toks[0]) || CMD_POSITION_KEYWORDS.has(toks[0]) || REDIRECT.test(toks[0]))) {
     const m = REDIRECT.exec(toks[0])
     const n = m === null || m[2] ? 1 : 2
     if (m !== null) moved.push(...toks.slice(0, n))
@@ -965,8 +968,9 @@ function heredocProgramSends(cmd, depth, base, written) {
 // a line) is not decided: it counts as a send. Thirteen review rounds found a hole every
 // time in this family; on ambiguity the gate stops guessing. Deliberately a text match,
 // not a parse. Mirrors ambiguous_send_text in hooks/outgoing-copy-gate.py, bound by
-// send-invocation-cases.json.
-const AMBIGUOUS_LITERALS = /send\.py|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b|\bsmtplib\b|\bsendMail\s*\(/i
+// send-invocation-cases.json. send.py only as a whole file name (review 3034): seeme-send.py,
+// telegram_fallback_send.py and check-before-send.py are not the mailer.
+const AMBIGUOUS_LITERALS = /(?<![\w.-])send\.py\b|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b|\bsmtplib\b|\bsendMail\s*\(/i
 const AMBIGUOUS_CONSTRUCTS = [
   /(?<!<)<<(?!<)/, // heredoc, not a here-string
   /\\\n/, // backslash-newline

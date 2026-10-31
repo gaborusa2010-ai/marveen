@@ -2446,6 +2446,65 @@
       "name": "#725: must-block: a << in @( opens no heredoc (review 2951) [ported from r13 20f18e9e]",
       "cmd": "shopt -s extglob\necho @(<<E\nx)#;sendmail bob@example.com < notes.txt\nE",
       "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: a comment line, then a quote-split mailer on the next line",
+      "cmd": "# hi\nsend''mail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: a # inside a word (a#b) is not a comment, the quote-split mailer after ; runs",
+      "cmd": "echo a#b; send''mail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: ${#a} is not a comment, the quote-split mailer after ; runs",
+      "cmd": "x=${#a}; \"send\"mail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: a trailing comment ends at the newline, the backslash-split mailer runs",
+      "cmd": "true # c\ns\\endmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: control: a # in an SMS dry run through seeme-send.py is not a mail send",
+      "cmd": "printf '%s' \"kartya #725 kesz\" | python3 scripts/sms/seeme-send.py --to 0 --dry-run",
+      "expected": false
+    },
+    {
+      "name": "#725 review 3034: must-block: send.py run from its own directory with a # still counts",
+      "cmd": "cd scripts/support-mail && python3 send.py --to bob@example.com --body-file b.txt # x",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: script file sending through an LMTP client",
+      "cmd": "python3 smtp_lmtp.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: control: a heredoc into seeme-send.py (an SMS script) is not a mail send",
+      "cmd": "python3 scripts/sms/seeme-send.py --to 0 --dry-run <<'EOF'\nx\nEOF",
+      "expected": false
+    },
+    {
+      "name": "#725 review 3034: must-block: an array-element assignment prefix (a[1]=1) still runs the script",
+      "cmd": "a[1]=1 python3 smtp_from_import.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: must-block: an append assignment prefix (a+=x) still runs the script",
+      "cmd": "a+=x python3 smtp_lmtp.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3034: control: an array-element assignment prefix before an import-only script",
+      "cmd": "a[1]=1 python3 smtp_import_only.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
     }
   ]
 }
