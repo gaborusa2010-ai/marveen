@@ -49,10 +49,12 @@ describe('outgoing-copy gate: content cannot fake a send (the four measured FP c
     expect(isSend('grep -n -- "--to" scripts/support-mail/send.py')).toBe(false)
   })
 
-  it('a heredoc that WRITES send-shaped content into a file passes', () => {
+  it('#725 coarse: a heredoc that WRITES send-shaped content counts as a send; without a send token it does not', () => {
+    // Deliberate over-block (Marveen msg 14989, GO 14995): such text is written with the Write tool.
     expect(isSend(
       `cat > /tmp/notes.md <<'EOF'\nsendmail --to x@y.hu is how the legacy path worked\nEOF`,
-    )).toBe(false)
+    )).toBe(true)
+    expect(isSend(`cat > /tmp/notes.md <<'EOF'\nthe legacy path worked differently\nEOF`)).toBe(false)
   })
 
   it('an inter-agent message quoting a full send command in its content passes', () => {
@@ -133,10 +135,11 @@ describe('outgoing-copy gate: quoted tokens in OPERATION position still fire (ms
     expect(isSend(`python3 -c "print('a sendmail utvonala regen mas volt')"`)).toBe(false)
   })
 
-  it('heredoc stripping is ORDER-INDEPENDENT: marker-first spelling is still content (round 3, msg 14286)', () => {
-    // The same sentence as the redirect-first FP test, tokens swapped -- both
-    // are completely ordinary shell.
-    expect(isSend(`cat <<'EOF' > /tmp/notes.md\nsendmail --to x@y.hu is how the legacy path worked\nEOF`)).toBe(false)
+  it('heredoc order does not matter: marker-first spelling gets the same verdict as redirect-first (round 3, msg 14286; #725 coarse)', () => {
+    // The same sentence as the redirect-first test, tokens swapped -- both
+    // are completely ordinary shell, and since #725 both count as a send.
+    expect(isSend(`cat <<'EOF' > /tmp/notes.md\nsendmail --to x@y.hu is how the legacy path worked\nEOF`)).toBe(true)
+    expect(isSend(`cat <<'EOF' > /tmp/notes.md\nthe legacy path worked differently\nEOF`)).toBe(false)
   })
 
   it('a heredoc-FED real sender still fires: the intro line survives the stripping', () => {

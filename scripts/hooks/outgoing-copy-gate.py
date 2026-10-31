@@ -160,6 +160,22 @@ def _code_api_sends(code: str) -> bool:
     return any(host.search(code) and path.search(code) for host, path in _CODE_API_PAIRS)
 
 
+# #725: a script FILE that imports the stdlib mail client and both connects and
+# sends with it is a sender (fixtures smtp_send.py, smtp_from_import.py; an
+# import alone is not: smtp_import_only.py). The split literals keep this
+# file's own text from matching when the gate reads itself.
+_SCRIPT_SMTP_IMPORT = re.compile(r"^[ \t]*(?:import[ \t][^\n#]*\bsmtp" r"lib\b|from\s+smtp" r"lib\s+import\b)", re.M)
+_SCRIPT_SMTP_CLIENT = re.compile(r"\bSMTP(?:_SSL)?\s*\(")
+_SCRIPT_SMTP_SEND = re.compile(r"\.(?:send" r"mail|send_message)\s*\(")
+
+
+def _script_sends(code: str, path: str) -> bool:
+    """A script file's text: the provider-API patterns and the mail-library rule above."""
+    return _code_api_sends(code) or bool(
+        not _SENDPY.match(_basename(path)) and _SCRIPT_SMTP_IMPORT.search(code)
+        and _SCRIPT_SMTP_CLIENT.search(code) and _SCRIPT_SMTP_SEND.search(code))
+
+
 def _code_string_sends(code: str) -> bool:
     if _CODE_SEND.search(code) or _CODE_SEND_MODULE.search(code) or _code_api_sends(code):
         return True
@@ -904,7 +920,7 @@ def _python_module_sends(rest, base, env):
         path = os.path.join(base, cand)
         if os.path.lexists(path):
             body = _read_script(path, base)
-            return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
+            return _UNREADABLE_SENDS if body is None else _script_sends(body, path)
     return None
 
 
@@ -949,13 +965,13 @@ def _python_head_sends(rest, base, written, env, stdin_files=None) -> bool:
                   for f in files]
         if any(b is None for b in bodies):
             return recipient or _UNREADABLE_SENDS
-        return recipient or any(_code_string_sends(b) if isinstance(f, _Code) else _code_api_sends(b)
+        return recipient or any(_code_string_sends(b) if isinstance(f, _Code) else _script_sends(b, f)
                                 for f, b in zip(files, bodies))
     if script is not None:
         if script in written:
-            return _code_api_sends(written[script])
+            return _script_sends(written[script], script)
         body = _read_script(script, base)
-        return _UNREADABLE_SENDS if body is None else _code_api_sends(body)
+        return _UNREADABLE_SENDS if body is None else _script_sends(body, script)
     return False
 
 
@@ -1007,7 +1023,7 @@ def _head_is_send(toks, depth: int, base, written, env, stdin_files=None) -> boo
     if prog.endswith(".py") and "/" in toks[0]:
         path = toks[0] if toks[0] in written else _expand_vars(toks[0], env)
         body = written[path] if path in written else _read_script(path, base)
-        if body is not None and _code_api_sends(body):
+        if body is not None and _script_sends(body, path):
             return True
     # an interpreter or program that cannot be resolved statically ($PY, a glob,
     # a substitution) with a recipient flag: what runs is undecidable here
@@ -1181,9 +1197,79 @@ def _heredoc_program_sends(cmd: str, depth: int, base, written: dict) -> bool:
     return _written_then_run(cmd, written, depth, base)
 
 
+# #725 coarse rule (Marveen msg 14989, GO 14995): a command that names a
+# send-capable token ANYWHERE in its text AND contains a construct this parser
+# has repeatedly got wrong (heredoc of any kind, backslash-newline, an extglob
+# paren, [[, case, a #, a $( ) or backtick substitution spanning a line) is not
+# decided here: it counts as a send, so it takes the approval path (sub-agent:
+# the hard deny that routes it through the main agent; main agent: the
+# level-2 approval and the copy audit). Thirteen review rounds found a hole
+# every time in exactly this family; rebuilding bash grammar from text does not
+# converge, so on ambiguity the gate stops guessing. Plain single-line commands
+# keep the full analysis in _is_send. The text match is deliberate: it does not
+# parse. Measured over-block before the GO (725-szabaly1-tulterheles, 7 days,
+# 21699 invocations): 57 new approvals, all about the gate work itself. The
+# final rule (with #, which the comment-rule reviews 2942/2945 kept hitting),
+# replayed old vs new over 7 days / 21145 invocations: 50 new sends, all gate
+# work, 0 sends lost. Text naming send tokens is written with the Write tool,
+# which this hook does not see. Mirrored in email-send-gate.mjs (ambiguousSendText);
+# docs/security-hardening.md "Mail gates: an ambiguous command counts as a send".
+_AMBIGUOUS_CONSTRUCTS = (
+    re.compile(r"(?<!<)<<(?!<)"),             # heredoc, not a here-string
+    re.compile(r"\\\n"),                      # backslash-newline
+    re.compile(r"[@?*+!]\("),                 # extglob-like paren
+    re.compile(r"\[\["),
+    re.compile(r"(?:^|[\s;&|(])case\s"),
+    re.compile(r"#"),                         # comment rules (reviews 2942, 2945)
+)
+_GRAPHMAIL_WORD = re.compile(r"\bgraph-mail\b", re.I)
+
+
+def _multiline_substitution(cmd: str) -> bool:
+    depth, start = 0, 0
+    for i, ch in enumerate(cmd):
+        if ch == "$" and cmd.startswith("$(", i) and not cmd.startswith("$((", i):
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+            if depth == 0 and "\n" in cmd[start:i]:
+                return True
+    ticks = [m.start() for m in re.finditer(r"(?<!\\)`", cmd)]
+    return any("\n" in cmd[a:b] for a, b in zip(ticks[::2], ticks[1::2]))
+
+
+def ambiguous_send_text(cmd: str) -> bool:
+    if not (_FALLBACK_LITERALS.search(cmd) or _CODE_SEND.search(cmd)
+            or _CODE_SEND_MODULE.search(cmd) or _code_api_sends(cmd)
+            or _GRAPHMAIL_WORD.search(cmd)):
+        return False
+    return any(p.search(cmd) for p in _AMBIGUOUS_CONSTRUCTS) or _multiline_substitution(cmd)
+
+
+def ambiguous_send_hit(cmd: str, cwd=None) -> bool:
+    """True when the coarse rule is the whole reason the command counts as a
+    send, so a deny can say so (and name the Write-tool habit) instead of
+    talking about a letter."""
+    return ambiguous_send_text(cmd) and not _is_send(cmd, 0, cwd or os.getcwd())
+
+
+AMBIGUOUS_SEND_MSG = (
+    "A parancs levelkuldesre utalo szot (sendmail, smtplib, send.py, levelezo API...) ES "
+    "nehezen elemezheto szerkezetet (heredoc, sor vegi backslash, [[, case, extglob, #, tobbsoros "
+    "$( ) vagy backtick) tartalmaz egyszerre. Ilyenkor a kapu nem probalja eldonteni, hogy "
+    "kuldes-e: kuldeskent kezeli (#725, Marveen msg 14989).\n"
+    "Ha ez NEM kuldes (kartya-, uzenet- vagy jegyzet-szoveg, teszt-fixture): a szoveget a "
+    "Write toollal ird fajlba, es a parancs a fajlra hivatkozzon; a Write-ot ez a kapu nem nezi.\n"
+)
+
+
 def is_send_invocation(cmd: str, _depth: int = 0, cwd=None) -> bool:
     """cwd: the directory the command runs in (the hook payload's cwd); a
     relative script path resolves against it. None: this process's cwd."""
+    if _depth == 0 and ambiguous_send_text(cmd):
+        return True
     return _is_send(cmd, _depth, cwd or os.getcwd())
 
 
@@ -2318,6 +2404,10 @@ def main():
                 "(< /teljes/ut/body.txt), vagy --body-ban atadott szoveg.\n"
             )
             sys.exit(2)
+        if tool == "Bash" and ambiguous_send_hit(cmd, cwd=payload_cwd(payload)):
+            sys.stderr.write("KIMENO-SZOVEG KAPU: TILTVA, a levelet nem tudtam megvizsgalni.\n"
+                             + AMBIGUOUS_SEND_MSG)
+            sys.exit(2)
         reason = unreadable or "a hook nem talalt vizsgalhato szoveget a hivasban"
         sys.stderr.write(
             "KIMENO-SZOVEG KAPU: TILTVA, mert a levelet nem tudtam megvizsgalni.\n"
@@ -2353,6 +2443,8 @@ def main():
             + "\n".join(f"  - {p}" for p in problems)
             + "\n\nJavitsd a szoveget es kuldd ujra. Ekezetes magyar szoveg a vevo fele "
               "nem stiluskerdes: Szabi 2026-08-10-en ket kulon esetben kerte szamon.\n"
+            + ("\n" + AMBIGUOUS_SEND_MSG
+               if tool == "Bash" and ambiguous_send_hit(cmd, cwd=payload_cwd(payload)) else "")
         )
         sys.exit(2)
 

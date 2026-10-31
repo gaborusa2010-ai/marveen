@@ -233,6 +233,15 @@ const CODE_API_PAIRS = [
 ]
 const codeApiSends = (code) =>
   CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))
+// #725: a script FILE that imports the stdlib mail client and both connects and
+// sends with it is a sender. Mirrors _script_sends in hooks/outgoing-copy-gate.py;
+// the split literals keep this file's own text from matching when it is read.
+const SCRIPT_SMTP_IMPORT = new RegExp('^[ \\t]*(?:import[ \\t][^\\n#]*\\bsmtp' + 'lib\\b|from\\s+smtp' + 'lib\\s+import\\b)', 'm')
+const SCRIPT_SMTP_CLIENT = /\bSMTP(?:_SSL)?\s*\(/
+const SCRIPT_SMTP_SEND = new RegExp('\\.(?:send' + 'mail|send_message)\\s*\\(')
+const scriptSends = (code, path) =>
+  codeApiSends(code) ||
+  (!SENDPY.test(basename(path)) && SCRIPT_SMTP_IMPORT.test(code) && SCRIPT_SMTP_CLIENT.test(code) && SCRIPT_SMTP_SEND.test(code))
 const codeStringSends = (code) =>
   CODE_SEND.test(code) || CODE_SEND_MODULE.test(code) || codeApiSends(code) ||
   (CODE_EXECISH.test(code) && CODE_SENDER_LIT.test(code))
@@ -645,7 +654,7 @@ function pythonModuleSends(rest, base, env) {
     try { lstatSync(path) } catch { exists = false }
     if (exists) {
       const body = readScript(path, base)
-      return body === null ? unreadableSends : codeApiSends(body)
+      return body === null ? unreadableSends : scriptSends(body, path)
     }
   }
   return null
@@ -687,12 +696,12 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
     const files = src ? [expandVars(src[1], env)] : (stdinFiles ?? [])
     const bodies = files.map((f) => (!isCode(f) && written.has(f) ? written.get(f) : stdinBody(f, base)))
     if (bodies.some((b) => b === null)) return recipient || unreadableSends
-    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : codeApiSends(b)))
+    return recipient || bodies.some((b, k) => (isCode(files[k]) ? codeStringSends(b) : scriptSends(b, files[k])))
   }
   if (script !== null) {
-    if (written.has(script)) return codeApiSends(written.get(script))
+    if (written.has(script)) return scriptSends(written.get(script), script)
     const body = readScript(script, base)
-    return body === null ? unreadableSends : codeApiSends(body)
+    return body === null ? unreadableSends : scriptSends(body, script)
   }
   return false
 }
@@ -807,7 +816,7 @@ function headIsSend(toks, depth, base, written, env, stdinFiles = null) {
   if (prog.endsWith('.py') && toks[0].includes('/')) {
     const path = written.has(toks[0]) ? toks[0] : expandVars(toks[0], env)
     const body = written.has(path) ? written.get(path) : readScript(path, base)
-    if (body !== null && codeApiSends(body)) return true
+    if (body !== null && scriptSends(body, path)) return true
   }
   // An interpreter or program that cannot be resolved statically ($PY, a glob,
   // a substitution) with a recipient flag: what runs is undecidable here.
@@ -950,9 +959,69 @@ function heredocProgramSends(cmd, depth, base, written) {
   return writtenThenRun(cmd, written, depth, base)
 }
 
+// #725 coarse rule (Marveen msg 14989, GO 14995): a send-capable token ANYWHERE in the
+// text AND a construct this parser has repeatedly got wrong (heredoc of any kind,
+// backslash-newline, an extglob paren, [[, case, a #, a $( ) or backtick substitution spanning
+// a line) is not decided: it counts as a send. Thirteen review rounds found a hole every
+// time in this family; on ambiguity the gate stops guessing. Deliberately a text match,
+// not a parse. Mirrors ambiguous_send_text in hooks/outgoing-copy-gate.py, bound by
+// send-invocation-cases.json.
+const AMBIGUOUS_LITERALS = /send\.py|api\.resend\.com|\bsendmail\b|\bmsmtp\b|\bswaks\b|\bsmtplib\b|\bsendMail\s*\(/i
+const AMBIGUOUS_CONSTRUCTS = [
+  /(?<!<)<<(?!<)/, // heredoc, not a here-string
+  /\\\n/, // backslash-newline
+  /[@?*+!]\(/, // extglob-like paren
+  /\[\[/,
+  /(?:^|[\s;&|(])case\s/,
+  /#/, // comment rules (reviews 2942, 2945)
+]
+
+function multilineSubstitution(cmd) {
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < cmd.length; i++) {
+    if (cmd.startsWith('$(', i) && !cmd.startsWith('$((', i)) {
+      if (depth === 0) start = i
+      depth++
+    } else if (cmd[i] === ')' && depth) {
+      depth--
+      if (depth === 0 && cmd.slice(start, i).includes('\n')) return true
+    }
+  }
+  const ticks = [...cmd.matchAll(/(?<!\\)`/g)].map((m) => m.index)
+  for (let k = 0; k + 1 < ticks.length; k += 2) {
+    if (cmd.slice(ticks[k], ticks[k + 1]).includes('\n')) return true
+  }
+  return false
+}
+
+export function ambiguousSendText(cmd) {
+  if (!(AMBIGUOUS_LITERALS.test(cmd) || CODE_SEND.test(cmd) || CODE_SEND_MODULE.test(cmd) ||
+        codeApiSends(cmd) || /\bgraph-mail\b/i.test(cmd))) return false
+  return AMBIGUOUS_CONSTRUCTS.some((re) => re.test(cmd)) || multilineSubstitution(cmd)
+}
+
+// True when the coarse rule is the whole reason the command counts as a send.
+export function ambiguousSendHit(cmd, cwd = null) {
+  return ambiguousSendText(cmd) && !isSend(cmd, 0, cwd || process.cwd())
+}
+
+export function buildAmbiguousSendMsg() {
+  return (
+    'TILTVA (governance hard-gate): a parancs levelkuldesre utalo szot (sendmail, smtplib, send.py, ' +
+    'levelezo API...) ES nehezen elemezheto szerkezetet (heredoc, sor vegi backslash, [[, case, extglob, #, ' +
+    'tobbsoros $( ) vagy backtick) tartalmaz egyszerre. Ilyenkor a kapu nem probalja eldonteni, hogy ' +
+    'kuldes-e: kuldeskent kezeli (#725, Marveen msg 14989). Ha ez NEM kuldes (kartya-, uzenet- vagy ' +
+    'jegyzet-szoveg, teszt-fixture): a szoveget a Write toollal ird fajlba, es a parancs a fajlra ' +
+    'hivatkozzon; a Write-ot ez a kapu nem nezi. Ha kuldes: sub-agentkent Bash-bol amugy sem kuldhetsz, ' +
+    'a kimeno emailt a fo-agens kuldi.'
+  )
+}
+
 // cwd: the directory the command runs in (the hook payload's cwd); a relative script
 // path resolves against it. Null: this process's cwd.
 export function isSendInvocation(cmd, depth = 0, cwd = null) {
+  if (depth === 0 && ambiguousSendText(cmd)) return true
   return isSend(cmd, depth, cwd || process.cwd())
 }
 
@@ -1090,6 +1159,7 @@ export function gateDecision(toolName, toolInput, isVerified = null, cwd = null)
   if (name === 'Bash') {
     const cmd = String(toolInput?.command ?? '')
     if (isSendInvocation(cmd, 0, cwd)) {
+      if (ambiguousSendHit(cmd, cwd)) return { deny: true, kind: 'ambiguous-send' }
       if (wrapperDepthHit(cmd)) return { deny: true, kind: 'wrapper-depth' }
       return unreadableScriptHit(cmd, cwd) ? { deny: true, kind: 'unreadable-script' } : { deny: true }
     }
@@ -1371,6 +1441,7 @@ if (isInvokedDirectly()) {
     if (kind === 'draft-required') deny(buildDraftOnlyMsg(ownerName))
     if (kind === 'wrapper-depth') deny(buildWrapperDepthMsg())
     if (kind === 'unreadable-script') deny(buildUnreadableScriptMsg())
+    if (kind === 'ambiguous-send') deny(buildAmbiguousSendMsg())
     // Thread-scoped narrowing: only when the scaffold wired this agent's hook
     // command with the flag (capability-driven, regenerated on every spawn),
     // and only for the direct send_email tool. Bash send routes and

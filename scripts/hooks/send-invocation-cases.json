@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'. #718: a case may carry `cwd` (relative to the repo root): the directory the command runs in, the hook payload's cwd; without it the test process's cwd (the repo root).",
+  "_comment": "Shared recognition contract of the two mail gates (scripts/hooks/outgoing-copy-gate.py :: is_send_invocation and scripts/email-send-gate.mjs :: isSendInvocation). The conformance test (send-invocation-conformance.test.ts) runs EVERY case through BOTH implementations and asserts both equal `expected` -- divergence between the two copies surfaces as a test failure, not an incident (SUBGATEPOZ822, msg 14289). Unparseable-input fallbacks are deliberately NOT here: the two gates fall back differently by design (copy-gate: strong literals; hard-gate: full legacy patterns) and each pins its own in its scope test. A [marveen:...] prefixu esetek Marveen fuggetlen review-probai (store/marveen-send-gate-cases.json, msg 14302) -- a 'hatar' jeloles tortenete: az ot naiv exec-alak 2026-08-22 delutan LEZARULT (expected true), a megmaradt dokumentalt korlat az elfedett/futasidoben osszerakott kod; egy kesobbi valtozasnak itt teszt-hibakent kell jelentkeznie MINDKET iranyban, a nema atbillenes a tiltott allapot. INTERAGENTHOMOGLIF923 (2026-09-23): the inter-agent `curl .../api/messages` cases STAY expected:false here -- they are NOT email sends, and NONE of the email copy rules (accents, name rule, em dash) run on them. What changed is OUTSIDE this contract: the copy gate runs a SEPARATE, homoglyph-only check on that path (outgoing-copy-gate.py :: inter_agent_homoglyph_gate), blocking on a mixed-script word and passing an uninterpretable body with a loud warning. A reader must not take the expected:false rows as 'the path is unguarded', nor that change as 'the full copy gate now runs there'. #718: a case may carry `cwd` (relative to the repo root): the directory the command runs in, the hook payload's cwd; without it the test process's cwd (the repo root). #725 coarse (Marveen msg 14989, GO 14995): a command that names a send-capable token anywhere AND contains a hard construct (any heredoc but not a here-string, backslash-newline, an extglob paren, [[, case, a multi-line $( ) or backtick substitution) counts as a send, at depth 0, in both gates. Rows tagged \"#725 coarse\" are that deliberate over-block, including inter-agent posts built that way; text naming send tokens is written with the Write tool instead.",
   "cases": [
     {
       "name": "inter-agent curl, content mentions the mail script",
@@ -22,14 +22,14 @@
       "expected": false
     },
     {
-      "name": "redirect-first heredoc writing mail-shaped notes",
+      "name": "redirect-first heredoc writing mail-shaped notes [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat > /tmp/notes.md <<'EOF'\nsendmail --to x@y.hu is how the legacy path worked\nEOF",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "marker-first heredoc writing mail-shaped notes (round 3)",
+      "name": "marker-first heredoc writing mail-shaped notes (round 3) [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'EOF' > /tmp/notes.md\nsendmail --to x@y.hu is how the legacy path worked\nEOF",
-      "expected": false
+      "expected": true
     },
     {
       "name": "message quoting a full outbound command",
@@ -292,19 +292,19 @@
       "expected": false
     },
     {
-      "name": "[marveen:fp-heredoc-redirect-first] heredoc, atiranyitas ELOL: a torzs tartalom",
+      "name": "[marveen:fp-heredoc-redirect-first] heredoc, atiranyitas ELOL: a torzs tartalom [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat > /tmp/n.md <<'EOF'\npython3 scripts/support-mail/send.py --to a@b.hu\nEOF",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "[marveen:fp-heredoc-delimiter-first] heredoc, HATAROLO ELOL (ez volt a talalt res, sorrend-erzekenyseg)",
+      "name": "[marveen:fp-heredoc-delimiter-first] heredoc, HATAROLO ELOL (ez volt a talalt res, sorrend-erzekenyseg) [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'EOF' > /tmp/n.md\npython3 scripts/support-mail/send.py --to a@b.hu\nEOF",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "[marveen:fp-python-heredoc] a flotta fo fajl-iro mintaja",
+      "name": "[marveen:fp-python-heredoc] a flotta fo fajl-iro mintaja [#725 coarse: token + hard construct counts as a send]",
       "cmd": "python3 - <<'PYEOF'\nprint('python3 scripts/support-mail/send.py --to a@b.hu')\nPYEOF",
-      "expected": false
+      "expected": true
     },
     {
       "name": "[marveen:pos-heredoc-fed-mailer] heredoc-TAPLALT valodi kuldo: a kuldo a bevezeto sorban (a naiv heredoc-fix tukor-csapdaja)",
@@ -512,9 +512,9 @@
       "expected": false
     },
     {
-      "name": "KWSPLIT924: reverse -- a case pattern is not a command",
+      "name": "KWSPLIT924: reverse -- a case pattern is not a command [#725 coarse: token + hard construct counts as a send]",
       "cmd": "case \"$x\" in sendmail) echo hit;; esac",
-      "expected": false
+      "expected": true
     },
     {
       "name": "KWSPLIT924: reverse -- `in` on its own line heads a segment, and its words are still data",
@@ -792,9 +792,9 @@
       "expected": false
     },
     {
-      "name": "#1853 control: a heredoc to cat that mentions import send",
+      "name": "#1853 control: a heredoc to cat that mentions import send [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'PY' > notes.txt\nimport send\nPY",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#1853 control: a heredoc-fed python that only writes a file mentioning send",
@@ -832,14 +832,14 @@
       "expected": true
     },
     {
-      "name": "#1855 control: a heredoc report whose prose holds an uppercase SENDMAIL card id, posted via subprocess",
+      "name": "#1855 control: a heredoc report whose prose holds an uppercase SENDMAIL card id, posted via subprocess [#725 coarse: token + hard construct counts as a send]",
       "cmd": "python3 - <<'PY'\nimport subprocess, json\nt = 'Hourly: card FIXSENDMAIL1009 still open, the sendmail wrapper is fine'\nsubprocess.run(['curl', '-s', 'http://localhost:3420/api/messages', '-d', json.dumps({'content': t})])\nPY",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "#1855 control: an uppercase SENDMAIL word that starts a quoted report line, next to subprocess",
+      "name": "#1855 control: an uppercase SENDMAIL word that starts a quoted report line, next to subprocess [#725 coarse: token + hard construct counts as a send]",
       "cmd": "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['echo', 'SENDMAIL relay check: all green'])\nPY",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#1855: a heredoc fed to bash runs send.py with a recipient",
@@ -852,9 +852,9 @@
       "expected": true
     },
     {
-      "name": "#1855 control: a heredoc fed to bash that only lists files",
+      "name": "#1855 control: a heredoc fed to bash that only lists files [#725 coarse: token + hard construct counts as a send]",
       "cmd": "bash <<'SH'\nls scripts/support-mail\ngrep -n 'def main' scripts/support-mail/send.py\nSH",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#1855: a heredoc writes x.py, the same command runs it (cat > P <<)",
@@ -877,14 +877,14 @@
       "expected": true
     },
     {
-      "name": "#1855 control: the written sender script is not run, another path is",
+      "name": "#1855 control: the written sender script is not run, another path is [#725 coarse: token + hard construct counts as a send]",
       "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\npython3 src/__tests__/fixtures/send-gate/plain.py",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "#1855 control: the sender script is only written, nothing runs it",
+      "name": "#1855 control: the sender script is only written, nothing runs it [#725 coarse: token + hard construct counts as a send]",
       "cmd": "S=/tmp/s; cat > $S/x.py <<'EOF'\nimport subprocess\nsubprocess.run(['python3', 'scripts/support-mail/send.py', '--to', 'a@example.invalid'])\nEOF\necho written",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#1855 control: a written harmless script run on the same path",
@@ -902,14 +902,14 @@
       "expected": true
     },
     {
-      "name": "#1855 control: a heredoc piped to grep that mentions import send",
+      "name": "#1855 control: a heredoc piped to grep that mentions import send [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'EOF' | grep -c send\nimport send\nEOF",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "#1855 control: a cat heredoc without a pipe that mentions send.py --to",
+      "name": "#1855 control: a cat heredoc without a pipe that mentions send.py --to [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'EOF'\npython3 scripts/support-mail/send.py --to a@example.invalid\nEOF",
-      "expected": false
+      "expected": true
     },
     {
       "name": "SUBAGENTMAILGATE1016: an interpreter option before the sender (-u)",
@@ -1690,14 +1690,14 @@
       "expected": true
     },
     {
-      "name": "#718 r6: control: heredoc only printed by cat, send URL in it",
+      "name": "#718 r6: control: heredoc only printed by cat, send URL in it [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
-      "expected": false
+      "expected": true
     },
     {
-      "name": "#718 r6: control: heredoc into grep, send URL in it",
+      "name": "#718 r6: control: heredoc into grep, send URL in it [#725 coarse: token + hard construct counts as a send]",
       "cmd": "grep -c send <<'X'\nhttps://gmail.googleapis.com/gmail/v1/users/me/messages/send\nX",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#718 r6: control: python3 heredoc, read-only Gmail list",
@@ -1765,9 +1765,9 @@
       "expected": true
     },
     {
-      "name": "#718 r6: control: leading heredoc into cat, send URL in it",
+      "name": "#718 r6: control: leading heredoc into cat, send URL in it [#725 coarse: token + hard construct counts as a send]",
       "cmd": "<<'X' cat\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
-      "expected": false
+      "expected": true
     },
     {
       "name": "#718 r6: control: leading heredoc into python3, read-only Gmail list",
@@ -1810,14 +1810,642 @@
       "expected": false
     },
     {
-      "name": "#718 r7: control: cat double-quoted heredoc printing a send URL",
+      "name": "#718 r7: control: cat double-quoted heredoc printing a send URL [#725 coarse: token + hard construct counts as a send]",
       "cmd": "cat <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#718 r7: control: double-quoted heredoc into grep, send URL in it [#725 coarse: token + hard construct counts as a send]",
+      "cmd": "grep send <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: heredoc writing a note that names smtplib",
+      "cmd": "cat > note.txt <<EOF\nsmtplib is the mailer\nEOF",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: backslash-quoted heredoc delimiter into python",
+      "cmd": "python3 - <<\\X\nimport smtplib\nX",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: unterminated heredoc into python",
+      "cmd": "python3 - <<X\nimport smtplib",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: dash heredoc with tabs, sendmail inside",
+      "cmd": "cat <<-EOF\n\tsendmail -t\n\tEOF",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: backslash-newline next to sendmail",
+      "cmd": "echo a \\\nsendmail -t",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: extglob paren next to send.py",
+      "cmd": "ls @(a|b) send.py",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: [[ test naming send.py",
+      "cmd": "[[ -f send.py ]] && echo ok",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: case arm naming msmtp",
+      "cmd": "case $x in a) echo msmtp;; esac",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: multi-line $( ) naming swaks",
+      "cmd": "x=$(\necho swaks\n)",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: multi-line backticks naming swaks",
+      "cmd": "x=`\necho swaks\n`",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse must-block: heredoc next to the Gmail send endpoint",
+      "cmd": "curl https://gmail.googleapis.com/gmail/v1/users/me/messages/send <<E\nE",
+      "expected": true
+    },
+    {
+      "name": "#725 coarse control: heredoc without any send token",
+      "cmd": "cat > note.txt <<EOF\nhello\nEOF",
       "expected": false
     },
     {
-      "name": "#718 r7: control: double-quoted heredoc into grep, send URL in it",
-      "cmd": "grep send <<\"X\"\nimport urllib.request as u\nu.urlopen(u.Request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', data=b'{}'))\nX",
+      "name": "#725 coarse control: [[ test without any send token",
+      "cmd": "[[ -f notes.txt ]] && echo ok",
       "expected": false
+    },
+    {
+      "name": "#725 coarse control: case arm without any send token",
+      "cmd": "case $x in a) echo hi;; esac",
+      "expected": false
+    },
+    {
+      "name": "#725 coarse control: send token on a plain single line (no construct)",
+      "cmd": "grep smtplib notes.txt",
+      "expected": false
+    },
+    {
+      "name": "#725 coarse control: here-string is not a heredoc",
+      "cmd": "grep x <<< smtplib",
+      "expected": false
+    },
+    {
+      "name": "#725 coarse control: single-line $( ) naming sendmail",
+      "cmd": "x=$(grep -c sendmail notes.txt)",
+      "expected": false
+    },
+    {
+      "name": "#725 coarse control: arithmetic $(( )) spanning a line is not a substitution",
+      "cmd": "x=$((1\n+2)); grep -c sendmail notes.txt",
+      "expected": false
+    },
+    {
+      "name": "#725: control: a << in a comment opens nothing [ported from r13 20f18e9e]",
+      "cmd": "# see <<X below\nls\nX",
+      "expected": false
+    },
+    {
+      "name": "#725: must-block: script file sending through the mail library [ported from r13 20f18e9e]",
+      "cmd": "python3 smtp_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: the same file on stdin [ported from r13 20f18e9e]",
+      "cmd": "python3 - < smtp_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: the same file run as a module [ported from r13 20f18e9e]",
+      "cmd": "python3 -m smtp_send",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: from-import form in a script file [ported from r13 20f18e9e]",
+      "cmd": "python3 smtp_from_import.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: control: the mail library imported, nothing sent [ported from r13 20f18e9e]",
+      "cmd": "python3 smtp_import_only.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#725: must-block: ${#a[1<<2]} newline hd (review 2898) [ported from r13 20f18e9e]",
+      "cmd": "a=(1 2 3 4 5); echo ${#a[1<<2]}\npython3 - <<'E'\nimport smtplib\ns = smtplib.SMTP('h')\ns.sendmail('a','b','c')\nE\n",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv11b a[1<<2]=1 python3 smtp_send.py (review 2938) [ported from r13 20f18e9e]",
+      "cmd": "a[1<<2]=1 python3 smtp_send.py\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv11b X=1 a[1<<2]=1 python3 smtp_send.py (review 2938) [ported from r13 20f18e9e]",
+      "cmd": "X=1 a[1<<2]=1 python3 smtp_send.py\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv11b a[1<<2]+=1 python3 smtp_send.py (review 2938) [ported from r13 20f18e9e]",
+      "cmd": "a[1<<2]+=1 python3 smtp_send.py\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h1 b=2#;python3 x[ (no heredoc) (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "cat > 'x[' <<'E'\nimport smtplib\ns = smtplib.SMTP('h')\ns.sendmail('a','b','c')\nE\nb=2#;python3 x[\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h2 true b=2#;python3 x[ (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "cat > 'x[' <<'E'\nimport smtplib\ns = smtplib.SMTP('h')\ns.sendmail('a','b','c')\nE\ntrue b=2#;python3 x[\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h3 echo 2#;python3 x[ (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "cat > 'x[' <<'E'\nimport smtplib\ns = smtplib.SMTP('h')\ns.sendmail('a','b','c')\nE\necho 2#;python3 x[\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h4 b=2#;python3 sm.py (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "b=2#;python3 smtp_send.py\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h5 a[1<<2]=1#;python3 x[ (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "cat > 'x[' <<'E'\nimport smtplib\ns = smtplib.SMTP('h')\ns.sendmail('a','b','c')\nE\na[1<<2]=1#;python3 x[\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h6 a[1<<2]=1 b=2#;sendmail (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "a[1<<2]=1 b=2#;sendmail bob@example.com < notes.txt\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: adv12b h7 echo a#;sendmail (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo a#;sendmail bob@example.com < notes.txt\n",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: Py comment parity, # ends no word before ;sendmail (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo a#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: a comment's words do not run (review 2942) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "echo hi # x; sendmail bob@example.com",
+      "expected": true
+    },
+    {
+      "name": "#725: control: plain trailing comment stays allowed (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo hi # note",
+      "expected": false
+    },
+    {
+      "name": "#725: must-block: comment ends at the newline (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo hi # c\nsendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: comment after ; ends at the newline (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo hi;# c\nsendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: escaped space, # inside the word (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo \\ #x; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in a nested quote inside $( in a double quote (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo \"$(echo \" #\")\"; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: $'\\'' does not end the string (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo $'\\' #x'; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: quoted # (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo a'#'; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: comment inside backticks (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo `#`; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: comment ends at a backtick (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "x=1 # c `\nsendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: apostrophe in a comment (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "echo hi # don't\nsendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: <<E inside a comment opens no heredoc (review 2942) [ported from r13 20f18e9e]",
+      "cmd": "# <<E\nsendmail bob@example.com < notes.txt\nE",
+      "expected": true
+    },
+    {
+      "name": "#725: control: ${#PATH} then a comment (review 2942) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "echo ${#PATH} #c; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: comment with an apostrophe (review 2942) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "# don't; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: ${x:-a} in double quotes, then a comment (review 2942) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "echo \"${x:-a}\" # c; sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: <(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "cat <(true)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: a=(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "a=(1)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob @(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho @(a)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob ?(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho ?(a)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob !(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho !(a)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob *(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho *(a)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob +(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho +(a)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: >(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "echo x >(cat)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: two <(..) then # keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "diff <(true) <(true)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: declare -a a=(..)# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "declare -a a=(1)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: $(( ))# keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "echo $((1))#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: <(..) inside $( ) keeps the word (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "echo $(cat <(true)#;sendmail bob@example.com < notes.txt)",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: <(..)# then a python smtp script (review 2945) [ported from r13 20f18e9e]",
+      "cmd": "cat <(true)#;python3 smtp_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725: control: (true)# subshell then comment (review 2945) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "(true)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: ((1))# arithmetic then comment (review 2945) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "((1))#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: <(..) space # comment (review 2945) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "cat <(true) #;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: $(true) space # comment (review 2945) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "echo $(true) #;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: case ) inside <( pops no word paren (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: case ) inside >( pops no word paren (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "echo a > >(case x in x) cat;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: case x|y) inside <( (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in x|y) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: two-line case inside <( (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in\nx) true;;\nesac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: array then case inside <( (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "a=(1) ; cat <(case x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: two case patterns inside <( (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in x) true;; y) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: case inside <( then a python smtp script (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in x) true;; esac)#;python3 smtp_send.py",
+      "expected": true,
+      "cwd": "src/__tests__/fixtures/send-gate"
+    },
+    {
+      "name": "#725: stated over-block: case inside a subshell then # (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "(case x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in [[ @(a|#) ]] (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "[[ x == @(a|#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in [[ @(#) ]] (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "[[ x == @(#) ]] || sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in [[ !(#) ]] (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "[[ x == !(#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in [[ +(x|#y) ]] (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "[[ x == +(x|#y) ]] && sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob ls @(#) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls @(#);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob ls @(a| #) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls @(a| #);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob nested @(a|(#)) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls @(a|(#));sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob @(a&#) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls @(a&#);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob !(#x) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls !(#x);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: extglob ?(#) and *(#) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\nls ?(#) *(#);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: case pattern @(a|#)) (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\ncase x in @(a|#)) true;; esac;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[ @(a|#) ]] then a python smtp script (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "[[ x == @(a|#) ]];python3 smtp_send.py",
+      "expected": true,
+      "cwd": "src/__tests__/fixtures/send-gate"
+    },
+    {
+      "name": "#725: control: # after a space in an array is a comment (review 2947) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "a=(1 #;sendmail bob@example.com < notes.txt\n)",
+      "expected": true
+    },
+    {
+      "name": "#725: control: [[ @(a) ]] then space # comment (review 2947) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "[[ x == @(a) ]] #;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: stated over-block: <(case ..) space # comment (review 2947) [ported from r13 20f18e9e]",
+      "cmd": "cat <(case x in x) true;; esac) #;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in a [[ =~ (#) ]] regex group (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "[[ x =~ (#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in a [[ =~ a(#) ]] regex group (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "[[ x =~ a(#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # in a [[ =~ (a|#) ]] regex group (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "[[ x =~ (a|#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: space # in a [[ =~ ( #) ]] regex group (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "[[ x =~ ( #) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # after a [[ =~ (a) ]] group is word text (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "[[ x =~ (a)#b ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[ =~ (#) ]] inside $( (review 2947 fuzz) [ported from r13 20f18e9e]",
+      "cmd": "echo $([[ x =~ (#) ]];sendmail bob@example.com < notes.txt)",
+      "expected": true
+    },
+    {
+      "name": "#725: control: [[ =~ ]] then space # comment (review 2947 fuzz) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "[[ x =~ (a) ]] #;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[ as an argument inside \"$( )\" (P1) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "echo \"$(echo [[ ) #\" ; sendmail bob@example.com < notes.txt\n)\"",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[ as a printf argument inside \"$( )\" (P2) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "x=\"$(printf %s [[ ) #\";sendmail bob@example.com < notes.txt\n)\"",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline before [[ after && (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "true && \\\n[[ x =~ (#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline after [[ (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[[\\\n x =~ (#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline inside [[ (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[\\\n[ x =~ (#) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline after if before [[ (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "if \\\n[[ x =~ (#) ]]; then :; fi;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline after <( before case (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "cat <(\\\ncase x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline after $( before case (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "echo $(\\\ncase x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline inside case (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "cat <(ca\\\nse x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline after ; before case (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "cat <(true;\\\ncase x in x) true;; esac)#;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline between @ and ( (extglob) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "ls @\\\n(#);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline between * and ( (extglob) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "ls *\\\n(#);sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: \\-newline before a # keeps it a comment start, heredoc in it opens nothing (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "echo \\\n# c <<E\nsendmail bob@example.com < notes.txt\nE",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[( with a blank after (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[[( x =~ (#) ) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[( no blank (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[[(x =~ (#)) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[( with an alternation (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[[(x =~ (a|#)) ]];sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[( then &&: (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "[[(x =~ (#)) ]]&&:;sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: [[ after a case pattern ) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "case x in x) [[ y =~ (#) ]];sendmail bob@example.com < notes.txt;; esac",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: # $( ) in an unquoted heredoc body (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "cat <<E\n# $(sendmail bob@example.com < notes.txt)\nE",
+      "expected": true
+    },
+    {
+      "name": "#725: control: [[ as an argument with a real comment (review 2951) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "echo [[ x ]] # sendmail bob@example.com < notes.txt",
+      "expected": true
+    },
+    {
+      "name": "#725: control: \\-newline then # after <( ) is a comment (review 2951) [ported from r13 20f18e9e; #725 coarse: token + hard construct counts as a send]",
+      "cmd": "cat <(true) \\\n#;sendmail bob@example.com < notes.txt\n",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: an extglob paren holds a << across lines (round 13 fuzz) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\n*(case x in *(function f a+=({function f )) ]]||<<E\n)#;sendmail bob@example.com < notes.txt\n",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: a << in +( inside a+=( opens no heredoc (round 13 fuzz) (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "a+=(a=(+(<<E\n  #\"\\\n sendmail bob@example.com < notes.txt\n",
+      "expected": true
+    },
+    {
+      "name": "#725: must-block: a << in @( opens no heredoc (review 2951) [ported from r13 20f18e9e]",
+      "cmd": "shopt -s extglob\necho @(<<E\nx)#;sendmail bob@example.com < notes.txt\nE",
+      "expected": true
     }
   ]
 }

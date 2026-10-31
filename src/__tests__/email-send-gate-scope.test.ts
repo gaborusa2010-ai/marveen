@@ -21,8 +21,11 @@ describe('gateDecision Bash: content about mail no longer denies (the measured F
     expect(bash('git commit -q -m "fix(hooks): sendmail/msmtp/swaks are now matched in program position, send.py needs --to"').deny).toBe(false)
   })
 
-  it('a PR-create with a heredoc body that documents the send patterns passes', () => {
-    expect(bash(`gh pr create --title "gate fix" --body-file /tmp/b.md <<'EOF'\nthe old trigger matched sendmail and api.resend.com anywhere\nEOF`).deny).toBe(false)
+  it('#725 coarse: a heredoc body naming send tokens denies; the same body from a Write-tool file passes', () => {
+    // Deliberate over-block (Marveen msg 14989, GO 14995): token + heredoc is not decided.
+    expect(bash(`gh pr create --title "gate fix" --body-file /dev/stdin <<'EOF'\nthe old trigger matched sendmail and api.resend.com anywhere\nEOF`)).toEqual({ deny: true, kind: 'ambiguous-send' })
+    expect(bash(`gh pr create --title "gate fix" --body-file /tmp/b.md`).deny).toBe(false)
+    expect(bash(`gh pr create --title "gate fix" --body-file /dev/stdin <<'EOF'\nthe old trigger was too broad\nEOF`).deny).toBe(false)
   })
 
   it('a card-comment sqlite write quoting the evidence passes', () => {
@@ -75,9 +78,9 @@ describe('gateDecision Bash: POSITIVE CONTROLS -- real send attempts still deny 
     expect(bash(`python3 -c "print('a sendmail utvonala regen mas volt')"`).deny).toBe(false)
   })
 
-  it('heredoc stripping is ORDER-INDEPENDENT: marker-first file-writes stay content, heredoc-FED senders still deny (round 3)', () => {
-    expect(bash(`cat <<'EOF' > /tmp/notes.md\nsendmail --to x@y.hu is how the legacy path worked\nEOF`).deny).toBe(false)
-    expect(bash(`sendmail -t a@b.hu <<'EOF'\ntorzs sora\nEOF`).deny).toBe(true)
+  it('heredoc-FED senders still deny as a real send; a file-write naming a sender now denies by the #725 coarse rule', () => {
+    expect(bash(`cat <<'EOF' > /tmp/notes.md\nsendmail --to x@y.hu is how the legacy path worked\nEOF`)).toEqual({ deny: true, kind: 'ambiguous-send' })
+    expect(bash(`sendmail -t a@b.hu <<'EOF'\ntorzs sora\nEOF`)).toEqual({ deny: true })
   })
 
   it('an unparseable command falls back to the legacy patterns (never weaker than before)', () => {
