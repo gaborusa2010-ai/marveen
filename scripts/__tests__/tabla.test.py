@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Standalone integration tests for scripts/tabla.py."""
+import datetime as dt
 import http.server
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import urllib.parse
+from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TABLA = os.path.abspath(os.path.join(HERE, "..", "tabla.py"))
@@ -31,6 +33,32 @@ cards = [
 ]
 requests = []
 memory_header = "strict=true; relaxed=true"
+messages = [{"id": 7, "from_agent": "alice", "to_agent": "tester", "status": "pending", "created_at": 100, "content": "hello"}]
+
+
+def message_page(query):
+    # Mirrors src/web/routes/messages.ts: newest first, limit default 50 capped at 200,
+    # `before` as an id cursor; the pending path returns every pending row and ignores
+    # limit and cursor, yet the truncation headers still follow length >= limit.
+    status = query.get("status", [""])[0]
+    limit = min(int(query.get("limit", ["50"])[0]), 200)
+    rows = sorted(messages, key=lambda m: m["id"], reverse=True)
+    if status == "pending":
+        rows = [m for m in rows if m["status"] == "pending"]
+    else:
+        if status:
+            rows = [m for m in rows if m["status"] == status]
+        if "before" in query:
+            rows = [m for m in rows if m["id"] < int(query["before"][0])]
+        rows = rows[:limit]
+    headers = {}
+    if rows and len(rows) >= limit:
+        headers = {"X-Result-Truncated": "true", "X-Result-Limit": str(limit), "X-Next-Before": str(rows[-1]["id"])}
+    return rows, headers
+
+
+def msg(mid, status, to="tester", sender="alice"):
+    return {"id": mid, "from_agent": sender, "to_agent": to, "status": status, "created_at": 100, "content": "m%d" % mid}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -61,7 +89,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(200, [{"id": 9, "author": "a", "content": "later", "created_at": 20}])
             return self.send(200, {"ok": True, "id": 99})
         if path.startswith("/api/kanban/") and path.endswith("/move"):
-            if body and body.get("status") == "waiting":
+            if body and body.get("status") == "waiting" and "/b8acdfb6aaaa/" in path:
                 return self.send(409, {"error": "blocked move hint"})
             return self.send(200, {"ok": True})
         if path.startswith("/api/kanban/"):
@@ -81,7 +109,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/messages/"):
             return self.send(200, {"id": 7, "from_agent": "alice", "to_agent": "tester", "status": "pending", "created_at": 100, "content": "full message"})
         if path == "/api/messages":
-            return self.send(200, [{"id": 7, "from_agent": "alice", "to_agent": "tester", "status": "pending", "created_at": 100, "content": "hello"}])
+            return self.send(200, *message_page(urllib.parse.parse_qs(parsed.query)))
         if path == "/api/memories" and self.command == "GET":
             headers = {"X-Memory-Search": memory_header} if memory_header else {}
             return self.send(200, [{"id": 5, "category": "warm", "content": "hit"}], headers)
@@ -159,8 +187,36 @@ desc = [q for q in requests if q["method"] == "PUT" and q["path"] == "/api/kanba
 check("komment keeps text above a --- line that is not a state block", desc.endswith(": kept\n---\nIntro text\n---\nmore"))
 check("description PUT names the actor", all(q["body"].get("actor") == "tester" for q in requests if q["method"] == "PUT" and q["path"].startswith("/api/kanban/")))
 
-r = run("mozgat", "730", "waiting")
+r = run("mozgat", "730", "waiting", "--ok", "x")
 check("mozgat 409", r.returncode == 1 and "blocked move hint" in r.stderr)
+
+
+def last_move():
+    return [q for q in requests if q["path"].endswith("/move")][-1]["body"]
+
+
+london = ZoneInfo("Europe/London")
+r = run("mozgat", "2", "waiting", "--ok", "marveen review", "--hatarido", "2026-11-02")
+until = int(dt.datetime(2026, 11, 2, 23, 59, tzinfo=london).timestamp())
+check("waiting with a date sends a date wait at 23:59 London",
+      r.returncode == 0 and last_move().get("wait") == {"kind": "date", "note": "marveen review", "until": until})
+r = run("mozgat", "2", "waiting", "--ok", "x", "--hatarido", "2026-10-20 14:30")
+check("date with a time is London local time (BST)",
+      r.returncode == 0 and last_move()["wait"]["until"] == int(dt.datetime(2026, 10, 20, 13, 30, tzinfo=dt.timezone.utc).timestamp()))
+r = run("mozgat", "2", "waiting", "--ok", "  Ariel  ")
+check("waiting without a date sends an external wait",
+      r.returncode == 0 and last_move().get("wait") == {"kind": "external", "note": "Ariel"})
+r = run("mozgat", "2", "testing")
+check("a non-waiting move sends no wait", r.returncode == 0 and "wait" not in last_move())
+for name, extra in (("waiting without --ok", ("waiting",)),
+                    ("--ok on a non-waiting move", ("testing", "--ok", "x")),
+                    ("--hatarido on a non-waiting move", ("testing", "--hatarido", "2026-11-02")),
+                    ("a bad date", ("waiting", "--ok", "x", "--hatarido", "2026-13-01")),
+                    ("a blank --ok", ("waiting", "--ok", "   ")),
+                    ("an --ok over 200 characters", ("waiting", "--ok", "y" * 201))):
+    before = len(requests)
+    r = run("mozgat", "2", *extra)
+    check(name + " is a usage error with no request", r.returncode == 2 and len(requests) == before)
 r = run("lezar", "409")
 check("lezar 409 is success", r.returncode == 0 and "already closed" in r.stdout)
 r = run("lezar", "8", "--csendes")
@@ -208,6 +264,59 @@ try:
 except ValueError:
     json_ok = False
 check("emlek keres --json keeps stdout parseable", r.returncode == 0 and json_ok and "relaxed=true" in r.stderr)
+
+
+def message_gets(status=None):
+    gets = [q for q in requests if q["method"] == "GET" and q["path"].startswith("/api/messages?")]
+    return [q for q in gets if status is None or ("status=%s" % status) in q["path"]]
+
+
+def json_rows(result):
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return None
+
+
+# --nyitott reads past one page: 450 open to tester, 300 closed, 120 sent by tester, 3 pending.
+messages[:] = ([msg(i, "delivered") for i in range(1000, 1450)] + [msg(i, "done") for i in range(2000, 2300)]
+               + [msg(i, "delivered", to="alice", sender="tester") for i in range(3000, 3120)]
+               + [msg(i, "pending") for i in (5, 6, 4000)])
+r = run("uzenetek", "--nyitott", "--json")
+rows = json_rows(r) or []
+ids = [m["id"] for m in rows]
+check("--nyitott reads every page of open messages to me",
+      r.returncode == 0 and len(rows) == 453 and set(ids) == set(range(1000, 1450)) | {5, 6, 4000})
+check("--nyitott is sorted newest first", ids == sorted(ids, reverse=True))
+check("--nyitott complete list gives no warning", "warning" not in r.stderr)
+r = run("uzenetek", "--nyitott")
+check("--nyitott text output has one line per message", len(r.stdout.splitlines()) == 453)
+
+before_count = len(message_gets())
+r = run("uzenetek", "--json")
+check("plain uzenetek is one page", len(message_gets()) == before_count + 1)
+check("a cut plain list warns with the cursor", r.returncode == 0 and "--before 3071" in r.stderr)
+r = run("uzenetek", "--before", "1100", "--limit", "10", "--json")
+check("--before is passed to the server", "before=1100" in message_gets()[-1]["path"]
+      and [m["id"] for m in json_rows(r)] == list(range(1099, 1089, -1)))
+messages[:] = [msg(i, "delivered") for i in range(1, 11)]
+r = run("uzenetek")
+check("a short plain list gives no warning", r.returncode == 0 and "warning" not in r.stderr and len(r.stdout.splitlines()) == 10)
+
+# Pending path ignores the cursor: 260 pending must not loop or warn.
+messages[:] = [msg(i, "pending") for i in range(1, 261)]
+before_count = len(message_gets("pending"))
+r = run("uzenetek", "--nyitott", "--json")
+check("over 200 pending rows end after one repeat page",
+      r.returncode == 0 and len(json_rows(r) or []) == 260 and len(message_gets("pending")) == before_count + 2
+      and "warning" not in r.stderr)
+
+# The page cap: 5200 open rows stop at MAX_PAGES and say so.
+messages[:] = [msg(i, "delivered") for i in range(1, 5201)]
+r = run("uzenetek", "--nyitott", "--json")
+check("the page cap stops with a warning and the cursor",
+      r.returncode == 0 and len(json_rows(r) or []) == 5000 and "stopped after 25 pages" in r.stderr and "--before 201" in r.stderr)
+
 no_root = tempfile.mkdtemp()
 r = run("lista", cwd=no_root, env={k: v for k, v in base_env.items() if k != "CLAW_DIR"})
 check("no token above cwd is usage error, not a traceback", r.returncode == 2 and "Traceback" not in r.stderr)

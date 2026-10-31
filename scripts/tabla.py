@@ -32,6 +32,8 @@ NEW_MARK = "UJ, NINCS A LEIRASBAN"
 EXCLUDED_AUTHORS = {"system", "kartya-es-ertesites"}
 EXCLUDED_PREFIXES = ("[Heti átnézés]",)
 MAX_TEXT = 100_000
+PAGE_LIMIT = 200  # the server's cap for one message page
+MAX_PAGES = 25
 
 
 class UsageError(Exception):
@@ -244,10 +246,44 @@ def cmd_komment(args, identity):
         print(body.get("id") if isinstance(body, dict) else body)
 
 
+def deadline_ts(value):
+    # YYYY-MM-DD means the end of that day, Europe/London; YYYY-MM-DD HH:MM is taken as is.
+    for fmt, end_of_day in (("%Y-%m-%d %H:%M", False), ("%Y-%m-%d", True)):
+        try:
+            moment = dt.datetime.strptime(value.strip(), fmt)
+        except ValueError:
+            continue
+        if end_of_day:
+            moment = moment.replace(hour=23, minute=59)
+        return int(moment.replace(tzinfo=TZ).timestamp())
+    raise UsageError("--hatarido must be YYYY-MM-DD or 'YYYY-MM-DD HH:MM'")
+
+
+def wait_reason(args):
+    # The move endpoint's `wait` object (src/db.ts validateKanbanWaitReason): a date wait
+    # when a deadline is given, otherwise an external one; the server caps the note at 200.
+    if args.status != "waiting":
+        if args.ok is not None or args.hatarido is not None:
+            raise UsageError("--ok and --hatarido only go with waiting")
+        return None
+    if args.ok is None:
+        raise UsageError("waiting needs a reason: --ok TEXT [--hatarido YYYY-MM-DD]")
+    note = text_arg(args.ok, "--ok").strip()
+    if len(note) > 200:
+        raise UsageError("--ok is longer than 200 characters")
+    if args.hatarido is None:
+        return {"kind": "external", "note": note}
+    return {"kind": "date", "note": note, "until": deadline_ts(args.hatarido)}
+
+
 def cmd_mozgat(args, identity):
+    wait = wait_reason(args)
     card = resolve_card(identity, args.ref, full=False)
     path = "/api/kanban/%s/move" % urllib.parse.quote(str(card["id"]), safe="")
-    status, body, _ = call(identity, "POST", path, {"status": args.status, "actor": identity})
+    payload = {"status": args.status, "actor": identity}
+    if wait is not None:
+        payload["wait"] = wait
+    status, body, _ = call(identity, "POST", path, payload)
     require_ok(status, body)
     json_out(body) if args.json else print("ok")
 
@@ -262,15 +298,53 @@ def cmd_uzenet(args, identity):
     print(body.get("content") or "")
 
 
+def fetch_messages(identity, status=None, limit=None, before=None, all_pages=False):
+    """One mailbox listing. The server returns the newest `limit` rows (default 50,
+    max 200) and says so in X-Result-Truncated / X-Next-Before (src/web/routes/messages.ts).
+    Returns (rows, next_before): next_before is None when nothing was left out."""
+    rows, seen, pages = [], set(), 0
+    while True:
+        path = "/api/messages?agent=" + urllib.parse.quote(identity, safe="")
+        for key, value in (("status", status), ("limit", limit), ("before", before)):
+            if value is not None:
+                path += f"&{key}={value}"
+        code, body, headers = call(identity, "GET", path)
+        require_ok(code, body)
+        if isinstance(body, dict):
+            body = body.get("messages", [])
+        fresh = [m for m in body if m.get("id") not in seen]
+        seen.update(m.get("id") for m in fresh)
+        rows += fresh
+        pages += 1
+        lower = {k.lower(): v for k, v in headers.items()}
+        cursor = lower.get("x-next-before")
+        # The pending path answers every pending row and ignores the cursor, yet still
+        # flags a full page: a page with nothing new means the list is complete.
+        if lower.get("x-result-truncated") != "true" or not fresh:
+            return rows, None
+        if not all_pages or not cursor or pages >= MAX_PAGES:
+            return rows, cursor or "?"
+        before = cursor
+
+
 def cmd_uzenetek(args, identity):
-    path = "/api/messages?agent=" + urllib.parse.quote(identity, safe="")
-    if args.limit is not None:
-        path += "&limit=" + str(args.limit)
-    status, body, _ = call(identity, "GET", path)
-    require_ok(status, body)
-    if isinstance(body, dict):
-        body = body.get("messages", [])
-    rows = [m for m in body if str(m.get("to_agent") or "").lower() == identity.lower()]
+    if args.nyitott:
+        # Open = pending or delivered; both read to the end, page by page.
+        rows, cut = [], None
+        for status in ("pending", "delivered"):
+            part, part_cut = fetch_messages(identity, status, PAGE_LIMIT, all_pages=True)
+            rows += part
+            cut = cut or part_cut
+        rows.sort(key=lambda m: m.get("id") or 0, reverse=True)
+        if cut:
+            print(f"warning: stopped after {MAX_PAGES} pages; older open messages may exist (--before {cut})",
+                  file=sys.stderr)
+    else:
+        rows, cut = fetch_messages(identity, limit=args.limit, before=args.before)
+        if cut:
+            print(f"warning: the list is cut at the server limit; older messages: --before {cut}",
+                  file=sys.stderr)
+    rows = [m for m in rows if str(m.get("to_agent") or "").lower() == identity.lower()]
     if args.nyitott:
         rows = [m for m in rows if m.get("status") not in ("done", "failed")]
     if args.json:
@@ -353,9 +427,9 @@ def parser():
     p = add(sub, "kartya"); p.add_argument("ref"); p.set_defaults(func=cmd_kartya)
     p = add(sub, "lista"); p.add_argument("--mind", action="store_true"); p.add_argument("--statusz", choices=STATUSES); p.set_defaults(func=cmd_lista)
     p = add(sub, "komment"); p.add_argument("ref"); group = p.add_mutually_exclusive_group(required=True); group.add_argument("text", nargs="?"); group.add_argument("--fajl"); p.add_argument("--allapot"); p.set_defaults(func=cmd_komment)
-    p = add(sub, "mozgat"); p.add_argument("ref"); p.add_argument("status", choices=STATUSES); p.set_defaults(func=cmd_mozgat)
+    p = add(sub, "mozgat"); p.add_argument("ref"); p.add_argument("status", choices=STATUSES); p.add_argument("--ok"); p.add_argument("--hatarido"); p.set_defaults(func=cmd_mozgat)
     p = add(sub, "uzenet"); p.add_argument("id", type=int); p.set_defaults(func=cmd_uzenet)
-    p = add(sub, "uzenetek"); p.add_argument("--nyitott", action="store_true"); p.add_argument("--limit", type=int); p.set_defaults(func=cmd_uzenetek)
+    p = add(sub, "uzenetek"); p.add_argument("--nyitott", action="store_true"); p.add_argument("--limit", type=int); p.add_argument("--before", type=int); p.set_defaults(func=cmd_uzenetek)
     p = add(sub, "lezar"); p.add_argument("id", type=int); p.add_argument("--eredmeny"); p.add_argument("--csendes", action="store_true"); p.set_defaults(func=cmd_lezar)
     p = add(sub, "emlek"); esub = p.add_subparsers(dest="emlek_cmd", required=True)
     e = add(esub, "uj"); e.add_argument("text"); e.add_argument("--kat", choices=("hot", "warm", "cold", "shared"), default="warm"); e.add_argument("--kulcs"); e.set_defaults(func=cmd_emlek)
