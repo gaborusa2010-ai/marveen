@@ -166,7 +166,9 @@ def build(run, item):
 def translate(run, item):
     table = {norm(x["hu"]): x["en"] for x in run["texts"].get("text", [])}
     table.update({norm(k): v for k, v in item.get("text", {}).items()})
-    markers = set(norm(x) for x in run["config"].get("magyar_jelzok", []))
+    # English ledger text passes only when listed: an unaccented Hungarian
+    # line is plain ASCII too, so "looks English" cannot be the test.
+    english = set(norm(x) for x in run["texts"].get("angol", []))
     unknown = []
     questions = item.setdefault("questions", [])
     kept = []
@@ -184,15 +186,12 @@ def translate(run, item):
         key = norm(body)
         if key in table:
             line["desc"] = prefix + table[key]
-        else:
-            words = set(re.findall(r"[a-z]+", key))
-            english = body.isascii() and not (words & markers)
-            if not english:
-                unknown.append(body)
+        elif key not in english:
+            unknown.append(body)
         kept.append(line)
     item["job"]["lines"] = kept
     if unknown:
-        return Stop(3, "Ismeretlen magyar szoveg: " + "; ".join(sorted(set(unknown))))
+        return Stop(3, "Ismeretlen szoveg (nincs a szovegek.toml-ban): " + "; ".join(sorted(set(unknown))))
     return item
 
 
@@ -229,8 +228,23 @@ def safe_name(text):
     return value or "ugyfel"
 
 
+def draft_key(item):
+    # A client can have a CIS and a non-CIS invoice in the same run.
+    return safe_name(item["client"]) + ("-cis" if item.get("cis") else "")
+
+
+def amounts(job, business):
+    subtotal = round(sum(float(x["qty"]) * float(x["unit"]) for x in job["lines"]), 2)
+    # The same rule as invoice.render(), so the message shows what the PDF will.
+    cis_rate = job.get("cis_rate", business.get("cis_rate") if job.get("cis") else None)
+    cis_base = sum(float(x["qty"]) * float(x["unit"]) for x in job["lines"] if x.get("cis"))
+    cis = round(cis_base * float(cis_rate) / 100, 2) if cis_rate else 0
+    return subtotal, cis, round(subtotal - cis, 2)
+
+
 def draft(run, item):
-    path = os.path.join(run["run_dir"], safe_name(item["client"]) + ".json")
+    item["key"] = draft_key(item)
+    path = os.path.join(run["run_dir"], item["key"] + ".json")
     pdf = os.path.splitext(path)[0] + ".pdf"
     item["json_path"], item["pdf_path"] = path, pdf
     if run["dry_run"]:
@@ -278,19 +292,26 @@ def draft_command(args):
     for row in still_open:
         # An open day is never offered; say so, or it silently waits a week.
         print(f"Nyitott nap, nincs a szamlan: {row.get('client')}, #{row.get('id')}", file=sys.stderr)
-    if not available and not run_file.get("invoice"):
+    # Before "nothing to invoice": a week with no log at all is exactly the
+    # week whose missing days must be asked about.
+    miss_rc, miss_text = missing_days()
+    if miss_rc == 2:
+        print(f"Hibas bemenet: {miss_text}", file=sys.stderr)
+        return 2
+    overrides = run_file.get("invoice", [])
+    if not available and not overrides and miss_rc == 0:
         print("Nincs szamlazando nap.")
         return 0
-    overrides = run_file.get("invoice", [])
-    items = []
-    if overrides:
-        for value in overrides:
-            items.append({"client": value.get("client", ""), "cis": bool(value.get("cis", False)),
-                          "days": value.get("days"), "heading": value.get("heading"),
-                          "text": value.get("text", {})})
-    else:
-        for client, cis in sorted({(r.get("client"), bool(r.get("cis"))) for r in available}):
-            items.append({"client": client, "cis": cis})
+    items = [{"client": client, "cis": cis}
+             for client, cis in sorted({(r.get("client"), bool(r.get("cis"))) for r in available})]
+    for value in overrides:
+        item = {"client": value.get("client", ""), "cis": bool(value.get("cis", False)),
+                "days": value.get("days"), "heading": value.get("heading"),
+                "text": value.get("text", {})}
+        # run.toml replaces only the invoice it names; the rest of the run stays.
+        items = [x for x in items if (x["client"], x["cis"]) != (item["client"], item["cis"])]
+        items.append(item)
+        print(f"run.toml: {item['client']}{' (CIS)' if item['cis'] else ''} felulirva")
     day = args.date or date.today().isoformat()
     run_dir = os.path.join(PROGRAM, "runs", day)
     run = {"ledger": ledger, "business": business, "config": cfg, "texts": texts,
@@ -306,43 +327,42 @@ def draft_command(args):
                 break
         if isinstance(value, Stop):
             print(f"{item['client']}: {value.text}", file=sys.stderr)
-            item.update(status="stopped", code=value.code, error=value.text)
+            item.update(status="stopped", code=value.code, error=value.text, key=draft_key(item))
             codes.append(value.code)
             results.append(item)
         else:
             value["status"] = "draft"
             codes.append(1)
             results.append(value)
-            print(f"Piszkozat: {value['client']}, {len(value['days'])} nap, "
-                  f"{sum(float(x['qty']) * float(x['unit']) for x in value['job']['lines']):,.2f} GBP")
-    miss_rc, miss_text = missing_days()
-    if miss_rc == 2:
-        print(f"Hibas bemenet: {miss_text}", file=sys.stderr)
-        return 2
+            print(f"Piszkozat: {value['client']}{' (CIS)' if value['cis'] else ''}, "
+                  f"{len(value['days'])} nap, {amounts(value['job'], business)[0]:,.2f} GBP")
     if miss_rc == 1:
         codes.append(5)
     final = min(codes or [0], key=lambda x: PRIORITY[x])
     if args.dry_run:
+        if miss_rc == 1:
+            print(miss_text)
         return final
+    # The owner message describes days, never internal ledger ids.
+    missing_question = re.sub(r"#\d+", "egy munkanap", miss_text) if miss_rc == 1 else ""
     messages = []
     manifest_items = []
     for item in results:
-        total = cis = None
+        subtotal = cis = due = None
         if item.get("status") == "draft":
-            total = sum(float(x["qty"]) * float(x["unit"]) for x in item["job"]["lines"])
-            cis_base = sum(float(x["qty"]) * float(x["unit"]) for x in item["job"]["lines"] if x.get("cis"))
-            cis = round(cis_base * float(business.get("cis_rate", 0)) / 100, 2) if item["job"].get("cis") else 0
+            subtotal, cis, due = amounts(item["job"], business)
             questions = list(item.get("questions", []))
-            if miss_text:
-                # The owner message describes days, never internal ledger ids.
-                questions.append(re.sub(r"#\d+", "egy munkanap", miss_text))
+            if missing_question:
+                questions.append(missing_question)
             qtext = (" Kerdes: " + " ".join(questions)) if questions else ""
-            ctext = f" CIS: {cis:,.2f} GBP." if cis else ""
+            ctext = f" CIS levonas: {cis:,.2f} GBP, fizetendo: {due:,.2f} GBP." if cis else ""
             messages.append(cfg["uzenet_template"].format(client=item["client"], days=len(item["days"]),
-                            total=f"{total:,.2f}", cis=ctext, questions=qtext))
-        manifest_items.append({k: item.get(k) for k in ("client", "days", "status", "code",
+                            total=f"{subtotal:,.2f}", cis=ctext, questions=qtext))
+        manifest_items.append({k: item.get(k) for k in ("client", "key", "days", "status", "code",
                               "error", "json_path", "pdf_path", "json_sha256", "pdf_sha256")})
-        manifest_items[-1].update(total=total, cis=cis, reference=None)
+        manifest_items[-1].update(subtotal=subtotal, cis=cis, total=due, reference=None)
+    if missing_question and not messages:
+        messages.append("Kerdes: " + missing_question)
     with open(os.path.join(run_dir, "uzenet.txt"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(messages) + ("\n" if messages else ""))
     inputs = [LEDGER, CLIENTS, BUSINESS, cfg_path, txt_path]
@@ -357,11 +377,48 @@ def draft_command(args):
     return final
 
 
+def readback(text, job, entry, business):
+    """Compare the final PDF's text with the APPROVED draft, row by row."""
+    rows = text.splitlines()
+    money = invoice_program.money
+    mismatches = []
+
+    def followed_by(label, values, start=0):
+        for i in range(start, len(rows)):
+            if rows[i] == label and rows[i + 1:i + 1 + len(values)] == list(values):
+                return i + 1 + len(values)
+        return None
+
+    at = 0
+    for line in job.get("lines", []):
+        amount = float(line["qty"]) * float(line["unit"])
+        values = (f"{float(line['qty']):g}", money(float(line["unit"])), money(amount))
+        found = followed_by(str(line["desc"]), values, at)
+        if found is None:
+            mismatches.append(" | ".join((str(line["desc"]),) + values))
+        else:
+            at = found
+    if entry.get("cis"):
+        cis_label = f"CIS @ {float(job.get('cis_rate', business.get('cis_rate', 0))):g}%"
+        if followed_by(cis_label, [money(-entry["cis"])]) is None:
+            mismatches.append(f"{cis_label} {money(-entry['cis'])}")
+    if followed_by("Total", [money(entry["total"])]) is None:
+        mismatches.append(f"Total {money(entry['total'])}")
+    return mismatches
+
+
 def approve_command(args):
     manifest_path = os.path.join(args.run_dir, "run.json")
     try:
         manifest = load_json(manifest_path)
-        entry = next(x for x in manifest["invoices"] if x["client"] == args.client)
+        matches = [x for x in manifest["invoices"] if args.client in (x.get("key"), x["client"])]
+        if not matches:
+            raise KeyError(f"nincs ilyen tetel: {args.client}")
+        if len(matches) > 1:
+            print(f"{args.client}: tobb piszkozat, nevezd meg: "
+                  + ", ".join(str(x.get("key")) for x in matches), file=sys.stderr)
+            return 6
+        entry = matches[0]
         if entry.get("status") != "draft":
             print(f"{args.client}: nincs jovahagyhato piszkozat (allapot: {entry.get('status')})",
                   file=sys.stderr)
@@ -372,9 +429,19 @@ def approve_command(args):
             return 6
         job = load_json(path)
         business = load_json(BUSINESS)
-    except (ValueError, KeyError, StopIteration) as exc:
+    except (ValueError, KeyError) as exc:
         print(f"Hibas bemenet: {exc}", file=sys.stderr)
         return 2
+    # The owner approved the figures in the message, on the business file of
+    # that day. Re-check before a number is spent, not after.
+    if (business.get("vat_number") or "").strip():
+        print("A VAT sor a tulajdonos dontese; kitoltott vat_number mellett megalltam", file=sys.stderr)
+        return 6
+    if amounts(job, business) != (entry.get("subtotal"), entry.get("cis"), entry.get("total")):
+        print(f"Az osszeg valtozott a jovahagyott uzenet ota: most {amounts(job, business)}, "
+              f"jovahagyva {(entry.get('subtotal'), entry.get('cis'), entry.get('total'))}",
+              file=sys.stderr)
+        return 6
     for jid in invoice_program.job_ids(job):
         prior = [x for x in invoice_program.issued_for(jid) if x.get("kind") == "invoice"]
         if prior:
@@ -383,7 +450,7 @@ def approve_command(args):
     ref = str(job.get("reference") or invoice_program.next_number("invoice", business, bump=False))
     out_dir = os.path.join(STORE, "muhely", "invoices")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f"{ref}-{safe_name(args.client)}.pdf")
+    out = os.path.join(out_dir, f"{ref}-{entry.get('key') or safe_name(entry['client'])}.pdf")
     render_err = io.StringIO()
     try:
         with contextlib.redirect_stderr(render_err):
@@ -394,16 +461,10 @@ def approve_command(args):
     rendered_messages = render_err.getvalue()
     if rendered_messages:
         print(rendered_messages, end="", file=sys.stderr)
-    text = pdftext.extract(out)
-    mismatches = []
-    for line in job.get("lines", []):
-        amount = float(line["qty"]) * float(line["unit"])
-        expected = (str(line["desc"]), f"{float(line['qty']):g}",
-                    invoice_program.money(float(line["unit"])), invoice_program.money(amount))
-        if any(x not in text for x in expected):
-            mismatches.append(" | ".join(expected))
-    if f"Total\n{invoice_program.money(result['total'])}" not in text and invoice_program.money(result["total"]) not in text:
-        mismatches.append(f"Total {invoice_program.money(result['total'])}")
+    mismatches = readback(pdftext.extract(out), job, entry, business)
+    if (result["subtotal"], result["cis"] or 0, result["total"]) != (entry["subtotal"], entry["cis"], entry["total"]):
+        mismatches.append(f"render {result['subtotal']}/{result['cis']}/{result['total']} != "
+                          f"jovahagyott {entry['subtotal']}/{entry['cis']}/{entry['total']}")
     report = os.path.join(args.run_dir, "visszaolvasas.txt")
     with open(report, "w", encoding="utf-8") as fh:
         fh.write("RENDBEN\n" if not mismatches else "ELTERES\n" + "\n".join(mismatches) + "\n")

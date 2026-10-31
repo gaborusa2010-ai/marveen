@@ -54,13 +54,13 @@ RUN2="$SANDBOX/scripts/muhely/szamla-kor.py"
 before=$(find "$SANDBOX/store" -type f -exec md5sum {} + | sort | md5sum)
 python3 "$RUN2" draft --dry-run --date 2026-10-31 >"$TMP/dry.out" 2>"$TMP/dry.err"; rc=$?
 after=$(find "$SANDBOX/store" -type f -exec md5sum {} + | sort | md5sum)
-[ "$rc" = 1 ] && [ "$before" = "$after" ] && [ ! -d "$SANDBOX/store/muhely/szamlazas-program/runs" ] \
+case $rc in 1|5) true;; *) false;; esac && [ "$before" = "$after" ] && [ ! -d "$SANDBOX/store/muhely/szamlazas-program/runs" ] \
   && grep -q Piszkozat "$TMP/dry.out" && ok "dry-run nem ir" || no "dry-run irt vagy nem listazott"
 
 # Real draft creates seeds, hashed artifacts and a DRAFT PDF.
 python3 "$RUN2" draft --date 2026-10-31 >"$TMP/real.out" 2>"$TMP/real.err"; rc=$?
 rundir="$SANDBOX/store/muhely/szamlazas-program/runs/2026-10-31"
-[ "$rc" = 1 ] && [ -s "$rundir/run.json" ] && [ -s "$rundir/uzenet.txt" ] \
+case $rc in 1|5) true;; *) false;; esac && [ -s "$rundir/run.json" ] && [ -s "$rundir/uzenet.txt" ] \
   && grep -q '"json_sha256"' "$rundir/run.json" && ok "valodi draft es manifest" || no "valodi draft"
 
 # Changing a draft after its hash was messaged must block approval.
@@ -72,7 +72,7 @@ PY
 printf ' ' >> "$draft"
 client=$(python3 - "$rundir/run.json" <<'PY'
 import json,sys
-print(json.load(open(sys.argv[1]))['invoices'][0]['client'])
+print(json.load(open(sys.argv[1]))['invoices'][0]['key'])
 PY
 )
 python3 "$RUN2" approve "$rundir" "$client" >"$TMP/a.o" 2>"$TMP/a.e"; rc=$?
@@ -92,21 +92,37 @@ sed -i 's/"draft"/"nincsilyen"/' "$SANDBOX/store/muhely/szamlazas-program/config
 python3 "$SANDBOX/scripts/muhely/szamla-kor.py" draft --date 2026-11-02 >"$TMP/c.o" 2>"$TMP/c.e"; rc=$?
 [ "$rc" = 2 ] && grep -q 'ismeretlen lepes' "$TMP/c.e" && ok "ismeretlen lepes: kod 2" || no "ismeretlen lepes"
 
-# jobs.py's public CLI output and JSON remain byte-identical to HEAD.
+# jobs.py szamla's CLI output and JSON stay byte-identical: (a) to the builder
+# it wraps, called directly, which holds after any merge; (b) to jobs.py before
+# build_szamla existed (87c3c8ac), while that commit is in the object store.
 sandbox jobs
-mkdir -p "$TMP/old/scripts/muhely" "$TMP/old/store"
-git show HEAD:scripts/muhely/jobs.py > "$TMP/old/scripts/muhely/jobs.py"
-cp "$SANDBOX/store"/muhely-{jobs,ugyfelek,business}.json "$TMP/old/store/"
 ids=$(python3 - "$SANDBOX/store/muhely-jobs.json" <<'PY'
 import json,sys
 r=[x for x in json.load(open(sys.argv[1])) if x.get('stopped_at') and not x.get('invoice_ref') and not x.get('no_charge')]
 c=r[0]['client']; print(*[x['id'] for x in r if x['client']==c and bool(x.get('cis'))==bool(r[0].get('cis'))][:2])
 PY
 )
-(cd "$TMP/old" && python3 scripts/muhely/jobs.py szamla $ids --out out.json > stdout)
+[ -n "$ids" ] || no "jobs.py byte-teszt: nincs szamlazatlan nap a store-ban"
 (cd "$SANDBOX" && python3 scripts/muhely/jobs.py szamla $ids --out out.json > stdout)
-cmp -s "$TMP/old/stdout" "$SANDBOX/stdout" && cmp -s "$TMP/old/out.json" "$SANDBOX/out.json" \
-  && ok "jobs.py szamla byte-identical" || no "jobs.py szamla regresszio"
+(cd "$SANDBOX" && python3 - $ids > inner.stdout <<'PY'
+import argparse, importlib.util, sys
+spec = importlib.util.spec_from_file_location("j", "scripts/muhely/jobs.py")
+j = importlib.util.module_from_spec(spec); spec.loader.exec_module(j)
+sys.exit(j._cmd_szamla_build(argparse.Namespace(ids=[int(x) for x in sys.argv[1:]], leiras=None, out="inner.json")))
+PY
+)
+sed 's/inner\.json/out.json/g' "$SANDBOX/inner.stdout" > "$SANDBOX/inner.fixed"
+[ -s "$SANDBOX/out.json" ] && cmp -s "$SANDBOX/inner.fixed" "$SANDBOX/stdout" && cmp -s "$SANDBOX/inner.json" "$SANDBOX/out.json" \
+  && ok "jobs.py szamla = a belso epito, bajtra" || no "jobs.py szamla elter a belso epitotol"
+if git cat-file -e 87c3c8ac:scripts/muhely/jobs.py 2>/dev/null; then
+  mkdir -p "$TMP/old/scripts/muhely" "$TMP/old/store"
+  git show 87c3c8ac:scripts/muhely/jobs.py > "$TMP/old/scripts/muhely/jobs.py"
+  cp "$SANDBOX/store"/muhely-{jobs,ugyfelek,business}.json "$TMP/old/store/"
+  (cd "$TMP/old" && python3 scripts/muhely/jobs.py szamla $ids --out out.json > stdout)
+  ! cmp -s "$TMP/old/scripts/muhely/jobs.py" scripts/muhely/jobs.py \
+    && cmp -s "$TMP/old/stdout" "$SANDBOX/stdout" && cmp -s "$TMP/old/out.json" "$SANDBOX/out.json" \
+    && ok "jobs.py szamla = a 87c3c8ac elotti valtozat, bajtra" || no "jobs.py szamla elter a 87c3c8ac-tol"
+fi
 
 # Historical sources 10016-10023, including named 10018/10019 cases and a mutation control.
 sandbox regression
@@ -118,7 +134,7 @@ mkdir -p "$TMP/cases"
 python3 scripts/__tests__/muhely-szamla-kor-cases.py "$PWD" "$STORE_SRC" "$TMP/cases" >"$TMP/k.o" 2>&1; rc=$?
 sed 's/^  /  case /' "$TMP/k.o"
 n=$(grep -c '^  ok  ' "$TMP/k.o")
-[ "$rc" = 0 ] && [ "$n" -ge 17 ] && ok "rossz bemenet es jovahagyas: $n eset" || no "rossz bemenet es jovahagyas ($n ok, rc=$rc)"
+[ "$rc" = 0 ] && [ "$n" -ge 25 ] && ok "rossz bemenet es jovahagyas: $n eset" || no "rossz bemenet es jovahagyas ($n ok, rc=$rc)"
 
 for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-counters.json muhely-invoice-log.json; do
   [ -f "$STORE_SRC/$f" ] && md5sum "$STORE_SRC/$f" >> "$TMP/live-after"

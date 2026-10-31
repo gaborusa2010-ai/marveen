@@ -103,10 +103,16 @@ for ref in [str(x) for x in range(10016, 10024)]:
                        text=True, capture_output=True, env=env)
     run_dir = os.path.join(store, "muhely", "szamlazas-program", "runs", day)
     manifest_path = os.path.join(run_dir, "run.json")
-    if p.returncode not in (1, 5) or not os.path.exists(manifest_path):
-        failures.append(f"{ref}: draft exit {p.returncode}: {p.stderr.strip()}")
+    # The run also drafts the work log's other open invoices (run.toml only
+    # replaces the one it names), so the exit code is theirs too: judge the
+    # replayed invoice by its own entry.
+    if not os.path.exists(manifest_path):
+        failures.append(f"{ref}: draft exit {p.returncode}, nincs run.json: {p.stderr.strip()}")
         continue
-    entry = load(manifest_path)["invoices"][0]
+    entry = next((x for x in load(manifest_path)["invoices"] if x.get("days") == ids), None)
+    if entry is None:
+        failures.append(f"{ref}: a {ids} napok nincsenek a run.json-ban: {p.stderr.strip()}")
+        continue
     if entry["status"] != "draft":
         failures.append(f"{ref}: {entry.get('error')}")
         continue

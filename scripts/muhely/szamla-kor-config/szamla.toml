@@ -3,5 +3,4 @@ steps = ["collect", "build", "translate", "check", "draft"]
 heading_template = "Day work, {months}"
 tulora_min_perc = 15
 max_napok = 31
-magyar_jelzok = ["muhelymunka", "muhely", "munka", "es", "keszites", "csiszolas", "egyeb", "segedmunka", "szekrenyek", "osszerakasa", "helyszinen", "fiokok", "majd", "kiszallitas"]
 uzenet_template = "{client}: {days} nap, {total} GBP.{cis}{questions}"

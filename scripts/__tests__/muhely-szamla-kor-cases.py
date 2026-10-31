@@ -76,6 +76,10 @@ def rundir(root, day):
 # --- empty ledger: nothing to invoice ----------------------------------------
 root = sandbox("empty")
 write(root, "muhely-jobs.json", [])
+# Every day of the missing-days window acknowledged: only then is "nothing to
+# invoice" the whole answer (an unacknowledged empty week is asked, see below).
+write(root, "muhely-naplo-hiany-nyugtazva.json",
+      {time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400)): {"ok": "test"} for i in range(16)})
 rc, out, err = run(root, "draft", "--date", "2026-11-01")
 ok("ures naplo: exit 0, nincs mit szamlazni", rc == 0 and "Nincs szamlazando nap" in out
    and not os.path.isdir(rundir(root, "2026-11-01")), f"rc={rc} {out}{err}")
@@ -131,7 +135,7 @@ for c in range(161):
     for d in range(32 if c == 0 else 31):
         stamp = start + (len(rows)) * 3600
         rows.append(dict(template, id=next_id, client=name, started_at=stamp, stopped_at=stamp + 9 * 3600,
-                         job="Workshop work"))
+                         job="Furniture fitting"))
         next_id += 1
 write(root, "muhely-jobs.json", [r for r in ledger if r.get("invoice_ref")] + rows)
 write(root, "muhely-ugyfelek.json", clients)
@@ -170,8 +174,95 @@ ok("ismeretlen magyar szoveg: exit 3, a szoveggel", rc == 3 and "Konyhaszekrény
 long_text = "Fitting of the kitchen wall units and the tall larder units on site"
 day["job"] = long_text
 write(root, "muhely-jobs.json", ledger)
+# Allowed as English, so only its length can stop it (not the unknown-text check).
+texts_path = os.path.join(root, "scripts", "muhely", "szamla-kor-config", "szovegek.toml")
+texts = open(texts_path, encoding="utf-8").read()
+with open(texts_path, "w", encoding="utf-8") as fh:
+    fh.write(texts.replace("angol = [\n", f"angol = [\n  {json.dumps(long_text)},\n", 1))
 rc, out, err = run(root, "draft", "--dry-run", "--run", run_toml(root, day["client"], [day["id"]]))
-ok("64-nel hosszabb sor: exit 3, a sorral, nem vagva", rc == 3 and long_text in err, f"rc={rc} {err}")
+ok("64-nel hosszabb sor: exit 3, a sorral, nem vagva", rc == 3 and long_text in err
+   and "64 karakternel" in err, f"rc={rc} {err}")
+
+# --- unaccented Hungarian not in the table stops (review 3110, 2.) ------------
+root = sandbox("plain-hungarian")
+ledger = read(root, "muhely-jobs.json")
+day = candidates(ledger)[0]
+day["job"] = "Ajtok beszerelese"
+write(root, "muhely-jobs.json", ledger)
+rc, out, err = run(root, "draft", "--dry-run")
+ok("ekezet nelkuli magyar, nincs a tablaban: exit 3", rc == 3 and "Ajtok beszerelese" in err
+   and f"Piszkozat: {day['client']}," not in out, f"rc={rc} {out}{err}")
+
+# --- one client, CIS and non-CIS days: two drafts, two files (review 3110, 1.) --
+root = sandbox("mixed-cis")
+ledger = read(root, "muhely-jobs.json")
+client = candidates(ledger)[-1]["client"]
+mine = [r for r in candidates(ledger) if r["client"] == client]
+for row in mine[-2:]:
+    row["cis"] = True
+write(root, "muhely-jobs.json", ledger)
+rc, out, err = run(root, "draft", "--date", "2026-11-01")
+rd = rundir(root, "2026-11-01")
+entries = [x for x in json.load(open(os.path.join(rd, "run.json"), encoding="utf-8"))["invoices"]
+           if x["client"] == client]
+paths = {x.get("json_path") for x in entries}
+message = open(os.path.join(rd, "uzenet.txt"), encoding="utf-8").read()
+ok("kevert CIS: ket piszkozat, ket fajl, CIS-nel a fizetendo is",
+   len(entries) == 2 and len(paths) == 2 and all(x["status"] == "draft" for x in entries)
+   and all(os.path.exists(x) for x in paths) and "fizetendo" in message, f"rc={rc} {entries} {err}")
+rc, out, err = run(root, "approve", rd, client)
+ok("kevert CIS: a puszta ugyfelnev ketertelmu, exit 6", rc == 6 and "tobb piszkozat" in err, f"rc={rc} {err}")
+cis_entry = next(x for x in entries if x["key"].endswith("-cis"))
+rc, out, err = run(root, "approve", rd, cis_entry["key"])
+issued = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["key"] == cis_entry["key"])
+readback = open(os.path.join(rd, "visszaolvasas.txt"), encoding="utf-8").read()
+ok("kevert CIS: a CIS-piszkozat kulccsal kiallithato, RENDBEN",
+   rc == 0 and issued["status"] == "issued" and readback == "RENDBEN\n", f"rc={rc} {readback!r} {err}")
+
+# --- business file changed between draft and tap (review 3110, 3.) -------------
+for name, change in (("vat-late", {"vat_number": "GB123456789"}), ("cis-rate-late", {"cis_rate": 30})):
+    root = sandbox(name)
+    ledger = read(root, "muhely-jobs.json")
+    for row in candidates(ledger):
+        row["cis"] = True
+    write(root, "muhely-jobs.json", ledger)
+    rc, out, err = run(root, "draft", "--date", "2026-11-01")
+    rd = rundir(root, "2026-11-01")
+    entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["status"] == "draft")
+    business = read(root, "muhely-business.json")
+    business.update(change)
+    write(root, "muhely-business.json", business)
+    counter = read(root, "muhely-counters.json")
+    rc, out, err = run(root, "approve", rd, entry["key"])
+    ok(f"{name}: jovahagyas exit 6, nem fogy sorszam",
+       rc == 6 and read(root, "muhely-counters.json") == counter
+       and not glob.glob(os.path.join(root, "store", "muhely", "invoices", f"{counter[next(iter(counter))] + 1}-*")),
+       f"rc={rc} {err}")
+
+# --- nothing to invoice but an unlogged week: asked, not silent (review 3110, 7.)
+root = sandbox("unlogged-week")
+ledger = read(root, "muhely-jobs.json")
+cutoff = time.time() - 15 * 86400
+write(root, "muhely-jobs.json", [r for r in ledger if r.get("invoice_ref") and (r.get("started_at") or 0) < cutoff])
+seen = os.path.join(root, "store", "muhely-naplo-hiany-nyugtazva.json")
+if os.path.exists(seen):
+    os.remove(seen)
+rc, out, err = run(root, "draft", "--date", "2026-11-01")
+message = open(os.path.join(rundir(root, "2026-11-01"), "uzenet.txt"), encoding="utf-8").read() \
+    if os.path.isdir(rundir(root, "2026-11-01")) else ""
+ok("nincs szamlazando nap, de naplozatlan a het: exit 5 es kerdes", rc == 5 and message.startswith("Kerdes:"),
+   f"rc={rc} {out}{err}")
+
+# --- run.toml replaces only the invoice it names (review 3110, 8.) ---------------
+root = sandbox("partial-run")
+ledger = read(root, "muhely-jobs.json")
+cands = candidates(ledger)
+named = cands[-1]
+others = sorted({r["client"] for r in cands if r["client"] != named["client"]})
+rc, out, err = run(root, "draft", "--dry-run", "--run", run_toml(root, named["client"], [named["id"]]))
+ok("run.toml csak a nevezett szamlat irja felul, a tobbi marad",
+   bool(others) and all(f"Piszkozat: {c}," in out for c in others) and "felulirva" in out
+   and f"Piszkozat: {named['client']}, 1 nap" in out, f"rc={rc} {out}{err}")
 
 # --- missing days: asked together with the invoice, drafts still made ----------
 root = sandbox("missing")
@@ -197,7 +288,7 @@ manifest = json.load(open(os.path.join(rd, "run.json"), encoding="utf-8"))
 entry = next(x for x in manifest["invoices"] if x["status"] == "draft")
 counter_before = read(root, "muhely-counters.json")
 log_before = len(read(root, "muhely-invoice-log.json"))
-rc, out, err = run(root, "approve", rd, entry["client"])
+rc, out, err = run(root, "approve", rd, entry["key"])
 counter_after = read(root, "muhely-counters.json")
 ref = str(json.load(open(os.path.join(rd, "run.json"), encoding="utf-8"))["invoices"][
     manifest["invoices"].index(entry)].get("reference"))
@@ -210,7 +301,7 @@ ok("jovahagyas: exit 0, egy sorszam, napok jelolve, visszaolvasas RENDBEN",
    and len(read(root, "muhely-invoice-log.json")) == log_before + 1
    and glob.glob(os.path.join(root, "store", "muhely", "invoices", f"{ref}-*.pdf")),
    f"rc={rc} ref={ref} {counter_before}->{counter_after} {readback!r} {err}")
-rc, out, err = run(root, "approve", rd, entry["client"])
+rc, out, err = run(root, "approve", rd, entry["key"])
 ok("masodik jovahagyas: exit 6, nincs uj sorszam",
    rc == 6 and read(root, "muhely-counters.json") == counter_after, f"rc={rc} {err}")
 current = json.load(open(os.path.join(rd, "run.json"), encoding="utf-8"))
@@ -231,7 +322,7 @@ counter = read(root, "muhely-counters.json")
 key = next(iter(counter))
 counter[key] += 5
 write(root, "muhely-counters.json", counter)
-rc, out, err = run(root, "approve", rd, entry["client"])
+rc, out, err = run(root, "approve", rd, entry["key"])
 issued = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["client"] == entry["client"])
 ok("szamlalo kozben odebb lepett: a kovetkezo szabad szamot kapja",
    rc == 0 and str(issued.get("reference")) == str(counter[key] + 1), f"rc={rc} {issued} {err}")
@@ -244,7 +335,7 @@ with open(os.path.join(root, "scripts", "muhely", "drive_up.py"), "w", encoding=
 rc, out, err = run(root, "draft", "--date", "2026-11-01")
 rd = rundir(root, "2026-11-01")
 entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["status"] == "draft")
-rc, out, err = run(root, "approve", rd, entry["client"], env={"MUHELY_NO_DRIVE": None})
+rc, out, err = run(root, "approve", rd, entry["key"], env={"MUHELY_NO_DRIVE": None})
 issued = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["client"] == entry["client"])
 ok("Drive elerhetetlen: a szamla all, a futas jelzi",
    rc == 0 and "Drive masolat nem ment" in out and issued.get("drive") == "Drive masolat nem ment"
@@ -259,9 +350,26 @@ with open(os.path.join(root, "scripts", "muhely", "pdftext.py"), "a", encoding="
 rc, out, err = run(root, "draft", "--date", "2026-11-01")
 rd = rundir(root, "2026-11-01")
 entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["status"] == "draft")
-rc, out, err = run(root, "approve", rd, entry["client"])
+rc, out, err = run(root, "approve", rd, entry["key"])
 readback = open(os.path.join(rd, "visszaolvasas.txt"), encoding="utf-8").read()
 ok("visszaolvasasi elteres: exit 7, ELTERES a riportban", rc == 7 and readback.startswith("ELTERES"),
    f"rc={rc} {readback!r} {err}")
+
+# --- read-back: only the Total row differs -> 7 (review 3110, 4.) --------------
+root = sandbox("readback-total")
+with open(os.path.join(root, "scripts", "muhely", "pdftext.py"), "a", encoding="utf-8") as fh:
+    fh.write("\n_real_extract = extract\n"
+             "def extract(path):\n"
+             "    rows = _real_extract(path).split('\\n')\n"
+             "    i = rows.index('Total')\n"
+             "    rows[i + 1] += '9'\n"
+             "    return '\\n'.join(rows)\n")
+rc, out, err = run(root, "draft", "--date", "2026-11-01")
+rd = rundir(root, "2026-11-01")
+entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["status"] == "draft")
+rc, out, err = run(root, "approve", rd, entry["key"])
+readback = open(os.path.join(rd, "visszaolvasas.txt"), encoding="utf-8").read()
+ok("visszaolvasas: csak a Total sor ter el, exit 7", rc == 7 and readback.startswith("ELTERES")
+   and "Total" in readback, f"rc={rc} {readback!r} {err}")
 
 sys.exit(1 if failed else 0)

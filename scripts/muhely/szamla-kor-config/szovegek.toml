@@ -1,5 +1,12 @@
 format_version = 1
 
+# Ledger text that is already English and goes onto the invoice unchanged.
+# Anything neither here nor in a [[text]] pair stops the run (exit 3): an
+# unaccented Hungarian line is plain ASCII too, so it cannot be told apart.
+angol = [
+  "Furniture fitting",  # 10020
+]
+
 [[text]]
 hu = "Muhelymunka: Lyford Road G-06 Bedroom/Study Wardrobe (001-DRG-008 rev C2)"
 en = "Workshop: G-06 bedroom/study wardrobe"
