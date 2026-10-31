@@ -2564,6 +2564,74 @@
       "name": "#725 review 2: control: a spaced array index prefix before echo naming sendmail",
       "cmd": "a[1 2]=x echo sendmail",
       "expected": false
+    },
+    {
+      "name": "#725 review 3: must-block: a ; inside the array index (a[1;2]=x) before sendmail",
+      "cmd": "a[1;2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a | inside the array index",
+      "cmd": "a[1|2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a && inside the array index",
+      "cmd": "a[1&&2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a newline inside the array index",
+      "cmd": "a[1\n2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a ) inside the array index",
+      "cmd": "a[1)2]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a ; inside the index before a script that sends",
+      "cmd": "a[1;2]=x python3 smtp_send.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: two operator-laden subscripts after a plain assignment",
+      "cmd": "X=1 a[1;2]=x b[3|4]=y sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: an operator subscript after if",
+      "cmd": "if a[1;2]=x sendmail b@y </tmp/b; then :; fi",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a substitution with a ; inside the index",
+      "cmd": "a[$(echo 1;echo 2)]=x python3 smtp_lmtp.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: a nested subscript with a ; (a[b[1;2]]=x)",
+      "cmd": "a[b[1;2]]=x sendmail b@y </tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: must-block: outside command position bash splits at the ; (echo a[1;sendmail ...])",
+      "cmd": "echo a[1;sendmail b@y]",
+      "expected": true
+    },
+    {
+      "name": "#725 review 3: control: an operator subscript before an import-only script",
+      "cmd": "a[1;2]=x python3 smtp_import_only.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#725 review 3: control: an operator subscript with no = is the command name (bash: command not found)",
+      "cmd": "a[1;2] sendmail b@y",
+      "expected": false
     }
   ]
 }

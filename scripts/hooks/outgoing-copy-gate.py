@@ -763,6 +763,58 @@ def flatten_substitutions(cmd: str) -> str:
     return "".join(out)
 
 
+_SUBSCRIPT_START = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\[")
+
+
+def join_subscripts(cmd: str) -> str:
+    """The command with every unquoted `name[...]` subscript as part of one word:
+    the separators inside it (; | & ( ) newline backtick) become `_`. In command
+    position bash reads `a[1;2]=x` up to the matching ] as ONE word, prints "not
+    a valid identifier" and runs what follows, so `a[1;2]=x sendmail b` sent
+    while the segmenter cut at the `;` (#725 review 3). Elsewhere (`echo a[1;b]`)
+    bash does split, so this is an EXTRA reading next to the plain one, never a
+    replacement. An unclosed `[` joins nothing (bash stops at EOF there). One
+    pass pairs the brackets, so a long hostile command stays linear. See
+    joinSubscripts in email-send-gate.mjs (the JS twin)."""
+    n = len(cmd)
+    plain = [False] * n  # unquoted and not escaped
+    close, stack, q, i = {}, [], None, 0
+    while i < n:
+        ch = cmd[i]
+        if q:
+            if ch == "\\" and q == '"':
+                i += 1
+            elif ch == q:
+                q = None
+        elif ch in ("'", '"'):
+            q = ch
+        elif ch == "\\":
+            i += 1
+        else:
+            plain[i] = True
+            if ch == "[":
+                stack.append(i)
+            elif ch == "]" and stack:
+                close[stack.pop()] = i
+        i += 1
+    out = list(cmd)
+    i = 0
+    while i < n:
+        if not plain[i] or (i and not (cmd[i - 1].isspace() or cmd[i - 1] in ";&|(")):
+            i += 1
+            continue
+        m = _SUBSCRIPT_START.match(cmd, i)
+        end = close.get(m.end() - 1) if m else None
+        if end is None:
+            i = m.end() if m else i + 1
+            continue
+        for k in range(m.end(), end):
+            if plain[k] and cmd[k] in ";|&()\n`":
+                out[k] = "_"
+        i = end + 1
+    return "".join(out)
+
+
 # #718 (aaf838d6): an ad-hoc script (a scratchpad gmail_reply.py) sent through
 # the Gmail API and passed: only send.py was known by name, and the script's
 # CONTENT was never read. Now a script file the interpreter runs is read and
@@ -1327,14 +1379,17 @@ def _is_send(cmd: str, _depth: int, base) -> bool:
     if _segments_send(segments, _depth, base, written):
         return True
     # the same command with every substitution as one undecidable word
-    # (flatten_substitutions): the outer command keeps the word it would run
-    flat = flatten_substitutions(cmd)
-    if flat == cmd:
-        return False
-    try:
-        return _segments_send(_segments_tokens(flat), _depth, base, written)
-    except ValueError:
-        return bool(_FALLBACK_LITERALS.search(cmd))
+    # (flatten_substitutions): the outer command keeps the word it would run;
+    # and with every subscript kept as one word (join_subscripts)
+    for alt in (flatten_substitutions(cmd), join_subscripts(cmd)):
+        if alt == cmd:
+            continue
+        try:
+            if _segments_send(_segments_tokens(alt), _depth, base, written):
+                return True
+        except ValueError:
+            return bool(_FALLBACK_LITERALS.search(cmd))
+    return False
 
 # --- Hungarian detection (accent-insensitive markers) -----------------------
 # These fire on both the correct and the stripped spelling, so a transliterated

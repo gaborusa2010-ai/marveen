@@ -561,6 +561,48 @@ export function flattenSubstitutions(cmd) {
   return out
 }
 
+// The command with every unquoted `name[...]` subscript as part of one word: the
+// separators inside it become `_`. In command position bash reads `a[1;2]=x` up to
+// the matching ] as one word and runs what follows (#725 review 3); elsewhere it
+// splits, so this is an extra reading next to the plain one. See join_subscripts in
+// the python twin (an unclosed `[` joins nothing; one pass pairs the brackets).
+const SUBSCRIPT_START = /[A-Za-z_][A-Za-z_0-9]*\[/y
+export function joinSubscripts(cmd) {
+  const n = cmd.length
+  const plain = new Array(n).fill(false) // unquoted and not escaped
+  const close = new Map()
+  const stack = []
+  let q = null
+  for (let i = 0; i < n; i++) {
+    const ch = cmd[i]
+    if (q) {
+      if (ch === '\\' && q === '"') i++
+      else if (ch === q) q = null
+    } else if (ch === "'" || ch === '"') q = ch
+    else if (ch === '\\') i++
+    else {
+      plain[i] = true
+      if (ch === '[') stack.push(i)
+      else if (ch === ']' && stack.length) close.set(stack.pop(), i)
+    }
+  }
+  const out = cmd.split('')
+  for (let i = 0; i < n; i++) {
+    if (!plain[i] || (i > 0 && !(/\s/.test(cmd[i - 1]) || ';&|('.includes(cmd[i - 1])))) continue
+    SUBSCRIPT_START.lastIndex = i
+    const m = SUBSCRIPT_START.exec(cmd)
+    if (m === null) continue
+    const open = i + m[0].length - 1
+    const end = close.get(open)
+    if (end === undefined) { i = open; continue }
+    for (let k = open + 1; k < end; k++) {
+      if (plain[k] && ';|&()\n`'.includes(cmd[k])) out[k] = '_'
+    }
+    i = end
+  }
+  return out.join('')
+}
+
 // #718 (aaf838d6): the script file the interpreter runs is read and judged by the
 // provider-API send patterns only (codeApiSends; why, where the file is looked up and
 // the stated limits: _read_script in hooks/outgoing-copy-gate.py). A relative path
@@ -1057,14 +1099,17 @@ function isSend(cmd, depth, base) {
   }
   if (segmentsSend(segments, depth, base, written)) return true
   // The same command with every substitution as one undecidable word (see
-  // flattenSubstitutions): the outer command keeps the word it would run.
-  const flat = flattenSubstitutions(cmd)
-  if (flat === cmd) return false
-  try {
-    return segmentsSend(segmentsTokens(flat), depth, base, written)
-  } catch {
-    return SEND_PATTERNS.some((re) => re.test(cmd))
+  // flattenSubstitutions): the outer command keeps the word it would run; and with
+  // every subscript kept as one word (joinSubscripts).
+  for (const alt of [flattenSubstitutions(cmd), joinSubscripts(cmd)]) {
+    if (alt === cmd) continue
+    try {
+      if (segmentsSend(segmentsTokens(alt), depth, base, written)) return true
+    } catch {
+      return SEND_PATTERNS.some((re) => re.test(cmd))
+    }
   }
+  return false
 }
 
 // Outbound-shaped operations of the multiplexed manage_email tool. Each of
