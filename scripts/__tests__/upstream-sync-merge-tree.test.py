@@ -38,8 +38,9 @@ def write(path, text):
         fh.write(text)
 
 
-def repo(td, upstream_file):
-    """Local main and origin/main diverged; upstream edits `upstream_file`, local edits f."""
+def repo(td, upstream_file, local_file='f', upstream=None):
+    """Local main and origin/main diverged; upstream edits `upstream_file` (or runs
+    `upstream(seed)` instead), local commits an edit to `local_file`."""
     seed = os.path.join(td, 'seed')
     os.makedirs(seed)
     git(seed, 'init', '-q', '-b', 'main')
@@ -51,10 +52,13 @@ def repo(td, upstream_file):
     work = os.path.join(td, 'work')
     git(td, 'clone', '-q', os.path.join(td, 'origin.git'), work)
     write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\n')
-    write(os.path.join(seed, upstream_file), 'upstream\n')
+    if upstream:
+        upstream(seed)
+    else:
+        write(os.path.join(seed, upstream_file), 'upstream\n')
     git(seed, 'commit', '-qam', 'upstream')
     git(seed, 'push', '-q', os.path.join(td, 'origin.git'), 'main')
-    write(os.path.join(work, 'f'), 'local\n')
+    write(os.path.join(work, local_file), 'local\n')
     git(work, 'commit', '-qam', 'local')
     os.makedirs(os.path.join(work, 'scripts'))
     os.makedirs(os.path.join(work, 'store'))
@@ -127,6 +131,72 @@ with tempfile.TemporaryDirectory() as td:
           before == (open(fpath).read(), os.stat(fpath).st_mtime_ns) and 'reset: moving to HEAD' not in git(work, 'reflog'))
     run(work, env)
     check('merge-tree error repeat: one notification', notes(work) == 1, notes(work))
+
+def shim_git(td, script):
+    """A git wrapper on PATH: `script` is sh run before the real git; REAL holds its path."""
+    shim = os.path.join(td, 'bin')
+    os.makedirs(shim, exist_ok=True)
+    write(os.path.join(shim, 'git'), '#!/bin/sh\nREAL=%s\n%s\nexec "$REAL" "$@"\n' % (shutil.which('git'), script))
+    os.chmod(os.path.join(shim, 'git'), 0o755)
+    return dict(ENV, PATH=shim + os.pathsep + ENV['PATH'])
+
+
+# --- 4. upstream renames a file that is dirty here (#726) ---------------------
+# Rename detection listed only the new name, so the dirty old name slipped past
+# the check, merge-tree said clean and the real merge refused, every 15 minutes.
+def rename_f(seed):
+    git(seed, 'mv', 'f', 'g')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=rename_f)
+    fpath = os.path.join(work, 'f')
+    write(fpath, 'dirty\n')
+    before = (open(fpath).read(), os.stat(fpath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    p = run(work)
+    st = state(work)
+    check('renamed dirty: state blocked naming f', st['result'] == 'blocked' and 'f' in st['detail'].split(), st)
+    after = (open(fpath).read(), os.stat(fpath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    check('renamed dirty: f bytes, mtime and HEAD unchanged', before == after, (before, after))
+    check('renamed dirty: no merge was run', 'reset: moving to HEAD' not in git(work, 'reflog')
+          and not os.path.exists(os.path.join(work, '.git', 'MERGE_HEAD')))
+    check('renamed dirty: one notification', notes(work) == 1, notes(work))
+    run(work)
+    check('renamed dirty repeat: quiet', notes(work) == 1 and state(work)['result'] == 'blocked', notes(work))
+
+# --- 5. dirty file the merge does not touch: still merges ---------------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=rename_f)
+    write(os.path.join(work, 'h'), 'dirty-unrelated\n')
+    p = run(work)
+    st = state(work)
+    check('unrelated dirty: merged, dirty file kept', st['result'] == 'merged'
+          and open(os.path.join(work, 'h')).read() == 'dirty-unrelated\n'
+          and os.path.exists(os.path.join(work, 'g')), (st, p.stderr))
+
+# --- 6. origin/main moves between the check and the merge (#726) -------------
+# update.sh fetches on its own schedule; the commit that merge-tree checked must
+# be the one that gets merged, not whatever origin/main points at a moment later.
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, 'h')
+    git(work, 'fetch', '-q', 'origin', 'main')
+    checked = git(work, 'rev-parse', 'origin/main').strip()
+    later = git(work, 'commit-tree', '-p', checked, '-m', 'later', checked + '^{tree}').strip()
+    env = shim_git(td, 'if [ "$1" = merge ]; then "$REAL" update-ref refs/remotes/origin/main %s; fi' % later)
+    p = run(work, env)
+    parents = git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()
+    check('moving origin: the checked commit is merged, not the later one',
+          state(work)['result'] == 'merged' and len(parents) == 3 and parents[2] == checked,
+          (state(work), parents, checked, later))
+
+# --- 7. merge refused for a non-conflict reason: one notification -------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, 'h')
+    env = shim_git(td, 'if [ "$1" = merge ] && [ "$2" = --no-ff ]; then echo "fatal: simulated refuse" >&2; exit 128; fi')
+    p = run(work, env)
+    st = state(work)
+    check('merge refused: state error with git message', st['result'] == 'error' and 'simulated' in st['detail'], st)
+    run(work, env)
+    check('merge refused repeat: one notification', notes(work) == 1, notes(work))
 
 print()
 if FAILS:

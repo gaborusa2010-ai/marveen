@@ -127,8 +127,14 @@ for i in 1 2 3; do
 done
 [ "$FETCH_OK" = 1 ] || { state error "fetch sikertelen ($REMOTE/$BRANCH)"; echo "$TS fetch failed" >&2; exit 0; }
 
+# Resolve the upstream commit ONCE. update.sh fetches on its own schedule, so
+# origin/main can move between the dry run and the merge; naming the ref twice
+# would merge a commit nobody checked (#726).
+UP="$(git rev-parse --verify --quiet "$REMOTE/$BRANCH^{commit}")" \
+  || { state error "$REMOTE/$BRANCH nem oldhato fel"; echo "$TS cannot resolve $REMOTE/$BRANCH" >&2; exit 0; }
+
 # left = commits only upstream has (behind), right = only we have (ahead).
-COUNTS="$(git rev-list --left-right --count "$REMOTE/$BRANCH...HEAD" 2>/dev/null || echo '0 0')"
+COUNTS="$(git rev-list --left-right --count "$UP...HEAD" 2>/dev/null || echo '0 0')"
 BEHIND="$(echo "$COUNTS" | awk '{print $1+0}')"
 AHEAD="$(echo "$COUNTS" | awk '{print $2+0}')"
 
@@ -140,10 +146,40 @@ AHEAD="$(echo "$COUNTS" | awk '{print $2+0}')"
 [ "$AHEAD" -eq 0 ] && { state ff-possible "ahead=0 behind=$BEHIND"; exit 0; }
 
 # --- diverged: the case this script exists for -------------------------------
-MB="$(git merge-base HEAD "$REMOTE/$BRANCH")"
+# Dry-run the merge in the object store first. A conflicting `git merge` writes
+# conflict markers INTO THE WORKING TREE before the abort takes them out again:
+# on the live checkout that left the gate scripts and web files invalid for ~1 s
+# every 15 minutes, and every hook running then failed closed (2026-10-28,
+# #721). merge-tree computes the same merge without touching the tree or the
+# index; exit 1 = conflicts, the paths follow the tree id. stderr is kept apart
+# so a warning cannot end up in the path list.
+MT_ERRF="$(mktemp)"
+trap 'rm -f "$MT_ERRF"' EXIT
+MT_OUT="$(git merge-tree --write-tree --name-only --no-messages HEAD "$UP" 2>"$MT_ERRF")"
+MT_RC=$?
+MT_ERR="$(cat "$MT_ERRF")"
+if [ "$MT_RC" -ne 0 ] && [ "$MT_RC" -ne 1 ]; then
+  # Unknown merge-tree failure (old git, broken repo): do NOT fall back to the
+  # real merge, that is the tree-touching path this check exists to avoid.
+  REASON="$(printf '%s\n%s' "$MT_OUT" "$MT_ERR" | sed '/^$/d' | tail -n 3 | tr '\n' ' ')"
+  NEWSTATE="merge-tree hiba (rc=$MT_RC): ${REASON:-ismeretlen}"
+  if [ "$PREV_RESULT" != "error" ] || [ "$PREV_DETAIL" != "$NEWSTATE" ]; then
+    notify "[UPSTREAM-SYNC] A merge elozetes probaja (git merge-tree) hibaval allt meg, ezert nem fesultem ossze semmit. A git ezt mondta: ${REASON:-semmit}"
+  fi
+  state error "$NEWSTATE"
+  echo "$TS MERGE-TREE FAILED rc=$MT_RC: ${REASON:-unknown}" >&2
+  exit 0
+fi
+MT_TREE="$(printf '%s\n' "$MT_OUT" | head -n 1)"
+
+# Which dirty files would the merge change? Compared against the merged TREE,
+# not against upstream's own diff: with rename detection an upstream rename a->b
+# listed only b, a locally modified a slipped through, and the real merge then
+# refused (rewriting a on the way) every 15 minutes (#726). --no-renames on both
+# sides lists a rename as delete + add, so the old name is checked too.
 CLASH="$(comm -12 \
-  <(git diff --name-only "$MB" "$REMOTE/$BRANCH" | sort) \
-  <(git diff --name-only HEAD | sort))"
+  <(git diff --name-only --no-renames HEAD "$MT_TREE" | sort) \
+  <(git diff --name-only --no-renames HEAD | sort))"
 
 if [ -n "$CLASH" ]; then
   DETAIL="$(echo "$CLASH" | tr '\n' ' ')"
@@ -165,9 +201,9 @@ if [ -n "$CLASH" ]; then
   exit 0
 fi
 
-# conflict_report <space-separated paths> -- state + notify for a content
-# conflict, quiet when the same set repeats (2026-10-14 it woke marveen every
-# 15 min).
+# conflict_report <space-separated paths> [first line] -- state + notify for a
+# content conflict, quiet when the same set repeats (2026-10-14 it woke marveen
+# every 15 min).
 conflict_report() {
   NEWSTATE="tartalmi utkozes: $1"
   if [ "$PREV_RESULT" = "conflict" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
@@ -177,35 +213,15 @@ conflict_report() {
   fi
   state conflict "$NEWSTATE"
   notify "$(printf '%s\n' \
-    "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe fut a helyi munkaval." \
+    "${2:-[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe fut a helyi munkaval. Nem fesultem ossze, a fa erintetlen.}" \
     "Erintett fajlok: $1" \
-    "Nem fesultem ossze, a fa erintetlen. Ezt csak kezzel lehet feloldani, dontes kell hozza." \
+    "Ezt csak kezzel lehet feloldani, dontes kell hozza." \
     "Amig ez all, a frissites elbukik a pull fazisban.")"
   echo "$TS CONFLICT: $1" >&2
 }
 
-# Dry-run the merge in the object store first. A conflicting `git merge` writes
-# conflict markers INTO THE WORKING TREE before the abort takes them out again:
-# on the live checkout that left the gate scripts and web files invalid for ~1 s
-# every 15 minutes, and every hook running then failed closed (2026-10-28,
-# #721). merge-tree computes the same merge without touching the tree or the
-# index; exit 1 = conflicts, the paths follow the tree id.
-MT_OUT="$(git merge-tree --write-tree --name-only --no-messages HEAD "$REMOTE/$BRANCH" 2>&1)"
-MT_RC=$?
 if [ "$MT_RC" -eq 1 ]; then
   conflict_report "$(printf '%s\n' "$MT_OUT" | tail -n +2 | sed '/^$/d' | tr '\n' ' ')"
-  exit 0
-fi
-if [ "$MT_RC" -ne 0 ]; then
-  # Unknown merge-tree failure (old git, broken repo): do NOT fall back to the
-  # real merge, that is the tree-touching path this check exists to avoid.
-  REASON="$(printf '%s' "$MT_OUT" | tail -n 3 | tr '\n' ' ')"
-  NEWSTATE="merge-tree hiba (rc=$MT_RC): ${REASON:-ismeretlen}"
-  if [ "$PREV_RESULT" != "error" ] || [ "$PREV_DETAIL" != "$NEWSTATE" ]; then
-    notify "[UPSTREAM-SYNC] A merge elozetes probaja (git merge-tree) hibaval allt meg, ezert nem fesultem ossze semmit. A git ezt mondta: ${REASON:-semmit}"
-  fi
-  state error "$NEWSTATE"
-  echo "$TS MERGE-TREE FAILED rc=$MT_RC: ${REASON:-unknown}" >&2
   exit 0
 fi
 
@@ -215,7 +231,7 @@ OLD="$(git rev-parse HEAD)"
 # work being committed on the live checkout; an upstream merge is the one commit
 # that BELONGS here. Without it the merge commit is refused, the merge is left
 # half-open, and this script would report a content conflict that never existed.
-MERGE_OUT="$(MARVEEN_PROD_COMMIT_OK=1 git merge --no-ff --no-edit "$REMOTE/$BRANCH" 2>&1)"
+MERGE_OUT="$(MARVEEN_PROD_COMMIT_OK=1 git merge --no-ff --no-edit "$UP" 2>&1)"
 if [ $? -eq 0 ]; then
   NEW="$(git rev-parse --short HEAD)"
   state merged "behind=$BEHIND beolvasztva, HEAD=$NEW"
@@ -241,13 +257,23 @@ if [ "$NOW" != "$OLD" ]; then
   exit 2
 fi
 if [ -n "$CONFLICTS" ]; then
-  # merge-tree said clean, the real merge conflicted anyway: still reported.
-  conflict_report "$CONFLICTS"
+  # merge-tree said clean, the real merge conflicted anyway: still reported,
+  # but not as "tree untouched" -- the real merge ran and was aborted.
+  conflict_report "$CONFLICTS" \
+    "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitja tartalmi utkozesbe futott. Az elozetes proba tisztanak latta, a valodi merge megis utkozott, ezert visszavontam (abort)."
   exit 0
 fi
 
 REASON="$(printf '%s' "$MERGE_OUT" | tail -n 3 | tr '\n' ' ')"
-state error "a merge nem futott le (nem utkozes): ${REASON:-ismeretlen}"
+NEWSTATE="a merge nem futott le (nem utkozes): ${REASON:-ismeretlen}"
+# Quiet repeat, as on the other blocked paths: the same refusal every 15 minutes
+# is one decision for the owner, not 96.
+if [ "$PREV_RESULT" = "error" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
+  state error "$NEWSTATE"
+  echo "$TS MERGE FAILED (unchanged, not notified): ${REASON:-unknown}" >&2
+  exit 0
+fi
+state error "$NEWSTATE"
 notify "$(printf '%s\n' \
   "[UPSTREAM-SYNC] Az upstream ${BEHIND} uj commitjat NEM tudtam beolvasztani, es NEM utkozes miatt." \
   "A git ezt mondta: ${REASON:-semmit}" \
