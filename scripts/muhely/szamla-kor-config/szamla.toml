@@ -1,0 +1,6 @@
+version = 1
+steps = ["collect", "build", "translate", "check", "draft"]
+heading_template = "Day work, {months}"
+tulora_min_perc = 15
+max_napok = 31
+uzenet_template = "{client}: {days} nap, {total} GBP.{cis}{questions}"

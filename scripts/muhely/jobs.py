@@ -772,7 +772,7 @@ def _szamla_cimzett(short):
     return e.get("name") or short, list(e.get("address") or []), None
 
 
-def cmd_szamla(a):
+def _cmd_szamla_build(a):
     """Build ONE invoice input from SEVERAL work days.
 
     WHY, measured 2026-09-20: every multi-day invoice this business has issued
@@ -917,6 +917,72 @@ def cmd_szamla(a):
               f"fajlban, MIELOTT PDF-et csinalsz belole.")
     print(f"Ellenorizd a sorokat es az osszeget, aztan:")
     print(f"  python3 scripts/muhely/invoice.py invoice {out} --out szamla.pdf")
+    return rc
+
+
+def build_szamla(ids, leiras=None):
+    """Return the multi-day invoice input without leaving an output file behind.
+
+    The established builder has deliberately accumulated the money and warning
+    rules in one place.  Calling it through a temporary output keeps that one
+    implementation authoritative while exposing a side-effect-free API to the
+    weekly run.  ``cmd_szamla`` below replays its output byte for byte.
+    """
+    import argparse as _ap
+    import contextlib, io, tempfile
+    tmp = tempfile.NamedTemporaryFile("r", suffix=".json", delete=False)
+    tmp.close()
+    buf = io.StringIO()
+    args = _ap.Namespace(ids=list(ids), leiras=leiras, out=tmp.name)
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = _cmd_szamla_build(args)
+        try:
+            with open(tmp.name, encoding="utf-8") as fh:
+                job = json.load(fh)
+        except (OSError, ValueError):
+            job = None
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    lines = (job or {}).get("lines", [])
+    nyers = set()
+    if job:
+        by_id = {r["id"]: r for r in _load()}
+        descriptions = {str(l.get("desc", "")) for l in lines}
+        for i in job.get("_job_ids", []):
+            row = by_id.get(i, {})
+            if row.get("started_at") and row.get("job"):
+                d = datetime.fromtimestamp(row["started_at"]).astimezone()
+                if f"{d.strftime('%d/%m/%y')}  {row['job']}" in descriptions:
+                    nyers.add(i)
+    info = {
+        "ids": list((job or {}).get("_job_ids", ids)),
+        "line_count": len(lines),
+        "total": sum(float(l["qty"]) * float(l["unit"]) for l in lines),
+        "helyszin": (job or {}).get("notes"),
+        "nyers_leiras": nyers,
+        "cim_warn": next((line for line in buf.getvalue().splitlines()
+                           if line.startswith("FIGYELEM: a(z) ")), None),
+        "failures": [line for line in buf.getvalue().splitlines()
+                     if "nap elokeszitese nem ment at" in line],
+        "stdout": buf.getvalue(),
+        "temporary_out": tmp.name,
+    }
+    return rc, job, info
+
+
+def cmd_szamla(a):
+    rc, job, info = build_szamla(a.ids, a.leiras)
+    if job is None:
+        print(info["stdout"], end="")
+        return rc
+    out = a.out or f"szamla-{'-'.join(str(i) for i in info['ids'])}.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(job, fh, indent=2, ensure_ascii=False)
+    print(info["stdout"].replace(info["temporary_out"], out), end="")
     return rc
 
 

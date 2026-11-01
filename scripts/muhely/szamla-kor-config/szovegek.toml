@@ -1,0 +1,43 @@
+format_version = 1
+
+# Ledger text that is already English and goes onto the invoice unchanged.
+# Anything neither here nor in a [[text]] pair stops the run (exit 3): an
+# unaccented Hungarian line is plain ASCII too, so it cannot be told apart.
+angol = [
+  "Furniture fitting",  # 10020
+]
+
+[[text]]
+hu = "Muhelymunka: Lyford Road G-06 Bedroom/Study Wardrobe (001-DRG-008 rev C2)"
+en = "Workshop: G-06 bedroom/study wardrobe"
+first = "10016"
+
+[[text]]
+hu = "Muhelymunka: szekrenyajto keszites"
+en = "Workshop: wardrobe doors"
+first = "10016"
+
+[[text]]
+hu = "Muhelymunka: csiszolas es egyeb segedmunka"
+en = "Workshop work: sanding and general assistance"
+first = "10017"
+
+[[text]]
+hu = "Muhelymunka"
+en = "Workshop work"
+first = "10017"
+
+[[text]]
+hu = "Szekrenyek osszerakasa helyszinen"
+en = "Cabinet assembly on site"
+first = "10018"
+
+[[text]]
+hu = "Fiokok osszerakasa"
+en = "Drawer assembly"
+first = "10018"
+
+[[text]]
+hu = "Muhelymunka, majd kiszallitas"
+en = "Workshop work, then delivery"
+first = "10019"
