@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import unicodedata
@@ -54,7 +55,9 @@ OPEN_CARD_STATUSES = ("planned", "in_progress", "testing", "waiting")
 # A receipt is not work. The drain that surfaces real questions already handles
 # those; listing them here would bury the two cards that matter under twenty
 # "[Eredmeny] msg_id:N status:done" lines.
-RECEIPT_PREFIXES = ("[Eredmeny]", "[Eredmény]")
+# [RESTART-ABLAK] is the "picked up in the fresh session" ack the context guard
+# makes every agent send (Margo's #710 check, 15144): a receipt, not work.
+RECEIPT_PREFIXES = ("[Eredmeny]", "[Eredmény]", "[RESTART-ABLAK]")
 # #663, owner tg 9195-9198: the sheet listed [CONTEXT-GUARD] and [kanban-kovetkezo]
 # notices as open work. They are about the agent's own session or about a card
 # that is already on the sheet, so they are dropped here; they stay in the inbox.
@@ -79,6 +82,8 @@ MESSAGE_CAP = 8
 # 10-28: 10 in two days, 3 re-sent by hand). The sheet is the way back for those:
 # recent ones from a real sender are listed with their full text. Older than this
 # is assumed handled or stale.
+# The card asked for "since its last start"; a fixed window is used instead, because
+# a stop/start in the middle of the day would hide a message lost in the morning.
 FAILED_MAX_AGE = 48 * 3600
 FAILED_TEXT_CAP = 1500
 SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
@@ -128,6 +133,22 @@ def _undelivered(m, now):
             and now - ts <= FAILED_MAX_AGE)
 
 
+def _superseded(m, msgs):
+    """A failed message is superseded when a NEWER message from the same sender to
+    the same agent names its id ("Ez felulirja a 15241-et", "re 15241"): the newer
+    one carries it forward, and listing both hands over a cancelled request
+    (Margo's #710 check: 15257 overrode 15241, the sheet listed both)."""
+    mid = m.get("id")
+    if not isinstance(mid, int):
+        return False
+    pat = re.compile(r"(?<!\d)%d(?!\d)" % mid)
+    return any(isinstance(n.get("id"), int) and n["id"] > mid
+               and n.get("from_agent") == m.get("from_agent")
+               and n.get("to_agent") == m.get("to_agent")
+               and pat.search(n.get("content") or "")
+               for n in msgs)
+
+
 def open_messages(tok, agent, now=None):
     """Open messages to the agent, plus the recent undelivered (failed) ones,
     which render() lists in their own section."""
@@ -141,7 +162,7 @@ def open_messages(tok, agent, now=None):
             continue
         if m.get("status") == "done":
             continue
-        if m.get("status") == "failed" and not _undelivered(m, now):
+        if m.get("status") == "failed" and (not _undelivered(m, now) or _superseded(m, msgs)):
             continue
         content = (m.get("content") or "").lstrip()
         if content.startswith(RECEIPT_PREFIXES):

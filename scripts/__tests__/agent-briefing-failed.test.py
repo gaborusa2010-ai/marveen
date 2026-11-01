@@ -43,6 +43,21 @@ check("message to another agent dropped", 7 not in got)
 check("failed row without created_at is not guessed in", 8 not in got)
 
 # empty inbox
+check("[RESTART-ABLAK] ack is a receipt",
+      run([msg(1, "failed", 1, content="[RESTART-ABLAK] 15548 felveve a friss sessionben")]) == [])
+got = [m["id"] for m in run([
+    msg(15241, "failed", 3, content="kerd A"),
+    msg(15257, "failed", 2, content="Ez felulirja a 15241-et: kerd B"),
+    msg(15260, "failed", 2, sender="roxy", content="re 15250"),
+    msg(15250, "failed", 3, content="kerd C"),            # named only by ANOTHER sender
+    msg(15270, "failed", 1, content="kerd D, lasd 152700"),  # digits inside a longer number
+    msg(15265, "failed", 1, content="kerd E"),
+])]
+check("superseded failed dropped, the overriding one kept", 15241 not in got and 15257 in got)
+check("another sender naming the id does not supersede", 15250 in got)
+check("an id inside a longer number does not supersede", 15265 in got and 15270 in got)
+check("an OLDER message naming the id does not supersede",
+      [m["id"] for m in run([msg(20, "failed", 1), msg(10, "delivered", 2, content="re 20")])] == [10, 20])
 check("empty inbox -> no messages", run([]) == [])
 t = abb.render("x", [], run([]))
 check("empty inbox -> no NEM ERT EL section", "NEM ERT EL HOZZAD" not in t and "NINCS KIOSZTOTT MUNKAD" in t)
