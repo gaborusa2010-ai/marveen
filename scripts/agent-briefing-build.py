@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import unicodedata
 import urllib.request
 from datetime import datetime
@@ -73,6 +74,13 @@ WORKABLE = ("in_progress", "planned")
 REVIEW_LABEL = "Ellenőrzésre vár"
 # How many open rows a briefing may list. See the comment at the cap itself.
 MESSAGE_CAP = 8
+# #710/#724: a message that hit the 60-minute window while the agent was down goes
+# to "failed" and never reaches it (Anorak fleet retro 10-26: 13/543 on 10-25;
+# 10-28: 10 in two days, 3 re-sent by hand). The sheet is the way back for those:
+# recent ones from a real sender are listed with their full text. Older than this
+# is assumed handled or stale.
+FAILED_MAX_AGE = 48 * 3600
+FAILED_TEXT_CAP = 1500
 SKILL_CMD = "python3 /home/gabor/marveen/scripts/skill-valasztas.py"
 
 
@@ -112,7 +120,18 @@ def open_cards(tok, agent):
     return mine
 
 
-def open_messages(tok, agent):
+def _undelivered(m, now):
+    """A failed message recent enough to hand over (#710). created_at is epoch
+    seconds; a row without it is not guessed into the sheet."""
+    ts = m.get("created_at")
+    return (m.get("status") == "failed" and isinstance(ts, (int, float))
+            and now - ts <= FAILED_MAX_AGE)
+
+
+def open_messages(tok, agent, now=None):
+    """Open messages to the agent, plus the recent undelivered (failed) ones,
+    which render() lists in their own section."""
+    now = time.time() if now is None else now
     msgs = _rows(_get("/api/messages?agent=%s&limit=200" % agent, tok), "messages", "items")
     out = []
     for m in msgs:
@@ -120,7 +139,9 @@ def open_messages(tok, agent):
             continue
         if m.get("from_agent") in SYSTEM_SENDERS:
             continue
-        if m.get("status") in ("done", "failed"):
+        if m.get("status") == "done":
+            continue
+        if m.get("status") == "failed" and not _undelivered(m, now):
             continue
         content = (m.get("content") or "").lstrip()
         if content.startswith(RECEIPT_PREFIXES):
@@ -152,7 +173,6 @@ def agent_waits(tok, agent):
     free-text "Marveen review" wait that nothing could fire on). Only the rows that
     need an action: no ETA yet, or an ETA that has passed; every wait on this agent."""
     import importlib.util
-    import time
     spec = importlib.util.spec_from_file_location(
         "masikra_var", os.path.join(REPO, "scripts", "masikra-var.py"))
     mv = importlib.util.module_from_spec(spec)
@@ -251,6 +271,27 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
             L.append("  #%s  %s var RAD (%s, %.0f napja) -> valaszolj idoponttal, vagy csinald meg"
                      % (r["seq"], r["assignee"], r["state"], r["days"]))
         L.append("")
+    lost = [m for m in msgs if m.get("status") == "failed"]
+    msgs = [m for m in msgs if m.get("status") != "failed"]
+    if lost:
+        # Full text: the sender believes this arrived, and the sheet is the only
+        # copy the agent will see. Newest MESSAGE_CAP, like the open rows below.
+        shown = lost[-MESSAGE_CAP:]
+        L.append("NEM ERT EL HOZZAD (%d): akkor jott, amikor nem futottal, a kuldo azt hiszi, megkaptad."
+                 % len(lost))
+        L.append("  Intezd el ugy, mintha most jott volna, es nyugtazd a kuldonek.")
+        if len(lost) > len(shown):
+            L.append("  (a maradek %d regebbi: GET /api/messages?agent=%s, status failed)"
+                     % (len(lost) - len(shown), agent))
+        for m in shown:
+            ts = m.get("created_at")
+            when = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if isinstance(ts, (int, float)) else "?"
+            text = (m.get("content") or "").strip()
+            if len(text) > FAILED_TEXT_CAP:
+                text = text[:FAILED_TEXT_CAP] + " [...] (teljes: GET /api/messages/%s)" % m.get("id")
+            L.append("  msg %s  %s  <- %s:" % (m.get("id"), when, m.get("from_agent")))
+            L += ["    " + line for line in text.split("\n")]
+        L.append("")
     if msgs:
         # CAP, and the reason is a measurement: cody carried 16 open rows on
         # 2026-09-23, most of them notices from five days earlier that only
@@ -268,7 +309,7 @@ def render(agent, cards, msgs, now=None, unchanged_since=None, waits=None):
             first = (m.get("content") or "").strip().split("\n")[0]
             L.append("  msg %s  <- %s: %s" % (m.get("id"), m.get("from_agent"), first[:100]))
         L.append("")
-    if not cards and not msgs:
+    if not cards and not msgs and not lost:
         L += [
             "NINCS KIOSZTOTT MUNKAD: nulla nyitott kartya, nulla lezaratlan uzenet.",
             "",
