@@ -122,17 +122,25 @@ function assignPrefixLen(toks) {
     const tok = toks[n]
     for (let i = 0; i < tok.length; i++) {
       if (tok[i] === '[') depth++
-      else if (tok[i] === ']' && --depth === 0) return /^\+?=/.test(tok.slice(i + 1)) ? n + 1 : 0
+      else if (tok[i] === ']' && --depth === 0) return /^\+?=/.test(tok.slice(i + 1)) ? n + 1 : subscriptAssignEnd(toks)
     }
   }
-  return 0
+  return subscriptAssignEnd(toks)
+}
+// A `]` the tokenizer no longer shows as quoted or expanded (`a["]"]=x`) still ends
+// in one assignment word for bash; see _subscript_assign_end in the python twin (#729).
+function subscriptAssignEnd(toks) {
+  const n = toks.findIndex((tok) => /\]\+?=/.test(tok))
+  return n + 1
 }
 // KWSPLIT924: shell reserved words that put the NEXT word in command position.
 // Stripped only at the head of a segment, never used as separators -- see the
 // full rationale at _CMD_POSITION_KEYWORDS in outgoing-copy-gate.py (the python
 // twin); the shared send-invocation-cases.json binds the two copies.
-const CMD_POSITION_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '!'])
-const SENDER_PROG = /^(sendmail|msmtp|swaks)$/i
+// `}` too (#729): `a+=()} python3 x.py` runs x.py.
+const CMD_POSITION_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '}', '!'])
+// #729: mail / mailx / ssmtp too, see _SENDER_PROG in the python twin.
+const SENDER_PROG = /^(sendmail|msmtp|swaks|mail|mailx|ssmtp)$/i
 const SENDPY = /^send\.py$/i
 // SUBAGENTMAILGATE1016: a version-suffixed interpreter (python3.12, python3.13, and
 // the free-threaded python3.13t) is the same python; the old /^python3?$/ let it
@@ -300,6 +308,7 @@ export function segmentsTokens(cmd) {
   let q = null
   let piped = false // the next segment's stdin is this one's output (`a | b`): seg.piped
   let ops = ''
+  let escapedEnd = -1 // the index right after the last backslash pair
   const pushTok = () => {
     if (hasTok) {
       if (!cur.length) { cur.op = ops; ops = '' }
@@ -319,11 +328,12 @@ export function segmentsTokens(cmd) {
       continue
     }
     if (ch === "'" || ch === '"') { q = ch; hasTok = true; continue }
-    if (ch === '\\' && i + 1 < s.length) { tok += s[++i]; hasTok = true; continue }
+    if (ch === '\\' && i + 1 < s.length) { tok += s[++i]; hasTok = true; escapedEnd = i + 1; continue }
     if (ch === ' ' || ch === '\t') { pushTok(); continue }
     // #718 (review 2823): the `&` of a redirection (`2>&1`, `>&2`, `<&3`, `&>f`)
     // is part of the word, not a separator; see _mask_subshell_markers.
-    const redirAmp = ch === '&' && ((i > 0 && '<>'.includes(s[i - 1])) ||
+    // An escaped `\>` is a plain character (#729): `\>&sendmail b` runs sendmail.
+    const redirAmp = ch === '&' && ((i > 0 && '<>'.includes(s[i - 1]) && escapedEnd !== i) ||
       (s[i + 1] === '>' && !(i > 0 && '&|'.includes(s[i - 1]))))
     if ('|&;()'.includes(ch) && !redirAmp) {
       pushSeg()
@@ -426,6 +436,7 @@ const HEAD_DEPTH = 8
 // command, see _REDIRECT in the python twin.
 const REDIRECT = /^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)([\s\S]*)$/
 
+const LEAD_EXPANSION = /^(?:\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z_0-9]*|[@*0-9]))+/
 function commandHeads(toksIn, d = 0) {
   let toks = toksIn
   const moved = []
@@ -437,6 +448,13 @@ function commandHeads(toksIn, d = 0) {
   }
   if (moved.length && toks.length) toks = [...toks, ...moved]
   if (!toks.length) return [toks]
+  // An unset or empty expansion is no word at all (`$nothing sendmail b`); see
+  // _LEAD_EXPANSION in the python twin (#729).
+  const lead = LEAD_EXPANSION.exec(toks[0])
+  if (lead && d < HEAD_DEPTH) {
+    const rest = toks[0].slice(lead[0].length)
+    return [toks, ...commandHeads([...(rest ? [rest] : []), ...toks.slice(1)], d + 1)]
+  }
   const w = basename(toks[0])
   // Still a wrapper at the depth bound: counts as a send (null), see the python twin.
   if (d >= HEAD_DEPTH) return (WRAPPERS.has(w) || w === 'function' || w === 'coproc') ? [null] : [toks]
@@ -588,7 +606,7 @@ export function joinSubscripts(cmd) {
   }
   const out = cmd.split('')
   for (let i = 0; i < n; i++) {
-    if (!plain[i] || (i > 0 && !(/\s/.test(cmd[i - 1]) || ';&|('.includes(cmd[i - 1])))) continue
+    if (!plain[i] || (i > 0 && !(/\s/.test(cmd[i - 1]) || ';&|(`'.includes(cmd[i - 1])))) continue
     SUBSCRIPT_START.lastIndex = i
     const m = SUBSCRIPT_START.exec(cmd)
     if (m === null) continue
@@ -1095,7 +1113,7 @@ function isSend(cmd, depth, base) {
   } catch {
     // Unparseable command: fall back to the LEGACY content patterns, so on
     // this path the gate is exactly as strict as before -- never weaker.
-    return SEND_PATTERNS.some((re) => re.test(cmd))
+    return SEND_PATTERNS.some((re) => re.test(cmd)) || linesSend(cmd, depth, base, written)
   }
   if (segmentsSend(segments, depth, base, written)) return true
   // The same command with every substitution as one undecidable word (see
@@ -1106,7 +1124,21 @@ function isSend(cmd, depth, base) {
     try {
       if (segmentsSend(segmentsTokens(alt), depth, base, written)) return true
     } catch {
-      return SEND_PATTERNS.some((re) => re.test(cmd))
+      return SEND_PATTERNS.some((re) => re.test(cmd)) || linesSend(cmd, depth, base, written)
+    }
+  }
+  return false
+}
+
+// `bash -c` reads a line at a time: a syntax error throws away its line and the
+// next line still runs, so an unparseable command is also judged line by line;
+// see _lines_send in the python twin (#729). Heredoc bodies are input, not lines.
+function linesSend(cmd, depth, base, written) {
+  for (const line of cmd.replace(HEREDOC_RE, (_, a, _b, _c, _d, e) => a ?? e).split('\n')) {
+    try {
+      if (line.trim() && segmentsSend(segmentsTokens(line), depth, base, written)) return true
+    } catch {
+      continue
     }
   }
   return false

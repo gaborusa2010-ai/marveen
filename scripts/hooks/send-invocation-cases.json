@@ -2632,6 +2632,153 @@
       "name": "#725 review 3: control: an operator subscript with no = is the command name (bash: command not found)",
       "cmd": "a[1;2] sendmail b@y",
       "expected": false
+    },
+    {
+      "name": "#729: mail is a sender program",
+      "cmd": "mail -s s b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: mailx is a sender program",
+      "cmd": "mailx -s s b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: ssmtp is a sender program",
+      "cmd": "ssmtp b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: control: a mail directory is not the mail program",
+      "cmd": "ls ~/mail",
+      "expected": false
+    },
+    {
+      "name": "#729: control: mail as an argument",
+      "cmd": "echo mail -s x b@y",
+      "expected": false
+    },
+    {
+      "name": "#729: control: a longer name starting with mail",
+      "cmd": "mailbox-sync --dry",
+      "expected": false
+    },
+    {
+      "name": "#729: backtick before an operator subscript",
+      "cmd": "echo `a[1;2]=x sendmail b@y`",
+      "expected": true
+    },
+    {
+      "name": "#729: control: backtick before an operator subscript with no =",
+      "cmd": "echo `a[1;2] sendmail b@y`",
+      "expected": false
+    },
+    {
+      "name": "#729: ] from ${v:-]} inside the subscript",
+      "cmd": "a[${v:-]}]=x sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: quoted ] inside the subscript",
+      "cmd": "a[\"]\"]=x sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: escaped ] inside the subscript",
+      "cmd": "a[\\]]=x sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: control: quoted ] subscript as an echo argument",
+      "cmd": "echo a[\"]\"]=x sendmail b@y",
+      "expected": false
+    },
+    {
+      "name": "#729: escaped > then & runs the next word as a command",
+      "cmd": "\\>&sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: control: a real >& redirection keeps its word",
+      "cmd": "echo hi >&2 sendmail",
+      "expected": false
+    },
+    {
+      "name": "#729: empty variable before sendmail",
+      "cmd": "$nothing sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: empty ${var} glued to sendmail",
+      "cmd": "${nothing}sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: unset $coproc before sendmail",
+      "cmd": "$coproc  sendmail b@y < /tmp/b",
+      "expected": true
+    },
+    {
+      "name": "#729: control: a variable command with a sendmail-named file",
+      "cmd": "$EDITOR sendmail.txt",
+      "expected": false
+    },
+    {
+      "name": "#729: control: an empty variable before echo",
+      "cmd": "$nothing echo sendmail",
+      "expected": false
+    },
+    {
+      "name": "#729: } after an array assignment",
+      "cmd": "a+=()} python3 gmail_reply.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#729: control: } after an array assignment, script reads only",
+      "cmd": "a+=()} python3 plain.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#729: control: a closing brace with a redirection",
+      "cmd": "{ echo a; } > log",
+      "expected": false
+    },
+    {
+      "name": "#729: syntax error line, then a sending script",
+      "cmd": "x[0]=(\t((case $x in #||\"cat\npython3 gmail_reply.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#729: here-string syntax error line, then a sending script",
+      "cmd": "a+=( cat <<<?(\"]\npython3 gmail_reply.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#729: control: syntax error line, then a read-only script",
+      "cmd": "x[0]=(\t((case $x in #||\"cat\npython3 plain.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
+    },
+    {
+      "name": "#729: control: unclosed quote, then a plain command",
+      "cmd": "echo \"unclosed\nls -la",
+      "expected": false
+    },
+    {
+      "name": "#729: CR after <<< is the here-string word",
+      "cmd": "]\n <<<\r python3 gmail_reply.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": true
+    },
+    {
+      "name": "#729: control: CR after <<<, read-only script",
+      "cmd": "]\n <<<\r python3 plain.py",
+      "cwd": "src/__tests__/fixtures/send-gate",
+      "expected": false
     }
   ]
 }
