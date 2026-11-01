@@ -229,6 +229,54 @@ describe('child-claude guard: what it leaves alone', () => {
   })
 })
 
+// #729: heredocs are read by lib/heredoc-scan.mjs. Every must-block row was
+// checked against bash itself (a fake `claude` on PATH ran); every allow row
+// did not run it. The one deliberate exception is the unclosed heredoc: bash
+// treats the rest as body, the guard cannot be certain and keeps it visible.
+describe('child-claude guard: heredoc reading (#729)', () => {
+  it.each([
+    ['echo hi # <<EOF\nclaude -p x\nEOF'],
+    ['echo "<<EOF"\nclaude -p x'],
+    ["echo '<<EOF'\nclaude -p x"],
+    ['cat > f <<E\\OF\njunk\nEOF\nclaude -p x'],
+    ['cat > f <<E"O"F\njunk\nEOF\nclaude -p x'],
+    ['cat > f <<\\EOF\njunk\nEOF\nclaude -p x'],
+    ["cat > f <<'END-X'\njunk\nEND-X\nclaude -p x"],
+    ['cat > f <<-EOF\n\tjunk\n\tEOF\nclaude -p x'],
+    ['cat > f <<EOF; claude -p x\njunk\nEOF'],
+    ['cat > a <<A; cat > b <<B\none\nA\ntwo\nB\nclaude -p x'],
+    ['bash <<EOF\nclaude -p x\nEOF'],
+    ["bash -s <<'SH'\nclaude -p x\nSH"],
+    ['sh - <<SH\nclaude -p x\nSH'],
+    ['bash -o pipefail <<SH\nclaude -p x\nSH'],
+    ['timeout 30 bash <<SH\nclaude -p x\nSH'],
+    ['X=1 bash -e <<SH\necho a\nclaude -p x\nSH'],
+    ['bash > log <<SH\nclaude -p x\nSH'],
+    ['cat <<SH | bash\nclaude -p x\nSH'],
+    ["cat <<'SH' | sh -s\nclaude -p x\nSH"],
+    ['cat > f <<EOF\n$(claude -p x)\nEOF'],
+    ['cat > f <<EOF\nresult: `claude -p x`\nEOF'],
+    ["cat > f <<EOF\ndon't $(claude -p x)\nEOF\necho 'x'"],
+    ['cat > f <<EOF\nunclosed body\nclaude -p x'],
+  ])('blocks %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["cat > f <<'EOF'\n$(claude -p x)\nEOF"],
+    ['cat > f <<\\EOF\n`claude -p x`\nEOF'],
+    ["cat > f <<'END-X'\nclaude -p x\nEND-X"],
+    ['cat > f <<E\\OF\nclaude -p x\nEOF'],
+    ["bash scripts/agent-msg.sh cody marveen - <<'EOF'\nnever run claude -p here\nEOF"],
+    ["bash -c 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ['python3 - <<PY\n# claude -p x\nPY'],
+    ["cat > f <<EOF\ndon't run claude -p\nEOF"],
+    ["cat <<'EOF' | tee f\nclaude -p x\nEOF"],
+  ])('allows %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
 describe('child-claude guard: the real hook process', () => {
   const run = (command: string, env: Record<string, string>) => spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
