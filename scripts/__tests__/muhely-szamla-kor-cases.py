@@ -132,7 +132,7 @@ rows, next_id = [], max(r["id"] for r in ledger) + 1
 for c in range(161):
     name = f"Teszt Ugyfel {c:03d}"
     clients["ugyfelek"][name] = {"name": name, "address": ["1 Test Street", "London"], "_forras": "teszt"}
-    for d in range(32 if c == 0 else 31):
+    for d in range(32 if c == 0 else 20):
         stamp = start + (len(rows)) * 3600
         rows.append(dict(template, id=next_id, client=name, started_at=stamp, stopped_at=stamp + 9 * 3600,
                          job="Furniture fitting"))
@@ -142,7 +142,7 @@ write(root, "muhely-ugyfelek.json", clients)
 began = time.time()
 rc, out, err = run(root, "draft", "--dry-run")
 drafts = out.count("Piszkozat:")
-ok(f"5023 nap, 161 ugyfel: 160 piszkozat, a 32 napos visszautasitva ({time.time() - began:.0f} s)",
+ok(f"3232 nap, 161 ugyfel: 160 piszkozat, a 32 napos visszautasitva ({time.time() - began:.0f} s)",
    rc == 6 and drafts == 160 and "Teszt Ugyfel 000: Tul sok nap egy szamlan: 32" in err,
    f"rc={rc} drafts={drafts} {err[-300:]}")
 
@@ -279,6 +279,12 @@ made = [x for x in json.load(open(os.path.join(rundir(root, "2026-11-01"), "run.
         if x["status"] == "draft" and os.path.exists(x["pdf_path"])]
 ok("hianyzo munkanap: exit 5, kerdes az uzenetben, piszkozat kesz",
    rc == 5 and "Kerdes" in message and len(made) >= 1 and "#" not in message, f"rc={rc} {message}{err}")
+paragraphs = message.strip().split("\n\n")
+asked = [x for x in message.splitlines() if "aznap?" in x]
+ok("hianyzo munkanap: a kerdes egyszer, kulon bekezdesben (#734)",
+   len(made) >= 2 and message.count("Kerdes:") == 1
+   and len(asked) == len(set(asked)) > 0 and len(paragraphs) == len(made) + 1 and paragraphs[-1].startswith("Kerdes:")
+   and all("Kerdes" not in p for p in paragraphs[:-1]), f"{message!r}")
 
 # --- approval: number spent once, days marked, read-back, no second time -------
 root = sandbox("approve")
@@ -371,5 +377,100 @@ rc, out, err = run(root, "approve", rd, entry["key"])
 readback = open(os.path.join(rd, "visszaolvasas.txt"), encoding="utf-8").read()
 ok("visszaolvasas: csak a Total sor ter el, exit 7", rc == 7 and readback.startswith("ELTERES")
    and "Total" in readback, f"rc={rc} {readback!r} {err}")
+
+# --- #734: one page only ------------------------------------------------------
+def client_days(root, name, count, cis=False):
+    """A client of its own with `count` closed, unbilled days; returns their ids."""
+    ledger = read(root, "muhely-jobs.json")
+    clients = read(root, "muhely-ugyfelek.json")
+    clients["ugyfelek"][name] = {"name": name, "address": ["1 Test Street", "London"], "_forras": "teszt"}
+    template = dict(candidates(ledger)[0], invoice_ref=None, cis=cis, no_charge=None, notes="")
+    start = template["started_at"] - 200 * 86400
+    next_id = max(r["id"] for r in ledger) + 1
+    ids = []
+    for d in range(count):
+        stamp = start + d * 86400
+        ledger.append(dict(template, id=next_id + d, client=name, started_at=stamp,
+                           stopped_at=stamp + 9 * 3600, job="Furniture fitting"))
+        ids.append(next_id + d)
+    write(root, "muhely-jobs.json", ledger)
+    write(root, "muhely-ugyfelek.json", clients)
+    return ids
+
+
+def counter(root):
+    return read(root, "muhely-counters.json")
+
+
+root = sandbox("page")
+ids = client_days(root, "Oldal Teszt", 32)
+fits = None
+for n in range(20, 32):
+    rc, out, err = run(root, "draft", "--dry-run", "--run", run_toml(root, "Oldal Teszt", ids[:n]))
+    if rc == 6 and "nem fer egy oldalra" in err:
+        break
+    fits = n if rc in (1, 5) else fits
+ok("egy oldal: van legnagyobb befero sorszam, felette exit 6 dry-runban is",
+   fits is not None and n == fits + 1 and f"nem fer egy oldalra: {n} sor, ebbol {fits} fer ki" in err, f"fits={fits} n={n} rc={rc} {err}")
+before = counter(root)
+rc, out, err = run(root, "draft", "--date", "2026-11-01", "--run", run_toml(root, "Oldal Teszt", ids[:fits + 1]))
+rd = rundir(root, "2026-11-01")
+entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["client"] == "Oldal Teszt")
+ok("egy oldal: a tul hosszu szamla piszkozata megall, nincs fajl, nem fogy sorszam",
+   rc == 6 and entry["status"] == "stopped" and not entry.get("json_path") and counter(root) == before,
+   f"rc={rc} {entry} {err}")
+shutil.rmtree(rd)
+rc, out, err = run(root, "draft", "--date", "2026-11-01", "--run", run_toml(root, "Oldal Teszt", ids[:fits]))
+entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["client"] == "Oldal Teszt")
+rc, out, err = run(root, "approve", rd, entry["key"])
+readback = open(os.path.join(rd, "visszaolvasas.txt"), encoding="utf-8").read()
+ok(f"egy oldal: a meg befero {fits} soros szamla kiallithato, visszaolvasas RENDBEN",
+   rc == 0 and readback == "RENDBEN\n", f"rc={rc} {readback!r} {err}")
+job = json.load(open(entry["json_path"], encoding="utf-8"))
+job["lines"].append(dict(job["lines"][-1]))
+job.pop("reference", None)
+job_path = os.path.join(root, "long-job.json")
+write_path = open(job_path, "w", encoding="utf-8")
+json.dump(job, write_path, ensure_ascii=False)
+write_path.close()
+before = counter(root)
+pdfs = set(os.listdir(os.path.join(root, "store", "muhely", "invoices")))
+p = subprocess.run([sys.executable, os.path.join(root, "scripts", "muhely", "invoice.py"), "invoice", job_path,
+                    "--force"], text=True, capture_output=True, cwd=root,
+                   env=dict(os.environ, MUHELY_NO_DRIVE="1", MUHELY_NO_DESKTOP="1"))
+ok("invoice.py: tul hosszu szamla exit 2, nincs PDF, nem fogy sorszam",
+   p.returncode == 2 and "nem fer egy oldalra" in p.stderr and counter(root) == before
+   and set(os.listdir(os.path.join(root, "store", "muhely", "invoices"))) == pdfs,
+   f"rc={p.returncode} {p.stdout[-200:]} {p.stderr[-300:]}")
+
+# --- #734: run.toml CIS flag differs from the day's ------------------------------
+root = sandbox("cis-flag")
+ids = client_days(root, "Cis Teszt", 2, cis=True)
+rc, out, err = run(root, "draft", "--dry-run", "--run", run_toml(root, "Cis Teszt", ids, cis=False))
+ok("run.toml cis=false CIS-napokkal: exit 6, nincs masodik piszkozat",
+   rc == 6 and "CIS-jelzoje elter" in err and "Piszkozat: Cis Teszt," not in out, f"rc={rc} {out}{err}")
+
+# --- #734: a client named "X CIS" next to X's CIS draft ---------------------------
+root = sandbox("key-collision")
+client_days(root, "Kulcs Teszt", 1, cis=True)
+client_days(root, "Kulcs Teszt CIS", 1)
+rc, out, err = run(root, "draft", "--date", "2026-11-01")
+entries = [x for x in json.load(open(os.path.join(rundir(root, "2026-11-01"), "run.json")))["invoices"]
+           if x["client"].startswith("Kulcs Teszt")]
+ok("kulcs-utkozes: 'Kulcs Teszt CIS' es 'Kulcs Teszt' CIS-piszkozata kulon kulcs, kulon fajl",
+   len(entries) == 2 and len({x["key"] for x in entries}) == 2 and len({x["json_path"] for x in entries}) == 2
+   and all(x["status"] == "draft" for x in entries), f"rc={rc} {entries} {err}")
+
+# --- #734: business file changed (not money) between draft and tap ---------------
+root = sandbox("business-late")
+rc, out, err = run(root, "draft", "--date", "2026-11-01")
+rd = rundir(root, "2026-11-01")
+entry = next(x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"] if x["status"] == "draft")
+business = read(root, "muhely-business.json")
+business["payment_terms_days"] = int(business.get("payment_terms_days") or 14) + 1
+write(root, "muhely-business.json", business)
+rc, out, err = run(root, "approve", rd, entry["key"])
+ok("business.json valtozott (nem penz): kiallitva, de jelezve",
+   rc == 0 and "muhely-business.json valtozott" in err, f"rc={rc} {err}")
 
 sys.exit(1 if failed else 0)
