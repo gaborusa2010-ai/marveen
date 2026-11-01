@@ -676,6 +676,74 @@ with tempfile.TemporaryDirectory() as td:
         gate.PROJECT_ROOT = _orig_root
 
 
+
+# --- 8. heredoc-olvasas: idezojel, komment, tag-alak, ertelmezo-nev (#729) ----
+# Merve a main-en (Cody msg 14663, Marveen review 2932 es a #725 reviewja): mindegyik
+# MUST-BLOCK sor atment, es a bash lefuttatta a payloadot. A negativ kontroll ugyanaz
+# az alak adat-torzzsel: az olvasas javitasa nem tilthat le dokumentaciot.
+print()
+print("#729 heredoc-olvasas, MUST-BLOCK:")
+PAY = "\n" + RM + " -rf /etc/x\n"
+PYRM = "import shutil\n" + RMTREE + '("/etc/x")\n'
+check("idezett <<EOF nem nyit torzset", blocks('echo "<<EOF"' + PAY + "EOF"))
+check("aposztrofos <<EOF nem nyit torzset", blocks("echo '<<EOF'" + PAY + "EOF"))
+check("kommentben allo <<EOF nem nyit torzset", blocks("# <<EOF" + PAY + "EOF"))
+check("sor vegi kommentben allo <<EOF", blocks("ls # <<EOF" + PAY + "EOF"))
+check("ertelmezo-torzs nem-szo taggel", blocks("python3 - <<'END-X'\n" + PYRM + "END-X"))
+check("ertelmezo-torzs visszaperjeles taggel", blocks("python3 - <<\\EOF\n" + PYRM + "EOF"))
+check("reszben idezett tag E\\OF: a zaro utani sor fut",
+      blocks("cat > /dev/null <<E\\OF\njunk\nEOF" + PAY))
+check('reszben idezett tag E"O"F: a zaro utani sor fut',
+      blocks('cat > /dev/null <<E"O"F\njunk\nEOF' + PAY))
+for name in ('"python3"', "'python3'", "\\python3", "py\\thon3", 'p""ython3', "$P", "${P}",
+             "$'python3'", "env -S'python3'", "/usr/bin/pytho?3", "{python3,}"):
+    check("ertelmezo-nev %s - <<'E'" % name, blocks(name + " - <<'E'\n" + PYRM + "E"))
+check("a parancs a heredoc utan: <<'X' python3", blocks("<<'X' python3\n" + PYRM + "X"))
+check("csovon ertelmezohoz: cat <<'X' | python3", blocks("cat <<'X' | python3\n" + PYRM + "X"))
+check("sorfolytatas: python3 \\ NL - <<'E'", blocks("python3 \\\n - <<'E'\n" + PYRM + "E"))
+check("source /dev/stdin <<'E'", blocks("source /dev/stdin <<'E'" + PAY + "E"))
+check("masodik heredoc ugyanazon a soron",
+      blocks("cat <<'A' > /tmp/f; python3 - <<'B'\nadat\nA\n" + PYRM + "B"))
+check("idezetlen adat-torzsben $( ) fut", blocks("cat > /tmp/f <<EOF\n$(" + RM + " -rf /etc/x)\nEOF"))
+check("idezetlen adat-torzsben backtick fut",
+      blocks("cat > /tmp/f <<EOF\n`" + RM + " -rf /etc/x`\nEOF"))
+check("$( )-ben lezaratlan heredoc: bash a ) utan folytat",
+      blocks("x=$(cat <<EOF\nhi\nEOF)" + PAY))
+check("eltolas a[ ]-ben nem heredoc", blocks("a[1<<EOF]=x" + PAY + "EOF"))
+check("eltolas $(( ))-ben nem heredoc", blocks("echo $((1<<2))" + PAY))
+check("tul hosszu nyito sor: a torzs kodkent marad (tultiltas)",
+      blocks("cat" + " " * 5000 + "<<'E'" + PAY + "E"))
+
+print()
+print("#729 heredoc-olvasas, negativ kontroll (adat marad adat):")
+check("adat-torzs nem-szo taggel", not blocks("cat > /tmp/f <<'END-X'" + PAY + "END-X"))
+check("adat-torzs visszaperjeles taggel", not blocks("cat > /tmp/f <<\\EOF" + PAY + "EOF"))
+check("adat-torzs reszben idezett taggel", not blocks("cat > /dev/null <<E\\OF" + PAY + "EOF"))
+check("adat-torzsben a payload, utana ls", not blocks("cat > /tmp/f <<'EOF'" + PAY + "EOF\nls"))
+check("cat - <<'E' ertelmezo-kod adatkent", not blocks("cat - <<'E'\n" + PYRM + "E"))
+check("<<'X' cat: a parancs a heredoc utan, de nem ertelmezo",
+      not blocks("<<'X' cat > /tmp/f\n" + PYRM + "X"))
+check("csovon program-fajlhoz: | python3 proc.py",
+      not blocks("cat <<'X' | python3 proc.py\n" + PYRM + "X"))
+check("idezett tag: a $( ) a torzsben szoveg", not blocks("cat > /tmp/f <<'EOF'\n$(" + RM + " -rf /etc/x)\nEOF"))
+check("ket adat-heredoc egy soron", not blocks("cat <<'A' <<'B'\na" + PAY + "A\nb" + PAY + "B"))
+check("lezart heredoc $( )-ben", not blocks("x=$(cat <<'EOF'" + PAY + "EOF\n)\necho $x"))
+check("<<< nem heredoc, a kovetkezo sor ls", not blocks("cat <<< 'x'\nls"))
+
+
+def _missing_module_exit():
+    """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
+    tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")
+    with open(GATE, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+    r = subprocess.run([sys.executable, tmp],
+                       input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+                       capture_output=True, text=True)
+    return r.returncode
+
+
+check("a heredoc_scan modul hianya is exit 2 (fail-closed)", _missing_module_exit() == 2)
+
 print()
 if failed:
     print("%d FAILED: %s" % (len(failed), failed), file=sys.stderr)

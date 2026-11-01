@@ -57,6 +57,9 @@ blokkolas helyett" iranyt). Csak azt valtoztatja meg, HOL keres:
   3. az ERTELMEZONEK adott heredoc torzse ("python3 - <<PY") FUT -> BENNE MARAD.
      Ez a kulonbsegtetel kotelezo elem volt: a mereskor ket VALODI hitelesito-fajl-
      olvasas allt ilyen torzsben, es egy naiv "heredoc kihagyasa" elengedte volna oket;
+     (#729, 2026-11-01) a heredocot a heredoc_scan.py olvassa, idezojel- es
+     komment-tudatosan; ha az olvasas nem biztos, egy torzs sem feherul ki, es
+     az idezetlen tagu adat-torzs, amelyben $( ) vagy backtick all, sem;
   4. a szokozt tartalmazo idezojeles szoveg proza vagy adat (uzenet-torzs, JSON-payload,
      regex-minta, teszt-eset), nem utvonal -> kimarad. A szokoz NELKULI idezojeles
      szoveg lehet utvonal, ezert az BENNE MARAD. Ugyanez all a beagyazott kodra: egy
@@ -221,8 +224,58 @@ def _blank_ranges(text, ranges):
     return ''.join(out)
 
 
-def _heredoc_opener_runs_body(head):
-    """A `<<` ELOTTI resz alapjan: a torzs PROGRAM lesz, vagy egy program BEMENETE?
+def _word(tok):
+    """(a szo idezojel es visszaperjel nelkul, dinamikus-e). Dinamikus a szo, ha a
+    shell kifejti ($P, ${P}, {python3,}, pytho?3, `...`): a kapu nem tudja, mi lesz
+    belole (#729, Marveen review 2932: ezek a nevek atvittek egy ertelmezo-torzset)."""
+    return re.sub(r'["\'\\]', '', tok), bool(re.search(r'[$*?\[{`]', tok))
+
+
+def _cmd_runs_stdin(seg):
+    """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
+    words = [_word(t) for t in re.split(r'\s+', seg.strip()) if t]
+    k = 0
+    while k < len(words):
+        w = words[k][0]
+        if (re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS
+                or os.path.basename(w) in _TRANSPARENT):
+            k += 1
+        elif re.match(r'^[0-9]*[<>]', w):
+            # atiranyitas a parancsnev elott; a puszta operator a kovetkezo szot viszi
+            k += 2 if re.match(r'^[0-9]*[<>]+&?$', w) else 1
+        else:
+            break
+    if k >= len(words):
+        return False
+    w, dyn = words[k]
+    base = os.path.basename(w)
+    if dyn or base in ('source', '.', 'eval'):
+        return True
+    if any(x.startswith(('-S', '--split-string')) for x, _ in words[k:]):
+        return True                # env -S'python3 -': a parancs egy szoban
+    if base not in INTERPRETERS:
+        # Ismeretlen burkolo mogott allo ertelmezo (timeout, strace, ...) ugyanugy
+        # lefuttatja a torzset. A burkolo argumentum-alakjat nem talalgatjuk: marad
+        # a regi, szelesebb olvasat.
+        return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k:])
+    for x, xdyn in words[k + 1:]:
+        if xdyn or x in ('-', '-s'):
+            return True
+        if x in SCRIPT_FLAGS:
+            return False
+        if x.startswith('-'):
+            continue
+        return False               # egy program-FAJL: a torzs annak a bemenete
+    return True
+
+
+# Ennel hosszabb nyito sort a _heredoc_runs_body nem bont szavakra: 4000 heredoc egy
+# sorban kulonben 31 s (merve 2026-11-01), mert minden heredoc a teljes sort olvassa.
+_HEREDOC_LINE_CAP = 4096
+
+
+def _heredoc_runs_body(cmd, h):
+    """A torzs PROGRAM lesz, vagy egy program BEMENETE?
 
     A kulonbseg nem az, hogy szerepel-e ertelmezo-nev a soron, hanem az, hogy az
     ertelmezo HONNAN veszi a programjat (79d8b59c):
@@ -238,61 +291,56 @@ def _heredoc_opener_runs_body(head):
     uzenet-torzsben ugyanugy blokkolodott, mint a vegrehajtasa. 2026-09-24-en harom
     eles esetben akasztotta meg a csapat sajat dokumentaciojat, egyszer epp ennek a
     hibanak a jelenteset.
+
+    #729: a parancs a `<<` UTAN is allhat (`<<'X' python3`), es a torzs egy csovon at
+    is ertelmezohoz juthat (`cat <<X | python3`). A sorfolytatas (visszaperjel + ujsor) egy sor.
     """
-    seg = re.split(r'\|\||&&|[;|&]', head)[-1]
-    toks = [t for t in re.split(r'\s+', seg.strip()) if t]
-    k = 0
-    while k < len(toks) and (re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', toks[k])
-                             or os.path.basename(toks[k].strip('"\'')) in _TRANSPARENT):
-        k += 1
-    if k >= len(toks):
-        return False
-    base = os.path.basename(toks[k].strip('"\''))
-    if base not in INTERPRETERS:
-        # Ismeretlen burkolo mogott allo ertelmezo (timeout, strace, ...) ugyanugy
-        # lefuttatja a torzset. A burkolo argumentum-alakjat nem talalgatjuk: marad
-        # a regi, szelesebb olvasat. Igy ez a javitas SZIGORUAN szukebb valtozas --
-        # csak a fenti, egyertelmu eset fordul at.
-        return any(os.path.basename(t.strip('"\'')) in INTERPRETERS for t in toks[k:])
-    for t in toks[k + 1:]:
-        if t in ('-', '-s'):
-            return True
-        if t in SCRIPT_FLAGS:
-            return False
-        if t.startswith('-'):
-            continue
-        return False               # egy program-FAJL: a torzs annak a bemenete
-    return True
+    ls = cmd.rfind('\n', 0, h.start)
+    while ls > 0 and cmd[ls - 1] == '\\':
+        ls = cmd.rfind('\n', 0, ls - 1)
+    if h.start - ls > _HEREDOC_LINE_CAP or h.line_end - h.tail_start > _HEREDOC_LINE_CAP:
+        return True                # nem olvassuk vegig: kodkent marad (tultiltas, nem res)
+    head = cmd[ls + 1:h.start].replace('\\\n', '')
+    head = re.split(r'\|\||&&|[;|&(`]|\$\(', head)[-1]
+    tail = re.split(r'\|\||&&|[;&]', cmd[h.tail_start:h.line_end])[0]
+    pipe = tail.split('|')
+    return (_cmd_runs_stdin(head + ' ' + pipe[0])
+            or any(_cmd_runs_stdin(p) for p in pipe[1:]))
+
+
+def _heredoc_split(cmd):
+    """(adat-torzsek, ertelmezo-torzsek, egyeb torzsek, biztos-e) tartomanyai.
+
+      cat > fajl <<'EOF' -> adat      (fajlba megy, semmi nem futtatja): kifeherul
+      python3 - <<PY     -> ertelmezo (a python lefuttatja): marad, kodkent vizsgalva
+      cat > f <<EOF + $( ) vagy backtick a torzsben -> egyeb: idezetlen tagnel a
+                            shell a torzsben is lefuttatja ezeket, tehat marad
+    A heredocokat a heredoc_scan olvassa (idezojel- es komment-tudatosan, #729). Ha
+    az olvasas nem biztos (lasd ott), semmi nem feherul ki: inkabb tultilt, mint atenged.
+    """
+    # A modul a kapu mellett all. Itt, es nem a fajl elejen toltodik be: ha hianyzik,
+    # a hiba a main() kivetelkezelojebe fut (exit 2, BLOKK), nem exit 1-be (ATENGEDES).
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import heredoc_scan
+    heredocs, certain = heredoc_scan.find(cmd)
+    data, code, plain = [], [], []
+    for h in heredocs:
+        rng = (h.body_start, h.body_end)
+        body = cmd[h.body_start:h.body_end]
+        if _heredoc_runs_body(cmd, h):
+            code.append(rng)
+        elif not certain or (not h.quoted and ('$(' in body or chr(96) in body)):
+            plain.append(rng)
+        else:
+            data.append(rng)
+    return data, code, plain, certain
 
 
 def _heredoc_body_ranges(cmd):
-    """(adat-torzsek, ertelmezo-torzsek) karaktertartomanyai.
-
-    A kulonbseg az, hogy a nyito sor parancsa VEGREHAJTJA-e a torzset:
-      cat > fajl <<EOF   -> adat      (fajlba megy, semmi nem futtatja)
-      python3 - <<PY     -> ertelmezo (a python lefuttatja)
-    """
-    lines = cmd.split('\n')
-    offs, pos = [], 0
-    for ln in lines:
-        offs.append(pos)
-        pos += len(ln) + 1
-    data, code = [], []
-    i = 0
-    while i < len(lines):
-        m = re.search(r'<<-?\s*([\'"]?)([A-Za-z_][A-Za-z0-9_]*)\1', lines[i])
-        if m:
-            delim = m.group(2)
-            is_code = _heredoc_opener_runs_body(lines[i][:m.start()])
-            j = i + 1
-            while j < len(lines) and lines[j].strip() != delim:
-                j += 1
-            if j > i:
-                a = offs[i] + len(lines[i]) + 1
-                b = offs[j] if j < len(lines) else len(cmd)
-                (code if is_code else data).append((a, b))
-            i = j
-        i += 1
+    """(adat-torzsek, ertelmezo-torzsek) karaktertartomanyai; lasd _heredoc_split."""
+    data, code, _plain, _certain = _heredoc_split(cmd)
     return data, code
 
 
@@ -790,10 +838,11 @@ def interpreter_payloads(cmd):
     A kommentsorok es az ADAT-heredocok itt is ki vannak fehérítve, mielott
     barmit kinyernenk: egy kikommentezett sor a payloadon belul sem fut le.
     """
-    data, code = _heredoc_body_ranges(cmd)
+    data, code, plain, certain = _heredoc_split(cmd)
     text = _blank_ranges(cmd, data)
     text = _blank_ranges(text, _comment_ranges(text))
-    out = [text[a:b] for a, b in code]
+    # Bizonytalan olvasasnal a tobbi torzs is lehet program: azt is kodkent nezzuk.
+    out = [text[a:b] for a, b in code + ([] if certain else plain)]
     out += [text[a:b] for a, b in _script_arg_ranges(text)]
     out += [text[a:b] for a, b in _stdin_pipe_ranges(text)]
     return [p for p in out if p.strip()]
