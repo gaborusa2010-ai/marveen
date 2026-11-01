@@ -36,6 +36,29 @@ check("broken wait_until (string, None) -> no crash, no work",
                         c(status="waiting", wait_kind="date", wait_until=None)], [], now) == [])
 check("None assignee -> no crash", ahw.reasons("x", [c(assignee=None)], [], now) == [])
 check("open message -> work", ahw.reasons("x", [], [{"id": 7}], now) == ["msg 7"])
+check("scheduled task today -> work",
+      ahw.reasons("x", [], [], now, [("szamla", "09:00")]) == ["utemezett szamla 09:00"])
+
+import json, tempfile
+td = tempfile.mkdtemp()
+def task(name, **cfg):
+    os.makedirs(os.path.join(td, name))
+    with open(os.path.join(td, name, "task-config.json"), "w") as fh:
+        fh.write(cfg.pop("_raw", None) or json.dumps(cfg))
+sun = datetime(2026, 11, 1, 6, 0)   # a Sunday, 06:00 = the morning start
+task("vasarnap", agent="x", enabled=True, schedule="0 9 * * 0")
+task("hetfo", agent="x", enabled=True, schedule="0 9 * * 1")
+task("kikapcsolt", agent="x", enabled=False, schedule="0 9 * * *")
+task("mase", agent="y", enabled=True, schedule="0 9 * * *")
+task("reggel5", agent="X", enabled=True, schedule="0 5 * * *")
+task("rossz", agent="x", enabled=True, schedule="99 9 * * *")
+task("torott", _raw="{nem json")
+task("ures", _raw="")
+check("Sunday 09:00 task of x counted, others not (Monday, disabled, other agent, already fired, broken)",
+      ahw.scheduled_today("x", sun, td) == [("vasarnap", "09:00")])
+check("missing tasks dir -> empty, no crash", ahw.scheduled_today("x", sun, os.path.join(td, "nincs")) == [])
+check("Monday: Sunday task not counted",
+      ahw.scheduled_today("x", datetime(2026, 11, 2, 6, 0), td) == [("hetfo", "09:00")])
 big = [c(seq=i) for i in range(5000)]
 check("5000 cards -> counted, no crash", len(ahw.reasons("x", big, [], now)) == 5000)
 

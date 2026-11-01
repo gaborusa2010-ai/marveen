@@ -12,6 +12,10 @@ WORK means one of:
   2. a waiting card whose date-wait (wait_kind=date) runs out before tonight's
      midnight -- that card comes back to the agent today
   3. an open inbound message that is not a receipt (same filter the briefing uses)
+  4. an enabled file-based scheduled task of the agent that still fires today
+     (~/.claude/scheduled-tasks/*/task-config.json). The runner only delivers to a
+     live session, so a stopped agent silently misses it: on 2026-11-01 Forgacs
+     was not started at 06:00 and his Sunday 09:00 invoicing task had no session.
 
 A waiting card on owner/card/external is NOT work: nothing the agent can do
 moves it, and the owner's message to the bot wakes it anyway (#663 part 2).
@@ -40,6 +44,14 @@ _spec = importlib.util.spec_from_file_location(
 bb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bb)
 
+_gspec = importlib.util.spec_from_file_location(
+    "idle_agent_guard", os.path.join(REPO, "scripts", "idle-agent-guard.py"))
+guard = importlib.util.module_from_spec(_gspec)
+_gspec.loader.exec_module(guard)
+
+import glob
+import json
+
 WORK_STATUSES = ("planned", "in_progress", "testing")
 
 
@@ -48,7 +60,27 @@ def end_of_today(now=None):
     return int((datetime(now.year, now.month, now.day) + timedelta(days=1)).timestamp())
 
 
-def reasons(agent, cards, msgs, now=None):
+def scheduled_today(agent, now=None, tasks_dir=None):
+    """[(task name, "HH:MM")] of this agent's enabled scheduled tasks still to fire
+    today. An unreadable config is reported on stderr and skipped."""
+    now = now or datetime.now()
+    out = []
+    for path in sorted(glob.glob(os.path.join(tasks_dir or guard.TASKS_DIR, "*", "task-config.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            if (cfg.get("agent") or "").strip().lower() != agent.lower() or cfg.get("enabled") is not True:
+                continue
+            at = guard.first_fire_today(cfg.get("schedule") or "", now)
+        except (OSError, ValueError, AttributeError) as e:
+            sys.stderr.write("agent-has-work: utemezes nem olvashato, kihagyva: %s (%s)\n" % (path, e))
+            continue
+        if at:
+            out.append((os.path.basename(os.path.dirname(path)), at))
+    return out
+
+
+def reasons(agent, cards, msgs, now=None, scheduled=()):
     """Pure: the list of reasons this agent has work (empty = none)."""
     eod = end_of_today(now)
     out = []
@@ -63,13 +95,15 @@ def reasons(agent, cards, msgs, now=None):
             out.append("#%s datum ma lejar" % c.get("seq"))
     for m in msgs:
         out.append("msg %s" % m.get("id"))
+    for name, at in scheduled:
+        out.append("utemezett %s %s" % (name, at))
     return out
 
 
 def check(agent, tok):
     cards = bb._rows(bb._get("/api/kanban", tok), "cards", "items")
     msgs = bb.open_messages(tok, agent)
-    return reasons(agent, cards, msgs)
+    return reasons(agent, cards, msgs, scheduled=scheduled_today(agent))
 
 
 def main(argv):
@@ -92,7 +126,7 @@ def main(argv):
     if r:
         print("%s %s: VAN munka (%d): %s" % (time.strftime("%F %T"), agent, len(r), ", ".join(r[:10])))
         return 0
-    print("%s %s: NINCS munka (0 nyitott kartya, 0 ma lejaro datum, 0 lezaratlan uzenet), nem inditom"
+    print("%s %s: NINCS munka (0 nyitott kartya, 0 ma lejaro datum, 0 lezaratlan uzenet, 0 mai utemezett feladat), nem inditom"
           % (time.strftime("%F %T"), agent))
     return 1
 
