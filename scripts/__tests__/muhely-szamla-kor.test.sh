@@ -122,6 +122,8 @@ if git cat-file -e 87c3c8ac:scripts/muhely/jobs.py 2>/dev/null; then
   ! cmp -s "$TMP/old/scripts/muhely/jobs.py" scripts/muhely/jobs.py \
     && cmp -s "$TMP/old/stdout" "$SANDBOX/stdout" && cmp -s "$TMP/old/out.json" "$SANDBOX/out.json" \
     && ok "jobs.py szamla = a 87c3c8ac elotti valtozat, bajtra" || no "jobs.py szamla elter a 87c3c8ac-tol"
+else
+  no "87c3c8ac hianyzik: a regi jobs.py-hoz mert bajt-teszt nem futott"
 fi
 
 # Historical sources 10016-10023, including named 10018/10019 cases and a mutation control.
@@ -134,7 +136,7 @@ mkdir -p "$TMP/cases"
 python3 scripts/__tests__/muhely-szamla-kor-cases.py "$PWD" "$STORE_SRC" "$TMP/cases" >"$TMP/k.o" 2>&1; rc=$?
 sed 's/^  /  case /' "$TMP/k.o"
 n=$(grep -c '^  ok  ' "$TMP/k.o")
-[ "$rc" = 0 ] && [ "$n" -ge 25 ] && ok "rossz bemenet es jovahagyas: $n eset" || no "rossz bemenet es jovahagyas ($n ok, rc=$rc)"
+[ "$rc" = 0 ] && [ "$n" -ge 34 ] && ok "rossz bemenet es jovahagyas: $n eset" || no "rossz bemenet es jovahagyas ($n ok, rc=$rc)"
 
 for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-counters.json muhely-invoice-log.json; do
   [ -f "$STORE_SRC/$f" ] && md5sum "$STORE_SRC/$f" >> "$TMP/live-after"

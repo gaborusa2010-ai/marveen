@@ -353,16 +353,18 @@ def render(kind, job, business, out_path, preview=False):
     pg.text(R - 6, y + 2, "Amount", size=8.5, font="F2", align="right")
     y -= 20
 
-    for l in lines:
+    for i, l in enumerate(lines):
         amt = float(l["qty"]) * float(l["unit"])
         pg.text(L + 6, y, str(l["desc"]), size=9)
         pg.text(R - 190, y, f"{float(l['qty']):g}", size=9, align="right")
         pg.text(R - 105, y, money(float(l["unit"])), size=9, align="right")
         pg.text(R - 6, y, money(amt), size=9, align="right")
         y -= 15
-        if y < 190:
-            pg.text(L + 6, y, "...", size=9)
-            break
+        # There is one page. A cut table under a full total is a wrong invoice,
+        # so refuse here, before write_pdf: nothing written, no number spent.
+        if y < 190 and i < len(lines) - 1:
+            raise ValueError(f"A szamla nem fer egy oldalra: {len(lines)} sor, "
+                             f"ebbol {i + 1} fer ki (tobboldalas szamla nincs)")
 
     y -= 6
     pg.line(R - 250, y, R, y, colour=(0.75, 0.75, 0.75), lw=0.6)

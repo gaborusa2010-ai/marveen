@@ -2,7 +2,7 @@
 """Heti szamlazasi kor: piszkozat, tulajdonosi jovahagyas, visszaolvasas.
 
     szamla-kor.py draft [--run run.toml] [--date EEEE-HH-NN] [--dry-run]
-    szamla-kor.py approve <runs/datum mappa> <ugyfel>
+    szamla-kor.py approve <runs/datum mappa> <ugyfel vagy kulcs>
 
 Spec: store/muhely/szamlazas-program/SPEC.md (card #656). Draft writes
 runs/<date>/: <client>.json, a DRAFT PDF, uzenet.txt and run.json; it spends no
@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import tomllib
 import unicodedata
@@ -130,6 +131,9 @@ def collect(run, item):
                 bad.append(f"#{jid} nem letezik")
             elif row.get("client") != item["client"]:
                 bad.append(f"#{jid} mas ugyfele")
+            elif bool(row.get("cis")) != item["cis"]:
+                # Else the default run drafts the same day again under its own flag.
+                bad.append(f"#{jid} CIS-jelzoje elter (a naploban: {'CIS' if row.get('cis') else 'nem CIS'})")
             elif row.get("stopped_at") is None:
                 bad.append(f"#{jid} meg nyitva van")
             elif row.get("invoice_ref"):
@@ -220,6 +224,14 @@ def check(run, item):
     long_lines = [l["desc"] for l in item["job"]["lines"] if len(str(l["desc"])) > 64]
     if long_lines:
         return Stop(3, "64 karakternel hosszabb szamlasor: " + str(long_lines[0]))
+    # The page check lives in the renderer; ask it now, dry run included, so a
+    # long invoice stops here and not after approval.
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            invoice_program.render("invoice", item["job"], run["business"],
+                                   os.path.join(tmp, "check.pdf"), preview=True)
+        except ValueError as exc:
+            return Stop(6, str(exc))
     return item
 
 
@@ -230,7 +242,7 @@ def safe_name(text):
 
 def draft_key(item):
     # A client can have a CIS and a non-CIS invoice in the same run.
-    return safe_name(item["client"]) + ("-cis" if item.get("cis") else "")
+    return safe_name(item["client"]) + ("--cis" if item.get("cis") else "")
 
 
 def amounts(job, business):
@@ -352,8 +364,6 @@ def draft_command(args):
         if item.get("status") == "draft":
             subtotal, cis, due = amounts(item["job"], business)
             questions = list(item.get("questions", []))
-            if missing_question:
-                questions.append(missing_question)
             qtext = (" Kerdes: " + " ".join(questions)) if questions else ""
             ctext = f" CIS levonas: {cis:,.2f} GBP, fizetendo: {due:,.2f} GBP." if cis else ""
             messages.append(cfg["uzenet_template"].format(client=item["client"], days=len(item["days"]),
@@ -361,10 +371,12 @@ def draft_command(args):
         manifest_items.append({k: item.get(k) for k in ("client", "key", "days", "status", "code",
                               "error", "json_path", "pdf_path", "json_sha256", "pdf_sha256")})
         manifest_items[-1].update(subtotal=subtotal, cis=cis, total=due, reference=None)
-    if missing_question and not messages:
+    # The missing days belong to the week, not to one client: asked once, as
+    # its own paragraph. A blank line separates the paragraphs.
+    if missing_question:
         messages.append("Kerdes: " + missing_question)
     with open(os.path.join(run_dir, "uzenet.txt"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(messages) + ("\n" if messages else ""))
+        fh.write("\n\n".join(messages) + ("\n" if messages else ""))
     inputs = [LEDGER, CLIENTS, BUSINESS, cfg_path, txt_path]
     if os.path.exists(SEEN):
         inputs.append(SEEN)
@@ -442,6 +454,11 @@ def approve_command(args):
               f"jovahagyva {(entry.get('subtotal'), entry.get('cis'), entry.get('total'))}",
               file=sys.stderr)
         return 6
+    # Bank, UTR or terms may legitimately change; the invoice uses today's
+    # file, but not silently.
+    if manifest.get("inputs", {}).get(os.path.abspath(BUSINESS)) not in (None, sha(BUSINESS)):
+        print("Megjegyzes: a muhely-business.json valtozott a piszkozat ota (bank, UTR, hatarido?); "
+              "a szamla a MOSTANI adatokkal megy ki.", file=sys.stderr)
     for jid in invoice_program.job_ids(job):
         prior = [x for x in invoice_program.issued_for(jid) if x.get("kind") == "invoice"]
         if prior:
