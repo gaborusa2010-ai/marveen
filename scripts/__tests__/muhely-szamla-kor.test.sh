@@ -8,6 +8,17 @@ no() { printf '  FAIL %s\n' "$1"; fail=1; }
 STORE_SRC=${STORE_SRC:-store}
 echo "muhely-szamla-kor"
 
+# The run copies real jobs and invoices from STORE_SRC; a fresh worktree has none.
+missing=""
+for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely/invoices; do
+  [ -e "$STORE_SRC/$f" ] || missing="$missing $f"
+done
+if [ -n "$missing" ]; then
+  echo "  FAIL setup: $STORE_SRC has no workshop data (missing:$missing)." >&2
+  echo "  Run from the main checkout or point STORE_SRC at it, e.g. STORE_SRC=/home/gabor/marveen/store" >&2
+  exit 2
+fi
+
 for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-counters.json muhely-invoice-log.json; do
   [ -f "$STORE_SRC/$f" ] && md5sum "$STORE_SRC/$f" >> "$TMP/live-before"
 done
