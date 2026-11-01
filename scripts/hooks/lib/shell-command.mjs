@@ -21,6 +21,8 @@
 // to be good enough to tell command structure from payload text -- which is
 // exactly the distinction all three gates got wrong on their own.
 
+import { find as findHeredocs } from './heredoc-scan.mjs'
+
 /** Flags whose NEXT token is a value, not a destination. */
 export const VALUE_FLAGS = new Set([
   '-d', '--data', '--data-raw', '--data-binary', '--data-urlencode', '--data-ascii',
@@ -55,20 +57,20 @@ const SEPARATORS = new Set([';', '&&', '||', '|', '&', '\n'])
 export function stripHeredocs(cmd) {
   const s = String(cmd ?? '')
   if (!s.includes('<<')) return s
-  const lines = s.split('\n')
-  const out = []
-  let terminator = null
-  for (const line of lines) {
-    if (terminator !== null) {
-      if (line.trim() === terminator) terminator = null
-      continue                                   // drop the body AND the terminator
-    }
-    out.push(line)
-    // `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"` -- last one on the line wins.
-    const matches = [...line.matchAll(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)]
-    if (matches.length > 0) terminator = matches[matches.length - 1][2]
+  // #729: the per-line regex opened a "body" at a `<<EOF` inside quotes or a
+  // comment (the next command lines vanished) and read <<'END-X', <<\EOF,
+  // <<E\OF short (the body stayed command text). The scanner mirrors bash; on a
+  // command it cannot read for certain nothing is removed, so the gates see
+  // more, never less.
+  const { heredocs, certain } = findHeredocs(s)
+  if (!certain) return s
+  let out = ''
+  let pos = 0
+  for (const h of heredocs) {
+    out += s.slice(pos, h.bodyStart)                    // drop the body AND the closing line
+    pos = Math.min(h.end + 1, s.length)
   }
-  return out.join('\n')
+  return out + s.slice(pos)
 }
 
 /**
@@ -148,22 +150,12 @@ export function verbIndex(texts) {
 export function extractHeredocBodies(cmd) {
   const s = String(cmd ?? '')
   if (!s.includes('<<')) return []
-  const out = []
-  let cur = null
-  let terminator = null
-  for (const line of s.split('\n')) {
-    if (terminator !== null) {
-      if (line.trim() === terminator) { out.push({ marker: terminator, body: cur.join('\n') }); cur = null; terminator = null; continue }
-      cur.push(line)
-      continue
-    }
-    const matches = [...line.matchAll(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)]
-    if (matches.length > 0) { terminator = matches[matches.length - 1][2]; cur = [] }
-  }
   // An UNTERMINATED heredoc still has text, and "truncated" must not read as
-  // "nothing to inspect".
-  if (cur !== null && cur.length) out.push({ marker: terminator, body: cur.join('\n') })
-  return out
+  // "nothing to inspect": the scanner returns it with the rest of the command.
+  return findHeredocs(s).heredocs.map((h) => ({
+    marker: h.tag,
+    body: s.slice(h.bodyStart, h.bodyEnd).replace(/\n$/, ''),
+  }))
 }
 
 /**

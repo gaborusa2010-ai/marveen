@@ -261,9 +261,17 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
       // `cat > file.py <<'X' ... X` followed by `python3 file.py` had the cat's
       // body judged as the python's program. The marker token (`<<X`) stays in
       // the owning segment after the body is stripped, so ownership is readable.
-      const ownMarkers = new Set(
-        rawTexts.filter((t) => t.startsWith('<<')).map((t) => t.replace(/^<<-?/, '').replace(/^['"]|['"]$/g, '')),
-      )
+      // The tokeniser has already removed the tag's quotes and backslashes
+      // (<<'END-X' -> <<END-X, <<E\OF -> <<EOF), which is the tag the scanner
+      // reports. `<< 'PY'` leaves the tag in the next token, `-<<PY` glues the
+      // operator to the dash (#729).
+      const ownMarkers = new Set()
+      rawTexts.forEach((t, k) => {
+        const at = t.indexOf('<<')
+        if (at === -1 || t.startsWith('<<<', at)) return
+        const tag = t.slice(at).replace(/^<<-?/, '')
+        ownMarkers.add(tag || (rawTexts[k + 1] ?? ''))
+      })
       // STDINPROG901: the heredoc is the interpreter's PROGRAM only when the
       // interpreter actually reads its program from stdin -- `bash <<EOF`,
       // `python3 - <<PY`. With a SCRIPT FILE argument (`bash send.sh <<EOF`) the
