@@ -117,6 +117,26 @@ echo "backup: mode=${BACKUP_MODE}  archive=$(basename "${ARCHIVE}")"
 # than the oldest kept full.
 KEEP_FULL="${KEEP_FULL:-2}"
 
+# Host-disk guard (WSL). The distro lives in an ext4.vhdx on a Windows drive;
+# the vhdx grows as the stage and the archive are written and never shrinks on
+# its own. 2026-11-01 both outages (14:42 and 20:00) were a backup run filling
+# C: (Volsnap 24 "insufficient disk space on volume C:" at 14:40:41, C: 2 GB
+# free at 20:00:47): every write inside the VM then stalled. So refuse to start
+# below a floor and say why; a skipped backup is an alert, a full C: is an outage.
+BACKUP_HOST_MOUNT="${BACKUP_HOST_MOUNT:-/mnt/c}"
+BACKUP_HOST_MIN_FREE_GB="${BACKUP_HOST_MIN_FREE_GB:-25}"
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  host_free_kb="$(df -Pk "${BACKUP_HOST_MOUNT}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  if [[ -z "${host_free_kb}" ]]; then
+    echo "backup: FAIL could not read free space on ${BACKUP_HOST_MOUNT} (the vhdx host drive), not starting" >&2
+    exit 7
+  fi
+  if (( host_free_kb < BACKUP_HOST_MIN_FREE_GB * 1024 * 1024 )); then
+    echo "backup: FAIL only $(( host_free_kb / 1024 / 1024 )) GB free on ${BACKUP_HOST_MOUNT} (floor ${BACKUP_HOST_MIN_FREE_GB} GB): the run could fill the vhdx host drive and freeze WSL, not starting" >&2
+    exit 7
+  fi
+fi
+
 mkdir -p "${BACKUP_DIR}"
 cd "${REPO_ROOT}"
 
