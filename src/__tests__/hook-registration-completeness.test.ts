@@ -70,6 +70,8 @@ const EXEMPT: Record<string, string> = {
     'shared library imported by outgoing-copy-gate.py (and the level-2 email approval gate, EMAILKAPU901 PR2); not itself a hook',
   'credential_lib.py':
     'shared library: the credential detector and state, imported by credential-gate.py and scripts/credential-gate-cli.py (CREDGATE1003); not itself a hook',
+  'heredoc_scan.py':
+    'shared library: the quote- and comment-aware heredoc finder imported by destructive-gate.py (#729); its JS twin lives in lib/heredoc-scan.mjs; not itself a hook',
   'memory-save.sh':
     'legacy: referenced only by a historical rebuild prompt, wired nowhere; kept pending a maintainer decision to remove it',
   'telegram-ack.py':
