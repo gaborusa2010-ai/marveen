@@ -8,30 +8,35 @@ no() { printf '  FAIL %s\n' "$1"; fail=1; }
 STORE_SRC=${STORE_SRC:-store}
 echo "muhely-szamla-kor"
 
-# The run copies real jobs and invoices from STORE_SRC; a fresh worktree has none.
-missing=""
-for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely/invoices; do
-  [ -e "$STORE_SRC/$f" ] || missing="$missing $f"
-done
-if [ -n "$missing" ]; then
-  echo "  FAIL setup: $STORE_SRC has no workshop data (missing:$missing)." >&2
-  echo "  Run from the main checkout or point STORE_SRC at it, e.g. STORE_SRC=/home/gabor/marveen/store" >&2
-  exit 2
-fi
+# #758: every functional case runs on a SYNTHETIC store with a fixed content
+# (three clients, one of them mixed CIS, dates relative to today), so the result
+# no longer depends on how many unbilled days the owner has at the moment. The
+# live store is only read for the historical replay of the issued invoices
+# 10016-10023, which cannot be synthesised; without it that one step is skipped
+# and says so.
+FIXTURE="$TMP/fixture"
+python3 scripts/__tests__/muhely-szamla-kor-fixture.py "$FIXTURE" > /dev/null || { echo "  FAIL setup: fixture" >&2; exit 2; }
 
+live_ok=1
+for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-invoice-log.json; do
+  [ -f "$STORE_SRC/$f" ] || live_ok=0
+done
+ls "$STORE_SRC"/muhely/invoices/10016-*.json >/dev/null 2>&1 || live_ok=0
 for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-counters.json muhely-invoice-log.json; do
   [ -f "$STORE_SRC/$f" ] && md5sum "$STORE_SRC/$f" >> "$TMP/live-before"
 done
 
 sandbox() {
+  # $2: the store to copy, the fixture by default.
   SANDBOX="$TMP/repo-$1"
+  src=${2:-$FIXTURE}
   mkdir -p "$SANDBOX/scripts/muhely" "$SANDBOX/scripts/__tests__" "$SANDBOX/store"
   cp -a scripts/muhely/. "$SANDBOX/scripts/muhely/"
   cp scripts/__tests__/muhely-szamla-kor-regression.py "$SANDBOX/scripts/__tests__/"
   # Only what the invoicing run reads: the live store is gigabytes.
-  cp -a "$STORE_SRC"/muhely-*.json "$SANDBOX/store/"
+  cp -a "$src"/muhely-*.json "$SANDBOX/store/"
   mkdir -p "$SANDBOX/store/muhely"
-  cp -a "$STORE_SRC/muhely/invoices" "$SANDBOX/store/muhely/"
+  cp -a "$src/muhely/invoices" "$SANDBOX/store/muhely/"
 }
 
 sandbox main
@@ -39,7 +44,7 @@ export MUHELY_NO_DRIVE=1 MUHELY_NO_DESKTOP=1
 RUN="$SANDBOX/scripts/muhely/szamla-kor.py"
 
 # Preview cannot spend or mark anything, and must print DRAFT without a five-digit ref.
-job=$(find "$SANDBOX/store/muhely/invoices" -name '10016-*.json' | head -1)
+job=$(find "$SANDBOX/store/muhely/invoices" -name '10101-*.json' | head -1)
 for f in muhely-counters.json muhely-invoice-log.json muhely-jobs.json; do md5sum "$SANDBOX/store/$f"; done > "$TMP/pre"
 python3 "$SANDBOX/scripts/muhely/invoice.py" preview "$job" --out "$TMP/preview.pdf" > "$TMP/preview.out" 2> "$TMP/preview.err"; rc=$?
 for f in muhely-counters.json muhely-invoice-log.json muhely-jobs.json; do md5sum "$SANDBOX/store/$f"; done > "$TMP/post"
@@ -73,6 +78,25 @@ python3 "$RUN2" draft --date 2026-10-31 >"$TMP/real.out" 2>"$TMP/real.err"; rc=$
 rundir="$SANDBOX/store/muhely/szamlazas-program/runs/2026-10-31"
 case $rc in 1|5) true;; *) false;; esac && [ -s "$rundir/run.json" ] && [ -s "$rundir/uzenet.txt" ] \
   && grep -q '"json_sha256"' "$rundir/run.json" && ok "valodi draft es manifest" || no "valodi draft"
+
+# The mixed client (two plain days, two CIS days) is two invoices in the default
+# run: its own key each, its own file each, and the CIS one states the deduction.
+python3 - "$rundir" > "$TMP/mixed.out" 2>&1 <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+mine = {x["key"]: x for x in json.load(open(os.path.join(rd, "run.json")))["invoices"]
+        if x["client"] == "Teszt Vegyes Epito"}
+msg = open(os.path.join(rd, "uzenet.txt"), encoding="utf-8").read()
+plain, cis = mine.get("teszt-vegyes-epito"), mine.get("teszt-vegyes-epito--cis")
+assert plain and cis, sorted(mine)
+assert plain["status"] == cis["status"] == "draft", (plain["status"], cis["status"])
+assert plain["json_path"] != cis["json_path"] and all(os.path.exists(x["json_path"]) for x in (plain, cis))
+assert (len(plain["days"]), len(cis["days"])) == (2, 2), (plain["days"], cis["days"])
+assert (plain["subtotal"], plain["cis"], plain["total"]) == (400.0, 0, 400.0), plain
+assert (cis["subtotal"], cis["cis"], cis["total"]) == (400.0, 80.0, 320.0), cis
+assert msg.count("Teszt Vegyes Epito: 2 nap, 400.00 GBP.") == 2 and "CIS levonas: 80.00 GBP, fizetendo: 320.00 GBP" in msg, msg
+PY
+[ $? = 0 ] && ok "vegyes CIS ugyfel: ket piszkozat, 400 es 400-80" || { no "vegyes CIS ugyfel"; sed 's/^/       /' "$TMP/mixed.out"; }
 
 # Changing a draft after its hash was messaged must block approval.
 draft=$(python3 - "$rundir/run.json" <<'PY'
@@ -138,13 +162,18 @@ else
 fi
 
 # Historical sources 10016-10023, including named 10018/10019 cases and a mutation control.
-sandbox regression
-python3 "$SANDBOX/scripts/__tests__/muhely-szamla-kor-regression.py" "$SANDBOX" >"$TMP/r.o" 2>"$TMP/r.e"; rc=$?
-[ "$rc" = 0 ] && ok "10016-10023 torteneti replay" || { no "torteneti replay"; sed 's/^/       /' "$TMP/r.o"; sed 's/^/       /' "$TMP/r.e"; }
+# Issued invoices do not change, so this is the one step that still reads the live store.
+if [ "$live_ok" = 1 ]; then
+  sandbox regression "$STORE_SRC"
+  python3 "$SANDBOX/scripts/__tests__/muhely-szamla-kor-regression.py" "$SANDBOX" >"$TMP/r.o" 2>"$TMP/r.e"; rc=$?
+  [ "$rc" = 0 ] && ok "10016-10023 torteneti replay" || { no "torteneti replay"; sed 's/^/       /' "$TMP/r.o"; sed 's/^/       /' "$TMP/r.e"; }
+else
+  echo "  SKIP 10016-10023 torteneti replay: $STORE_SRC has no issued workshop invoices (point STORE_SRC at the main checkout's store)"
+fi
 
 # SPEC 6.2 bad-input table and the approval path, one sandbox per case.
 mkdir -p "$TMP/cases"
-python3 scripts/__tests__/muhely-szamla-kor-cases.py "$PWD" "$STORE_SRC" "$TMP/cases" >"$TMP/k.o" 2>&1; rc=$?
+python3 scripts/__tests__/muhely-szamla-kor-cases.py "$PWD" "$FIXTURE" "$TMP/cases" >"$TMP/k.o" 2>&1; rc=$?
 sed 's/^  /  case /' "$TMP/k.o"
 n=$(grep -c '^  ok  ' "$TMP/k.o")
 [ "$rc" = 0 ] && [ "$n" -ge 34 ] && ok "rossz bemenet es jovahagyas: $n eset" || no "rossz bemenet es jovahagyas ($n ok, rc=$rc)"
@@ -152,6 +181,8 @@ n=$(grep -c '^  ok  ' "$TMP/k.o")
 for f in muhely-jobs.json muhely-ugyfelek.json muhely-business.json muhely-counters.json muhely-invoice-log.json; do
   [ -f "$STORE_SRC/$f" ] && md5sum "$STORE_SRC/$f" >> "$TMP/live-after"
 done
-cmp -s "$TMP/live-before" "$TMP/live-after" && ok "az eredeti store valtozatlan" || no "az eredeti store megvaltozott"
+if [ -s "$TMP/live-before" ]; then
+  cmp -s "$TMP/live-before" "$TMP/live-after" && ok "az eredeti store valtozatlan" || no "az eredeti store megvaltozott"
+fi
 
 exit $fail
