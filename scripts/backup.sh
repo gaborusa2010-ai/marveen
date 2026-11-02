@@ -182,7 +182,7 @@ REPOLIST_DIFF=""
 HOMELIST_DIFF=""
 PENDING_STATE=""
 cleanup() {
-  rm -f "${REPOLIST}" "${HOMELIST}" "${REPOLIST_FULL}" "${HOMELIST_FULL}" "${MANIFEST}" ${ARCHIVE_LIST:+"${ARCHIVE_LIST}"}
+  rm -f "${REPOLIST}" "${HOMELIST}" "${REPOLIST_FULL}" "${HOMELIST_FULL}" "${MANIFEST}" ${ARCHIVE_LIST:+"${ARCHIVE_LIST}"} ${VANISHED:+"${VANISHED}"}
   [[ -n "${REPOLIST_DIFF}" ]] && rm -f "${REPOLIST_DIFF}"
   [[ -n "${HOMELIST_DIFF}" ]] && rm -f "${HOMELIST_DIFF}"
   [[ -n "${PENDING_STATE}" ]] && rm -f "${PENDING_STATE}"
@@ -831,6 +831,15 @@ stage_group() {  # stage_group <listfile> <base> <group>
     # Skip it loudly instead; the manifest still names it, so the verification
     # below reports it as MISSING and the run fails with exit 6 and an alert.
     if ! cp -pR "${base}/${rel}" "${STAGE}/${group}/${parent}/"; then
+      # Deleted between the file list and this copy: the file is legitimately
+      # gone, not lost. 2026-11-02 21:16 a sub-agent removed a scratch worktree
+      # mid-run and 2140 such entries failed the whole archive (#765). Only a
+      # source that no longer exists AT ALL counts; unreadable or partially
+      # copied entries still fail below.
+      if [[ ! -e "${base}/${rel}" && ! -L "${base}/${rel}" ]]; then
+        echo "${group}/${rel}" >> "${VANISHED}"
+        continue
+      fi
       # A directory entry can be PARTIALLY copied (one unreadable file inside):
       # the manifest names the directory, which did get in, so verification
       # alone would pass. Count every staging failure and fail the run on it.
@@ -840,8 +849,25 @@ stage_group() {  # stage_group <listfile> <base> <group>
   done < "${list}"
 }
 
+VANISHED="$(mktemp -t claudeclaw-vanished.XXXXXX)"
 stage_group "${REPOLIST}" "${REPO_ROOT}" repo
 stage_group "${HOMELIST}" "${HOME}" home
+
+# Vanished entries leave the manifest (so verification does not count them as
+# holes) and are listed at its end under a non-path prefix, so the archive
+# still says what was skipped and why.
+if [[ -s "${VANISHED}" ]]; then
+  grep -vxF -f "${VANISHED}" "${MANIFEST}" > "${MANIFEST}.kept" || true
+  {
+    cat "${MANIFEST}.kept"
+    echo "--- vanished during the run (deleted after the file list was made, not archived) ---"
+    sed 's,^,gone: ,' "${VANISHED}"
+  } > "${MANIFEST}"
+  rm -f "${MANIFEST}.kept"
+  cp "${MANIFEST}" "${STAGE}/MANIFEST.txt"
+  echo "backup: NOTE $(wc -l < "${VANISHED}" | awk '{print $1}') entr(y/ies) were deleted after the file list was made and are not in the archive (listed at the end of MANIFEST.txt), e.g. $(head -1 "${VANISHED}")" >&2
+fi
+rm -f "${VANISHED}"
 
 if [[ -n "${BUNDLE}" ]]; then
   mkdir -p "${STAGE}/repo"
