@@ -14,6 +14,9 @@ Auth resolution order (first match wins):
      (Editor) -- the address shown by `whoami`. Edits appear as the service
      account. Set GDOCS_SUBJECT=<user@domain> to impersonate a user via
      Google Workspace domain-wide delegation (Workspace admin required).
+  3. Neither of the above, or the google libraries not installed: the shared
+     OAuth token at store/.google-oauth.json (scripts/muhely/google_auth.py),
+     plain REST, no dependencies. Edits appear as the owner's account.
 
 Usage (run with a venv that has the deps from scripts/gdocs-requirements.txt):
   gdocs.py whoami                                   # print service-account email
@@ -31,9 +34,6 @@ handles separation).
 See docs/google-docs.md for setup.
 """
 import sys, os, json, re, urllib.parse, urllib.request
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials as UserCredentials
-from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/documents",
           "https://www.googleapis.com/auth/drive"]
@@ -54,7 +54,44 @@ def _client_cfg():
     d = d.get("installed", d.get("web", d))
     return d["client_id"], d["client_secret"]
 
+class _Req:
+    def __init__(self, url, method="GET", body=None):
+        self.url, self.method, self.body = url, method, body
+
+    def execute(self):
+        from google_auth import call
+        return call(self.url, self.method, body=self.body)
+
+
+class _RestDocs:
+    """Minimal stand-in for build("docs", "v1") over the shared, dependency-free
+    OAuth token (scripts/muhely/google_auth.py, store/.google-oauth.json). Only
+    the two calls this helper makes: documents().get and documents().batchUpdate."""
+    BASE = "https://docs.googleapis.com/v1/documents/"
+
+    def documents(self):
+        return self
+
+    def get(self, documentId):
+        return _Req(self.BASE + urllib.parse.quote(documentId, safe=""))
+
+    def batchUpdate(self, documentId, body):
+        return _Req(self.BASE + urllib.parse.quote(documentId, safe="") + ":batchUpdate", "POST", body)
+
+
 def _svc():
+    # 1-2 need the google client libraries (scripts/gdocs-requirements.txt);
+    # without them, or without either credential, fall back to the shared
+    # OAuth token that already carries the documents scope.
+    try:
+        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials as UserCredentials
+        from googleapiclient.discovery import build
+    except ImportError:
+        build = None
+    if build is None or not (os.path.exists(OAUTH_TOKEN) or os.path.exists(_sa_path())):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "muhely"))
+        return _RestDocs()
     # Preferred: OAuth user creds -> edits appear as the authorizing user.
     if os.path.exists(OAUTH_TOKEN):
         with open(OAUTH_TOKEN) as f:
