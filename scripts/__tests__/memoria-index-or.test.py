@@ -187,12 +187,27 @@ with tempfile.TemporaryDirectory() as d:
     check("--report-failure without state -> payload says no state written", rc == 0 and "nem irt state-et" in (payload(out) or {}).get("content", ""), out[:200])
     rc, out, err = run(d, "--report-failure", env={"DASHBOARD_URL": "http://127.0.0.1:9"})
     check("--report-failure on a closed port -> stderr, still rc 0 (no loop)", rc == 0 and "sem ment el" in err, (rc, err[-120:]))
+    # 13d. (#774) non-integer measured_at in a hand-edited state: no crash, treated as stale
+    json.dump({"measured_at": "tegnap", "message_id": 1}, open(os.path.join(d, "state.json"), "w"))
+    rc, out, err = run(d, "--report-failure", "--dry-run")
+    check("--report-failure with a non-integer measured_at -> payload, rc 0, no traceback", rc == 0 and payload(out) and "Traceback" not in err, (rc, out[:120], err[-120:]))
     # 14. corrupt state file is not fatal
     open(os.path.join(d, "state.json"), "w").write("{not json")
     build(d, 10)
     rc, out, err = run(d, "--dry-run")
     check("corrupt state file -> still measures, rc 0", rc == 0 and out.startswith("rendben"), (rc, out[:120], err[-120:]))
 srv.shutdown()
+
+# 15. (#774) the guard does not import: the main run dies, the failure hook still speaks
+import shutil
+with tempfile.TemporaryDirectory() as d:
+    shutil.copy(OR, os.path.join(d, "memoria-index-or.py"))
+    open(os.path.join(d, "memory-index-guard.py"), "w").write("import os\nraise ImportError('bad merge')\n")
+    e = dict(os.environ, MEMORY_INDEX_DIR=d, MEMORIA_INDEX_OR_STATE=os.path.join(d, "state.json"))
+    r1 = subprocess.run([sys.executable, os.path.join(d, "memoria-index-or.py"), "--dry-run"], capture_output=True, text=True, env=e)
+    check("broken guard: the main run fails non-zero (what OnFailure sees)", r1.returncode != 0, r1.returncode)
+    r2 = subprocess.run([sys.executable, os.path.join(d, "memoria-index-or.py"), "--report-failure", "--dry-run"], capture_output=True, text=True, env=e)
+    check("broken guard: --report-failure still produces the HIBA payload, rc 0", r2.returncode == 0 and "elhalt" in (payload(r2.stdout) or {}).get("content", ""), (r2.returncode, r2.stdout[:120], r2.stderr[-160:]))
 
 print(f"\n{'PASS' if not fails else 'FAIL'} memoria-index-or ({fails} failing)")
 sys.exit(1 if fails else 0)
