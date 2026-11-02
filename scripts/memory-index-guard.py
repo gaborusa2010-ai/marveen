@@ -76,19 +76,17 @@ def rank(fname, age_days):
             return (2, -age_days)
     return None
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true", help="tenylegesen irjon; enelkul csak jelent")
-    a = ap.parse_args()
-    os.chdir(M)
-    idx_path, arc_path = "MEMORY.md", "MEMORY-archivum.md"
-    n_lines, n_chars = loaded_size(idx_path)
-    print(f"betoltodo allapot: {n_lines} sor (plafon {LIMIT_LINES}), "
-          f"{n_chars} karakter (plafon {LIMIT_CHARS})")
-    if n_lines <= TARGET_LINES and n_chars <= TARGET_CHARS:
-        print(f"cel: {TARGET_LINES} sor / {TARGET_CHARS} karakter -- nincs teendo")
-        return 0
+def plan(mdir):
+    """Meri az indexet es osszeallitja a mozgatando sorokat; NEM ir semmit.
 
+    Visszaad: dict(lines, chars, move=[(sor, fajl)], head=[...], entries=[...],
+    after_lines, after_chars). A sorrend a fenti rangsor. Az index SAJAT mutatoi
+    (MEMORY*.md: az archivum sora) SOHA nem jeloltek: 2026-11-02-en a dry run az
+    archivum sorat is mozgatta volna (type: reference a fejleceben), es ha az
+    kikerul, az archivum maga valik lathatatlanna (kartya 5f372007).
+    """
+    idx_path = os.path.join(mdir, "MEMORY.md")
+    n_lines, n_chars = loaded_size(idx_path)
     lines = open(idx_path, encoding="utf-8").read().split("\n")
     head, entries = [], []
     for l in lines:
@@ -101,27 +99,49 @@ def main():
     now = time.time()
     cands = []
     for line, f in entries:
-        if not os.path.exists(f):
+        if os.path.basename(f).startswith("MEMORY"):
             continue
-        r = rank(f, (now - os.path.getmtime(f)) / 86400)
+        fp = os.path.join(mdir, f)
+        if not os.path.exists(fp):
+            continue
+        r = rank(fp, (now - os.path.getmtime(fp)) / 86400)
         if r is not None:
             cands.append((r, line, f))
     cands.sort(key=lambda x: x[0])
 
     move, cur_l, cur_c = [], n_lines, n_chars
-    for _, line, f in cands:
-        if cur_l <= TARGET_LINES and cur_c <= TARGET_CHARS:
-            break
-        move.append((line, f))
-        cur_l -= 1
-        cur_c -= len(line) + 1
+    if n_lines > TARGET_LINES or n_chars > TARGET_CHARS:
+        for _, line, f in cands:
+            if cur_l <= TARGET_LINES and cur_c <= TARGET_CHARS:
+                break
+            move.append((line, f))
+            cur_l -= 1
+            cur_c -= len(line) + 1
+    return dict(lines=n_lines, chars=n_chars, move=move, head=head, entries=entries,
+                after_lines=cur_l, after_chars=cur_c)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true", help="tenylegesen irjon; enelkul csak jelent")
+    a = ap.parse_args()
+    # Teszthez es mas telepiteshez: a mappa felulirhato, az elo index erintese nelkul.
+    mdir = os.environ.get("MEMORY_INDEX_DIR") or M
+    idx_path, arc_path = os.path.join(mdir, "MEMORY.md"), os.path.join(mdir, "MEMORY-archivum.md")
+    p = plan(mdir)
+    n_lines, n_chars, move = p["lines"], p["chars"], p["move"]
+    print(f"betoltodo allapot: {n_lines} sor (plafon {LIMIT_LINES}), "
+          f"{n_chars} karakter (plafon {LIMIT_CHARS})")
+    if n_lines <= TARGET_LINES and n_chars <= TARGET_CHARS:
+        print(f"cel: {TARGET_LINES} sor / {TARGET_CHARS} karakter -- nincs teendo")
+        return 0
 
     if not move:
         print(f"{n_lines} sor / {n_chars} karakter > cel, de NINCS archivalhato jelolt "
               f"(csak user/feedback maradt). Ez emberi dontest kivan: kartya acb30fbe.")
         return 2
 
-    print(f"MEMORY.md {n_lines} sor/{n_chars} kar -> {cur_l} sor/{cur_c} kar "
+    print(f"MEMORY.md {n_lines} sor/{n_chars} kar -> {p['after_lines']} sor/{p['after_chars']} kar "
           f"(cel {TARGET_LINES}/{TARGET_CHARS}), {len(move)} sor mozogna:")
     for line, f in move:
         print(f"  {f}")
@@ -130,8 +150,8 @@ def main():
         return 0
 
     moved = {f for _, f in move}
-    keep = [l for l, f in entries if f not in moved]
-    open(idx_path, "w", encoding="utf-8").write("\n".join(head + keep).rstrip("\n") + "\n")
+    keep = [l for l, f in p["entries"] if f not in moved]
+    open(idx_path, "w", encoding="utf-8").write("\n".join(p["head"] + keep).rstrip("\n") + "\n")
     with open(arc_path, "a", encoding="utf-8") as fh:
         fh.write(f"\n<!-- {time.strftime('%Y-%m-%d %H:%M')} automatikus archivalas, "
                  f"{len(move)} sor, memory-index-guard.py -->\n")
@@ -141,7 +161,8 @@ def main():
     new_l, new_c = loaded_size(idx_path)
     arc_refs = {m.group(1) for m in re.finditer(r"\]\(([^)]+\.md)\)", open(arc_path, encoding="utf-8").read())}
     keep_refs = {m.group(1) for m in re.finditer(r"\]\(([^)]+\.md)\)", open(idx_path, encoding="utf-8").read())}
-    files = {f for f in glob.glob("*.md") if not f.startswith("MEMORY")}
+    files = {os.path.basename(f) for f in glob.glob(os.path.join(mdir, "*.md"))
+             if not os.path.basename(f).startswith("MEMORY")}
     ok = (keep_refs | arc_refs) >= files and not (keep_refs & arc_refs)
     print(f"\nkesz: {new_l} sor / {new_c} karakter | aktiv {len(keep_refs)} | archivum {len(arc_refs)} | "
           f"halmaz-ellenorzes: {'rendben' if ok else 'ELTERES'}")
