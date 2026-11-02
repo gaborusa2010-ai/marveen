@@ -5577,6 +5577,10 @@ export function getTaskRunMedianDurationMs(name: string, minSamples = 5, limit =
 export function countConsecutiveSkips(name: string, agent: string, window = 400): {
   skips: number
   lastFiredTs: number | null
+  // #243: when the task last showed it was alive (a fire, or a quiet preCheck
+  // round), else the oldest row seen -- never "infinitely" silent for a task
+  // that has only existed for an hour. Drives the long-silence threshold.
+  aliveRefTs: number | null
   reasons: string[]
 } {
   const rows = db.prepare(
@@ -5585,6 +5589,7 @@ export function countConsecutiveSkips(name: string, agent: string, window = 400)
   let skips = 0
   const reasons = new Set<string>()
   let lastFiredTs: number | null = null
+  let lastQuietTs: number | null = null
   for (const r of rows) {
     // 'skipped-precheck' is TRANSPARENT (#423, f3c1c7dd): the preCheck ran
     // and measured nothing to do, which is a healthy quiet round, not a task
@@ -5593,7 +5598,10 @@ export function countConsecutiveSkips(name: string, agent: string, window = 400)
     // purpose while its state file is fresh. Not a reset either: busy/quota
     // skips on both sides of it still add up, and the last real fire stays
     // the reference for the silence bar.
-    if (r.status === 'skipped-precheck') continue
+    if (r.status === 'skipped-precheck') {
+      if (lastQuietTs === null) lastQuietTs = r.ts
+      continue
+    }
     // 'missed' is a skip too (#243, dc80b854): the catch-up path writes it for
     // an occurrence that was too stale to run, i.e. the task did NOT run. It
     // used to fall through to the "last fired" branch, so the silence bar was
@@ -5607,7 +5615,9 @@ export function countConsecutiveSkips(name: string, agent: string, window = 400)
     lastFiredTs = r.ts
     break
   }
-  return { skips, lastFiredTs, reasons: [...reasons].sort() }
+  const oldestTs = rows.length > 0 ? rows[rows.length - 1].ts : null
+  const aliveRefTs = Math.max(lastFiredTs ?? 0, lastQuietTs ?? 0) || oldestTs
+  return { skips, lastFiredTs, aliveRefTs, reasons: [...reasons].sort() }
 }
 
 export function listTaskRunHistory(name: string, limit: number): TaskRunHistoryEntry[] {

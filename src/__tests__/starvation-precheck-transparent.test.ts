@@ -43,8 +43,24 @@ describe('countConsecutiveSkips counts missed as a skip', () => {
     expect(r.lastFiredTs).toBe(BASE)
     expect(r.reasons).toContain('missed')
   })
-  it('a run after a missed one still resets', () => {
-    seq(['missed', 'fired', 'skipped'])
-    expect(countConsecutiveSkips('t', 'a').skips).toBe(1)
+})
+
+// #243 review: the long-silence threshold must not treat a healthy
+// preCheck-gated task, or a brand-new one, as silent for 8+ days.
+describe('countConsecutiveSkips aliveRefTs', () => {
+  it('a quiet preCheck round is proof of life', () => {
+    seq(['fired', 'skipped', 'skipped', 'skipped-precheck', 'skipped-precheck'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.lastFiredTs).toBe(BASE)
+    expect(r.aliveRefTs).toBe(BASE + 4000)
+  })
+  it('no run in the window: the oldest row, not infinity', () => {
+    seq(['skipped', 'skipped'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.lastFiredTs).toBeNull()
+    expect(r.aliveRefTs).toBe(BASE)
+  })
+  it('empty history: null', () => {
+    expect(countConsecutiveSkips('t', 'a').aliveRefTs).toBeNull()
   })
 })

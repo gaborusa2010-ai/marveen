@@ -2271,17 +2271,22 @@ function recordSkip(taskName: string, agentName: string, reason: string, status 
   // `reason` column stays the finer-grained record. countConsecutiveSkips skips
   // over 'skipped-precheck' rows (#423): a quiet preCheck is not starvation.
   appendTaskRun(taskName, agentName, status, reason)
-  checkStarvation(taskName, agentName)
+  // A quiet preCheck round leaves the count unchanged; checking here would
+  // re-page a streak that sits on an alert point on every quiet round.
+  if (status !== 'skipped-precheck') checkStarvation(taskName, agentName)
 }
 
 // Shared by recordSkip and the catch-up 'missed' path (#243): a missed
 // occurrence extends the streak, so it must also be a point where we look.
 function checkStarvation(taskName: string, agentName: string): void {
   try {
-    const { skips, lastFiredTs, reasons } = countConsecutiveSkips(taskName, agentName)
+    const { skips, lastFiredTs, aliveRefTs, reasons } = countConsecutiveSkips(taskName, agentName)
     // No successful run in the window reads as "very stale", never as "new".
     const silentMs = lastFiredTs === null ? Number.POSITIVE_INFINITY : Date.now() - lastFiredTs
-    if (!isStarvationAlertPoint(skips, starvationThreshold(silentMs))) return
+    // The threshold follows proof of life, not the last fire: a preCheck-gated
+    // task that measured "nothing to do" yesterday is not long-silent (#243).
+    const aliveSilentMs = aliveRefTs === null ? Number.POSITIVE_INFINITY : Date.now() - aliveRefTs
+    if (!isStarvationAlertPoint(skips, starvationThreshold(aliveSilentMs))) return
     if (silentMs < STARVE_SILENT_MS) return
     const hours = Number.isFinite(silentMs) ? Math.round(silentMs / 3_600_000) : null
     const since = hours === null ? 'a megfigyelt ablakban egyaltalan nem' : `${hours} oraja nem`
