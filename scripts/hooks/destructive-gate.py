@@ -160,7 +160,7 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
-INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'node', 'perl', 'ruby', 'php'}
+INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'node', 'perl', 'ruby', 'php'}
 SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
 # -p is node's print-eval and -E is perl's feature-enabled -e. They are in the
 # set only so the argument after them counts as CODE rather than prose. A flag
@@ -373,17 +373,33 @@ def _after_stdin_wrapper(words, k, spec):
     return j if j < len(words) else None
 
 
-def _cmd_runs_stdin(seg):
+def _cmd_runs_stdin(seg, loose=False):
     """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
     words, k = _cmd_word(seg)
-    return _runs_words(words, k, 0)
+    return _runs_words(words, k, 0, loose)
 
 
-def _runs_words(words, k, depth):
+def _last_operand(words):
+    """Az utolso szo, ami nem atiranyitas: `} 2>&1` -> `}`, `done > log` -> `done` (#773)."""
+    j = len(words) - 1
+    while j >= 0:
+        w = words[j][0]
+        if re.match(r'^([0-9]*[<>]|&>)', w) and not re.match(r'^([0-9]*[<>]+&?|&>>?)$', w):
+            j -= 1
+        elif j >= 1 and re.match(r'^([0-9]*[<>]+&?|&>>?)$', words[j - 1][0]):
+            j -= 2
+        else:
+            break
+    return words[j][0] if j >= 0 else ''
+
+
+def _runs_words(words, k, depth, loose=False):
     """A szavak k-adik poziciojatol allo parancs a stdin-jet programkent futtatja-e.
     Az ertelmezonek PARANCS-pozicioban kell allnia: kozvetlenul, vagy egy ismert alaku
     burkolo mogott. Egy ismeretlen parancs ARGUMENTUMA nem program (#748 review:
-    `grep -c python <<EOF`, `git commit -m "node fix" -F - <<EOF` adat)."""
+    `grep -c python <<EOF`, `git commit -m "node fix" -F - <<EOF` adat).
+    `loose`: a szavak egy stdin-t OLVASO torzsben allnak (read/mapfile/readarray), ott a
+    dinamikus -c program a torzs egy sora (#773: `while read l; do bash -c "$l"; done <<EOF`)."""
     k = _skip_prefix(words, k)
     if k >= len(words) or depth > _MAX_NEST:
         return False
@@ -397,14 +413,14 @@ def _runs_words(words, k, depth):
         if base in _STDIN_WRAPPERS:
             j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
             if j is not None:
-                return _runs_words(words, j, depth + 1)
+                return _runs_words(words, j, depth + 1, loose)
             return any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:])
         if base in _ARGV_FEEDERS:
             return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k + 1:])
         if base in _REMOTE_RUNNERS:
             for j in range(k + 1, len(words)):
                 if os.path.basename(words[j][0]) in INTERPRETERS:
-                    return _runs_words(words, j, depth + 1)
+                    return _runs_words(words, j, depth + 1, loose)
             return False
         return False
     shell = base in _SHELLS
@@ -421,7 +437,9 @@ def _runs_words(words, k, depth):
             j += 1                 # osszeirt atiranyitas (2>&1, >log): nem operandus
             continue
         if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
-            return False           # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m)
+            # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m); olvaso torzsben
+            # dinamikus programszo = a torzs egy sora
+            return bool(loose and j + 1 < len(words) and words[j + 1][1])
         if shell and re.match(r'^[-+][oO]$', x):
             j += 2                 # `-o pipefail`, `+O extglob`: a kapcsolo erteket visz
             continue
@@ -436,7 +454,7 @@ def _runs_words(words, k, depth):
 # SCRIPT_FLAGS nem jo ide: a bash -e az errexit, nem szkript (#748: `X=1 bash -e <<SH`
 # torzse program), a python3 -m modult futtat (a torzs annak a bemenete).
 _STDIN_SCRIPT_FLAGS = {
-    'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'),
+    'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'), 'dash': ('-c',), 'ksh': ('-c',),
     'python': ('-c', '-m'), 'python3': ('-c', '-m'),
     'node': ('-e', '-p', '--eval', '--print'), 'perl': ('-e', '-E'), 'ruby': ('-e',), 'php': ('-r',),
 }
@@ -452,12 +470,16 @@ _FUNC_DEF_RE = re.compile(
 _CLOSERS = {'done': ('while', 'until', 'for', 'select'), 'fi': ('if',),
             'esac': ('case',), '}': ('{',)}
 _COMPOUND_TOKEN_RE = re.compile(r'(?<![\w$-])(while|until|for|select|done|if|fi|case|esac)(?![\w-])|[{}]')
+# A torzs-szoveg OLVASSA a stdin-t (`while read l`, `f(){ read l; ...}`): a benne allo
+# dinamikus -c program (`bash -c "$l"`) a torzs egy sora (#773).
+_READS_STDIN_RE = re.compile(r'(?<![\w$-])(read|mapfile|readarray)(?![\w-])')
 
 
 def _any_runs_stdin(text):
     """Az osszetett szoveg (ciklus- vagy fuggveny-torzs) barmelyik egyszeru parancsa
     a stdin-t programkent futtatja-e. `$l` parancsnevkent dinamikus, tehat igen."""
-    return any(_cmd_runs_stdin(p) for p in _SIMPLE_SPLIT.split(text) if p.strip())
+    loose = bool(_READS_STDIN_RE.search(text))
+    return any(_cmd_runs_stdin(p, loose) for p in _SIMPLE_SPLIT.split(text) if p.strip())
 
 
 def _function_bodies(cmd):
@@ -505,7 +527,7 @@ def _simple_runs(seg, funcs, cmd=None, end=None):
     words, k = _cmd_word(seg)
     if k < len(words) and words[k][0] in funcs and _any_runs_stdin(funcs[words[k][0]]):
         return True
-    last = words[-1][0] if words else ''
+    last = _last_operand(words)
     if cmd is not None and last in _CLOSERS:
         return _any_runs_stdin(_compound_text(cmd, end, last))
     return False
@@ -596,6 +618,11 @@ def _heredoc_runs_body(cmd, h, funcs=None):
       bash <<<"$(cat <<EOF)"          -> a here-string a helyettesitest teszi stdin-ne
     es egy TULTILTAS, amit az elso kor hozott be: egy ismeretlen parancs ARGUMENTUMA
     (`grep -c python <<EOF`) nem program; az ertelmezo parancs-pozicioban kell alljon.
+    #773 (a #748 2. review maradeka, a bazison is atmentek):
+      { bash; } 2>&1 <<EOF, done 2>&1 <<EOF, fi >/dev/null <<EOF -> a zaro es a heredoc
+                                      kozti atiranyitas eltakarta a zarot
+      dash <<EOF, ksh <<EOF           -> _SHELLS ismerte, INTERPRETERS nem
+      while read l; do bash -c "$l"; done <<EOF -> a -c program a torzsbol OLVASOTT szo
     A JS iker: scripts/hooks/lib/heredoc-program.mjs (child guard, egress-kapu); a kozos
     esetfajl scripts/__tests__/heredoc-program-cases.json, mindket oldal arra van pinelve.
     """

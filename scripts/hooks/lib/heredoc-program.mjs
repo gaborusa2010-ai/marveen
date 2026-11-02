@@ -29,6 +29,15 @@
 // fix" -F - <<EOF`) was read as a program. The interpreter must stand in command
 // position: directly, or behind a wrapper whose argument shape is known (below).
 //
+// The #748 round-2 review (Marveen, 2026-11-02) left three pre-existing shapes (#773):
+//
+//   { bash; } 2>&1 <<EOF, done 2>&1 <<EOF, fi >/dev/null <<EOF   a redirect between the
+//                                   compound's closer and the heredoc hid the closer
+//   dash <<EOF, ksh <<EOF           shells the SHELLS set knew but INTERPRETERS did not
+//   while read l; do bash -c "$l"; done <<EOF   the -c program is a word READ from the body:
+//                                   where a body text reads stdin (read/mapfile/readarray),
+//                                   an interpreter whose -c program is dynamic runs it
+//
 // Both twins are pinned to ONE case file, scripts/__tests__/heredoc-program-cases.json:
 // scripts/__tests__/heredoc-program.test.py checks Python, src/__tests__/
 // heredoc-program-parity.test.ts checks this file. A change to one side fails the
@@ -42,11 +51,11 @@
 import { find as findHeredocs } from './heredoc-scan.mjs'
 
 /** Interpreters that run their stdin as a program when no script is named. */
-export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'node', 'perl', 'ruby', 'php'])
+export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'node', 'perl', 'ruby', 'php'])
 /** Flags after which the PROGRAM follows (stdin is data), per interpreter: bash -e is
  *  errexit, not a script; python3 -m runs a module whose input the body is. */
 export const STDIN_SCRIPT_FLAGS = {
-  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'],
+  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'], dash: ['-c'], ksh: ['-c'],
   python: ['-c', '-m'], python3: ['-c', '-m'],
   node: ['-e', '-p', '--eval', '--print'], perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'],
 }
@@ -108,6 +117,9 @@ const FUNC_DEF_RE = /(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*(
 const CLOSERS = { done: ['while', 'until', 'for', 'select'], fi: ['if'], esac: ['case'], '}': ['{'] }
 const COMPOUND_TOKEN_RE = /(?<![\w$-])(while|until|for|select|done|if|fi|case|esac)(?![\w-])|[{}]/g
 const HERESTRING_TAIL_RE = /<<<\s*["']?\s*$/
+// A body text that READS its stdin (`while read l; do ...`, `f(){ read l; ...}`): a
+// dynamic -c program in it (`bash -c "$l"`) is a line of the body (#773).
+const READS_STDIN_RE = /(?<![\w$-])(read|mapfile|readarray)(?![\w-])/
 
 const baseName = (w) => w.split('/').pop()
 
@@ -144,6 +156,17 @@ function afterTransparent(words, k, base) {
   return j
 }
 
+/** The last word that is not a redirect: `} 2>&1` -> `}`, `done > log` -> `done` (#773). */
+function lastOperand(words) {
+  let j = words.length - 1
+  while (j >= 0) {
+    if (REDIR_GLUED_RE.test(words[j][0]) && !REDIR_OP_RE.test(words[j][0])) j--
+    else if (j >= 1 && REDIR_OP_RE.test(words[j - 1][0])) j -= 2
+    else break
+  }
+  return j >= 0 ? words[j][0] : ''
+}
+
 /** [words, k]: the segment's words and the index of its command word (k == length: none).
  *  A `)` closing a subshell or process substitution ends the simple command
  *  (`(bash) <<EOF`, `tee >(bash) <<EOF`): the words after it are not its operands. */
@@ -169,8 +192,9 @@ function afterWrapper(words, k, spec) {
   return j < words.length ? j : -1
 }
 
-/** The consumer among `words` from command position `k` on, or ''. */
-function runsWords(words, k, depth) {
+/** The consumer among `words` from command position `k` on, or ''. `loose`: the words
+ *  stand in a body text that reads stdin, so a dynamic -c program counts as the body. */
+function runsWords(words, k, depth, loose) {
   k = skipPrefix(words, k)
   if (k >= words.length || depth > MAX_NEST) return ''
   const [w, dyn] = words[k]
@@ -180,7 +204,7 @@ function runsWords(words, k, depth) {
   if (!INTERPRETERS.has(base)) {
     if (Object.hasOwn(WRAPPERS, base)) {
       const j = afterWrapper(words, k, WRAPPERS[base])
-      if (j >= 0) return runsWords(words, j, depth + 1)
+      if (j >= 0) return runsWords(words, j, depth + 1, loose)
       const shellFlags = SHELL_FLAGS_OF[base] ?? []
       return words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
     }
@@ -190,7 +214,7 @@ function runsWords(words, k, depth) {
     }
     if (REMOTE_RUNNERS.has(base)) {
       const j = words.findIndex(([x], i) => i > k && INTERPRETERS.has(baseName(x)))
-      return j >= 0 ? runsWords(words, j, depth + 1) : ''
+      return j >= 0 ? runsWords(words, j, depth + 1, loose) : ''
     }
     return ''                         // an unknown command: its ARGUMENTS are not a program
   }
@@ -201,7 +225,9 @@ function runsWords(words, k, depth) {
     if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x)) return base
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
-    if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) return ''   // the program follows the flag
+    if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) {
+      return loose && words[j + 1]?.[1] ? base : ''   // the program follows the flag; dynamic in a reading body: the body
+    }
     if (shell && /^[-+][oO]$/.test(x)) { j++; continue }  // `-o pipefail` takes a value
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
     return ''                         // a program FILE: the body is its input
@@ -210,15 +236,16 @@ function runsWords(words, k, depth) {
 }
 
 /** Does one simple command run its STDIN as a program? Returns the consumer word or ''. */
-export function runsStdinAsProgram(seg) {
+export function runsStdinAsProgram(seg, loose = false) {
   const [words, k] = cmdWord(seg)
-  return runsWords(words, k, 0)
+  return runsWords(words, k, 0, loose)
 }
 
 function anyRunsStdin(text) {
+  const loose = READS_STDIN_RE.test(text)
   for (const p of text.split(SIMPLE_SPLIT)) {
     if (!p.trim()) continue
-    const c = runsStdinAsProgram(p)
+    const c = runsStdinAsProgram(p, loose)
     if (c) return c
   }
   return ''
@@ -263,7 +290,7 @@ function simpleRuns(seg, funcs, cmd, end) {
   if (direct) return direct
   const [words, k] = cmdWord(seg)
   if (k < words.length && Object.hasOwn(funcs, words[k][0]) && anyRunsStdin(funcs[words[k][0]])) return words[k][0]
-  const last = words.length ? words[words.length - 1][0] : ''
+  const last = lastOperand(words)
   if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) return anyRunsStdin(compoundText(cmd, end, last)) ? last : ''
   return ''
 }

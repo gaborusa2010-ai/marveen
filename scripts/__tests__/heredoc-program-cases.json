@@ -1048,6 +1048,198 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "brace_redir_bash",
+   "cmd": "{ bash; } 2>&1 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "for_done_redir_bash",
+   "cmd": "for i in 1; do bash; done 2>&1 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "if_fi_redir_bash",
+   "cmd": "if true; then bash; fi 2>/dev/null <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "until_done_bare_redir",
+   "cmd": "until false; do bash; break; done 2> /tmp/err773 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "case_esac_redir_sh",
+   "cmd": "case x in x) sh;; esac >&2 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "done_redir_tail_bash",
+   "cmd": "while read l; do $l; done <<EOF 2>&1\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "brace_redir_cat_data",
+   "cmd": "{ cat; } 2>&1 <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "done_redir_echo_data",
+   "cmd": "while read l; do echo \"$l\"; done 2>&1 <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "fi_redir_wc_data",
+   "cmd": "if true; then wc -l; fi >/dev/null <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "dash_stdin",
+   "cmd": "dash <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dash_s_stdin",
+   "cmd": "dash -s <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "ksh_stdin",
+   "cmd": "ksh <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "dash_c_data",
+   "cmd": "dash -c 'cat' <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "ksh_file_data",
+   "cmd": "ksh /tmp/no-such-773.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "while_read_bash_c",
+   "cmd": "while read l; do bash -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_r_sh_c",
+   "cmd": "while read -r l; do sh -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_sudo_bash_c",
+   "cmd": "while read l; do sudo -u x bash -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_read_bash_c",
+   "cmd": "f(){ read l; bash -c \"$l\"; }; f <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "brace_read_bash_c",
+   "cmd": "{ read -r l; bash -c \"$l\"; } <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "mapfile_bash_c",
+   "cmd": "{ mapfile -t L; bash -c \"${L[0]}\"; } <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_c_dyn_top_data",
+   "cmd": "bash -c \"$CMD\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "for_noread_bash_c_data",
+   "cmd": "for i in 1; do bash -c \"$CMD\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "while_read_bash_c_static_data",
+   "cmd": "while read l; do bash -c 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "readme_grep_data",
+   "cmd": "{ grep -c readme; bash -c \"$CMD\"; } <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }
