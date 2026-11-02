@@ -1240,6 +1240,86 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "while_read_bash_c_dd",
+   "cmd": "while read l; do bash -c -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_sh_c_dd",
+   "cmd": "while read -r l; do sh -c -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_dash_c_dd",
+   "cmd": "while read l; do dash -c -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "brace_read_bash_c_dd",
+   "cmd": "{ read -r l; bash -c -- \"$l\"; } <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_sudo_bash_c_dd",
+   "cmd": "while read l; do sudo -u x bash -c -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read_bash_ec_dd",
+   "cmd": "while read l; do bash -ec -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_c_dd_dyn_top_data",
+   "cmd": "bash -c -- \"$CMD\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "for_noread_bash_c_dd_data",
+   "cmd": "for i in 1; do bash -c -- \"$CMD\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "while_read_bash_c_dd_static_data",
+   "cmd": "while read l; do bash -c -- 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "while_read_bash_c_dd_dd_data",
+   "cmd": "while read l; do bash -c -- -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }

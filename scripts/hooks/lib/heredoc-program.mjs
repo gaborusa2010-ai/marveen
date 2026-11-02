@@ -226,7 +226,10 @@ function runsWords(words, k, depth, loose) {
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
     if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) {
-      return loose && words[j + 1]?.[1] ? base : ''   // the program follows the flag; dynamic in a reading body: the body
+      // the program follows the flag; a `--` right after it only ends the options
+      // (`bash -c -- "$l"`). Dynamic in a reading body: the body.
+      const m = words[j + 1]?.[0] === '--' && !words[j + 1][1] ? j + 2 : j + 1
+      return loose && words[m]?.[1] ? base : ''
     }
     if (shell && /^[-+][oO]$/.test(x)) { j++; continue }  // `-o pipefail` takes a value
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue

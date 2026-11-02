@@ -438,8 +438,12 @@ def _runs_words(words, k, depth, loose=False):
             continue
         if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
             # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m); olvaso torzsben
-            # dinamikus programszo = a torzs egy sora
-            return bool(loose and j + 1 < len(words) and words[j + 1][1])
+            # dinamikus programszo = a torzs egy sora. Egy `--` a kapcsolo utan csak az
+            # opciok veget jelzi (`bash -c -- "$l"`), a program az utana allo szo.
+            m = j + 1
+            if m < len(words) and words[m][0] == '--' and not words[m][1]:
+                m += 1
+            return bool(loose and m < len(words) and words[m][1])
         if shell and re.match(r'^[-+][oO]$', x):
             j += 2                 # `-o pipefail`, `+O extglob`: a kapcsolo erteket visz
             continue
