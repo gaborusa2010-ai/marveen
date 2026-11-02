@@ -1550,26 +1550,36 @@ EM_DASH = "—"
 # a kapu MEGTAGAD. Szandekosan SZUK: a nyito es zaro udvariassagi formulak, amik
 # TARTALOM NELKUL allnak egy mondat elejen vagy vegen. Ami mondat kozben, tartalmi
 # szerepben all ("ez termeszetesen nem jelenti", "a kerdes jo, de"), az NEM klise,
-# es a mintak ezt nem fogjak meg: a "Termeszetesen" es a "Certainly / Of course"
-# csak MONDATKEZDO helyzetben, vesszovel vagy felkialtojellel szamit.
+# es a mintak ezt nem fogjak meg: a "Termeszetesen", a "Certainly / Of course" es
+# a "Remek / Great question" csak MONDATKEZDO helyzetben, vesszovel vagy
+# felkialtojellel szamit; a "Jo kerdes" / "Good question" CSAK felkialtojellel,
+# mert a vesszos alak sima beszed ("Jo kerdes, hogy mikor jon a futar."), es a
+# gyoker CLAUDE.md maga is ezt a hangot keri ("Ez jo kerdes, nezzuk."). Az
+# "as an AI" csak vesszovel, "I"-vel, "language model"-lel vagy "assistant"-tal
+# folytatva ("as an AI tool for joiners" termek-szoveg); a "Remelem, ez segit" /
+# "I hope this helps" csak az "ez/this" targgyal ES mondatvegen ("Remelem, segit
+# a konyvelo eldonteni" tartalmi). Marveen review 2026-11-02, 4 pont.
 # Ekezet nelkuli alakot is fog (az ekezet-szabaly amugy is megallitana, de a
 # klise-uzenet pontosabb okot ad), kis- es nagybetut egyarant.
 # A PROZAN fut (strip_technical utan): kod-spanban idezett klise nem talalat.
-_SENTENCE_START = r"(?:^|(?<=[.!?])\s)\s*"
+# Mondatkezdo helyzet: sor eleje, mondatzaro iras jel, VAGY kettospont utan
+# ("Valasz: Termeszetesen!"), es egy felsorolasjel ("- Termeszetesen!") sem
+# rejti el (Marveen review 2026-11-02, opcionalis pont).
+_SENTENCE_START = r"(?:^|(?<=[.!?:])\s)\s*(?:[-*\u2022]\s+)?"
 AI_CLICHES = tuple(
     (label, re.compile(pattern, re.I | re.M))
     for label, pattern in (
         ("Termeszetesen!", _SENTENCE_START + r"term[eé]szetesen\s*[!,]"),
         ("Hogyne!", _SENTENCE_START + r"hogyne\s*!"),
-        ("Remek kerdes!", r"\b(?:remek|nagyszer[uű]|kiv[aá]l[oó]|j[oó]|zseni[aá]lis)\s+k[eé]rd[eé]s\b"),
+        ("Remek kerdes!", _SENTENCE_START + r"(?:(?:remek|nagyszer[uű]|kiv[aá]l[oó]|zseni[aá]lis)\s+k[eé]rd[eé]s\s*[!,]|j[oó]\s+k[eé]rd[eé]s\s*!)"),
         ("Szivesen segitek", r"\b(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\b"),
         ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia|mi[- ]?(?:modell|asszisztens|nyelvi\s+modell)|ai[- ]?(?:modell|asszisztens|nyelvi\s+modell))\b"),
-        ("Remelem, ez segit", r"\brem[eé]lem,?\s+(?:ez\s+)?seg[ií]t(?:ett)?\b"),
+        ("Remelem, ez segit", r"\brem[eé]lem,?\s+ez\s+seg[ií]t(?:ett)?\s*(?:[.!]|$)"),
         ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,]"),
-        ("Great question", r"\b(?:great|excellent|good|fantastic)\s+question\b"),
+        ("Great question", _SENTENCE_START + r"(?:(?:great|excellent|fantastic)\s+question\s*[!,]|good\s+question\s*!)"),
         ("Happy to help", r"\b(?:i(?:'d|\s+would)\s+be\s+|i'm\s+|i\s+am\s+)?(?:happy|glad)\s+to\s+help\b"),
-        ("As an AI", r"\bas\s+an?\s+ai(?:\s+(?:language\s+)?(?:model|assistant))?\b"),
-        ("I hope this helps", r"\b(?:i\s+)?hope\s+(?:this|that)\s+helps\b"),
+        ("As an AI", r"\bas\s+an?\s+ai\b(?:\s+(?:language\s+)?(?:model|assistant)\b|\s*,|\s+i\b)"),
+        ("I hope this helps", r"\b(?:i\s+)?hope\s+(?:this|that)\s+helps\s*(?:[.!]|$)"),
     )
 )
 

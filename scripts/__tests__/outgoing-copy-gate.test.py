@@ -218,6 +218,13 @@ def main():
             "Great question (angol)": "Great question! The invoice goes out tomorrow with the details.",
             "Certainly! (angol nyitas)": "Certainly! The invoice goes out tomorrow with the details.",
             "As an AI (angol)": "As an AI language model I cannot sign it, but the invoice goes out tomorrow.",
+            # Marveen review 2026-11-02: a szukitett mintak POZITIV oldala.
+            "Jo kerdes! (mondatkezdo, felkialtojel)": "Jó kérdés! A számlát holnap küldöm át a részletekkel.",
+            "Good question! (angol, mondatkezdo)": "Good question! The invoice goes out tomorrow with the details.",
+            "As an AI, (angol, vesszovel)": "As an AI, I cannot sign it, but the invoice goes out tomorrow.",
+            "I hope this helps. (angol zaras)": "The invoice goes out tomorrow with the details. I hope this helps.",
+            "felsorolasjel utan": "A válaszok:\n- Természetesen! A számlát holnap küldöm át a részletekkel.",
+            "kettospont utan": "Válasz: Természetesen! A számlát holnap küldöm át a részletekkel.",
         }
         for name, body in cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)
@@ -240,6 +247,16 @@ def main():
             "of course mondat kozben (angol)": "It is of course possible to send the invoice tomorrow.",
             "question tartalmi szoban (angol)": "The question about the invoice is answered in the details.",
             "klise kod-spanban idezve": "A kapu ezt tiltja: `Remek kérdés!`, a számlát holnap küldöm át a részletekkel.",
+            # Marveen review 2026-11-02, 4 pont: ezek a 4315 valodi szovegben nem
+            # fordultak elo, es az elso valtozat mind a negyet megfogta.
+            "1. CLAUDE.md sajat hangja": "Ez jó kérdés, nézzük. A számlát holnap küldöm át a részletekkel.",
+            "1. jo kerdes vesszovel, mondatkezdon": "Jó kérdés, hogy mikor jön a futár. A számlát holnap küldöm át.",
+            "1. az a jo kerdes": "Az a jó kérdés, mennyibe kerül. A számlát holnap küldöm át a részletekkel.",
+            "2. as an AI tool (termek-szoveg)": "We pitch it as an AI tool for joiners, the invoice goes out tomorrow.",
+            "3. good question mondat kozben (angol)": "That's a good question for the accountant, the invoice goes out tomorrow.",
+            "3. good question vesszovel, mondatkezdon": "Good question, the accountant answers it tomorrow with the invoice.",
+            "4. remelem, segit + targy": "Remélem, segít a könyvelő eldönteni. A számlát holnap küldöm át a részletekkel.",
+            "4. hope this helps + folytatas (angol)": "I hope this helps the accountant decide before the invoice goes out tomorrow.",
         }
         for name, body in not_cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)
