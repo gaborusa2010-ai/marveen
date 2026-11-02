@@ -139,8 +139,9 @@ function subscriptAssignEnd(toks) {
 // twin); the shared send-invocation-cases.json binds the two copies.
 // `}` too (#729): `a+=()} python3 x.py` runs x.py.
 const CMD_POSITION_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '{', '}', '!'])
-// #729: mail / mailx / ssmtp too, see _SENDER_PROG in the python twin.
-const SENDER_PROG = /^(sendmail|msmtp|swaks|mail|mailx|ssmtp)$/i
+// #729: mail / mailx / ssmtp too, see _SENDER_PROG in the python twin. #748: mutt and
+// s-nail (Marveen: the gate is accident protection, the extra block is cheap).
+const SENDER_PROG = /^(sendmail|msmtp|swaks|mail|mailx|ssmtp|mutt|s-nail)$/i
 const SENDPY = /^send\.py$/i
 // SUBAGENTMAILGATE1016: a version-suffixed interpreter (python3.12, python3.13, and
 // the free-threaded python3.13t) is the same python; the old /^python3?$/ let it

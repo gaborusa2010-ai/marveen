@@ -132,7 +132,7 @@ def _subscript_assign_end(toks) -> int:
 # `a+=()} python3 x.py` ran x.py while the segment's program read `}`.
 _CMD_POSITION_KEYWORDS = frozenset(("if", "then", "else", "elif", "do", "while", "until", "{", "}", "!"))
 # #729 (#725 review 3): mail / mailx / ssmtp send the same way (`mail -s s b@y < body`).
-_SENDER_PROG = re.compile(r"^(sendmail|msmtp|swaks|mail|mailx|ssmtp)$", re.I)
+_SENDER_PROG = re.compile(r"^(sendmail|msmtp|swaks|mail|mailx|ssmtp|mutt|s-nail)$", re.I)
 _SENDPY = re.compile(r"^send\.py$", re.I)
 # SUBAGENTMAILGATE1016: a version-suffixed interpreter (python3.12, python3.13t) is the same python.
 _PYTHON = re.compile(r"^python(3(\.\d+t?)?)?$", re.I)

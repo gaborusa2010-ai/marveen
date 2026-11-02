@@ -2779,6 +2779,41 @@
       "cmd": "]\n <<<\r python3 plain.py",
       "cwd": "src/__tests__/fixtures/send-gate",
       "expected": false
+    },
+    {
+      "name": "#748: mutt is a sender program",
+      "cmd": "mutt -s subj b@y < /tmp/body.txt",
+      "expected": true
+    },
+    {
+      "name": "#748: mutt with attachment",
+      "cmd": "echo body | mutt -s 'report' -a /tmp/r.pdf -- b@y",
+      "expected": true
+    },
+    {
+      "name": "#748: s-nail is a sender program",
+      "cmd": "s-nail -s subj b@y < /tmp/body.txt",
+      "expected": true
+    },
+    {
+      "name": "#748: s-nail via pipe",
+      "cmd": "printf 'hi\\n' | s-nail -s hi b@y",
+      "expected": true
+    },
+    {
+      "name": "#748: the word mutt in an echo is not a send",
+      "cmd": "echo 'mutt is not installed here'",
+      "expected": false
+    },
+    {
+      "name": "#748: a file named like s-nail is not a send",
+      "cmd": "cat docs/s-nail-notes.md",
+      "expected": false
+    },
+    {
+      "name": "#748: grep for mutt in a config is not a send",
+      "cmd": "grep -n mutt ~/.muttrc",
+      "expected": false
     }
   ]
 }

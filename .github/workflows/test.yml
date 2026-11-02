@@ -61,6 +61,10 @@ jobs:
       # #729: the Python heredoc scanner (destructive gate) against the case file
       # its JS twin is pinned to in vitest (heredoc-scan-parity.test.ts).
       - run: python3 scripts/__tests__/heredoc-scan.test.py
+      # #748: the destructive gate's own contract tests (heredoc reading, wrappers, rm/git rules)
+      # and the heredoc-program twin (Python side; JS side is heredoc-program-parity.test.ts).
+      - run: python3 scripts/__tests__/destructive-gate.test.py
+      - run: python3 scripts/__tests__/heredoc-program.test.py
       # DASHAUDITZAJ915: the dash audit's classifier is a gate instrument too --
       # same rot argument as the line above.
       - run: python3 scripts/__tests__/dash-audit-scan.test.py

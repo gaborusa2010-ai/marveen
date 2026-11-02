@@ -56,6 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs } from './lib/heredoc-scan.mjs'
+import { heredocRunsBody, functionBodies } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -220,44 +221,22 @@ function tokenlessStateDir({ values, unknown }) {
 // from stdin (`bash <<SH`, `cat <<SH | sh`), and the $( ) / backticks of an
 // unquoted-tag body. When the scan is not certain nothing is removed, so the
 // guard sees more, never less (over-blocking here is the safe side).
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
-const PREFIXES = new Set([...WRAPPERS, 'sudo', 'env', 'nice', 'setsid', 'stdbuf', 'ionice', 'timeout', 'gtimeout'])
-
-function runsStdinAsProgram(text) {
-  const t = tokens(text)
-  let i = 0
-  // Prefixes, their flags and numeric arguments (`timeout 30`, `nice -n 5`).
-  while (i < t.length && (ASSIGNMENT.test(t[i]) || PREFIXES.has(t[i]) || t[i].startsWith('-')
-    || /^\d+(\.\d+)?[smhd]?$/.test(t[i]))) i++
-  if (i >= t.length || !SHELLS.has(t[i].split('/').pop())) return false
-  for (let k = i + 1; k < t.length; k++) {
-    const w = t[k]
-    if (/^[0-9]*[<>]+&?$/.test(w)) { k++; continue }     // a bare redirect takes the next word
-    if (/^[0-9]*[<>]/.test(w)) continue
-    if (w === '-') return true
-    if (w === '-c' || /^-[A-Za-z]*c[A-Za-z]*$/.test(w)) return false
-    if (/^[-+][oO]$/.test(w)) { k++; continue }         // `-o pipefail` takes a value
-    if (w.startsWith('-') || w.startsWith('+')) continue
-    return false                                         // a script file: the body is its input
-  }
-  return true
-}
-
-function bodyIsProgram(command, h) {
-  const lineStart = command.lastIndexOf('\n', h.start - 1) + 1
-  const head = command.slice(lineStart, h.start).split(/\|\||&&|[;|&(]/).pop()
-  const pipe = command.slice(h.tailStart, h.lineEnd).split(/\|\||&&|[;&]/)[0].split('|')
-  return runsStdinAsProgram(head + ' ' + pipe[0]) || pipe.slice(1).some(runsStdinAsProgram)
-}
-
+//
+// #748: WHICH body the shell runs is answered by lib/heredoc-program.mjs, the
+// twin of the destructive gate's Python reading, so the two cannot drift: the
+// guard's own copy missed the line continuation, backtick and $( ) splits, the
+// `sudo -u x bash`, `if ..; then bash`, `! bash`, `bash -s -- a` heads, and the
+// shapes the #729 review found open on every gate (bash 0<<SH, eval "$(cat
+// <<EOF)", . <(cat <<SH), a while-read loop, a function holding a shell).
 function stripHeredocBodies(command) {
   if (!command.includes('<<')) return command
   const { heredocs, certain } = findHeredocs(command)
   if (!certain) return command
+  const funcs = functionBodies(command)
   let out = ''
   let pos = 0
   for (const h of heredocs) {
-    if (bodyIsProgram(command, h)) continue
+    if (heredocRunsBody(command, h, funcs)) continue
     const body = command.slice(h.bodyStart, h.bodyEnd)
     out += command.slice(pos, h.bodyStart)
     // An unquoted tag: the shell runs $( ) and backticks in the body. Quote
@@ -269,12 +248,55 @@ function stripHeredocBodies(command) {
   return out + command.slice(pos)
 }
 
-export function stripInertText(command) {
-  const mask = (s) => s.replace(/\s/g, Q_SPACE).replace(/[;|&()`]/g, Q_SEP)
-  let out = stripHeredocBodies(command)
-  out = out.replace(/'[^']*'/g, (m) => mask(m))
-  out = out.replace(/"(?:\\.|[^"\\])*"/g, (m) => mask(m))
+// Quoted text, masked so it can neither split a segment nor start a command.
+// #748: a `$( )` or backtick INSIDE double quotes is command context again (the
+// shell runs it), so the walker stops masking at `$(` and resumes at the matching
+// `)`: `eval "$(cat <<EOF ... claude -p x ... EOF )"` keeps its body visible. The
+// regex this replaces masked the whole quoted span, which was the stated gap
+// ("a $(claude ...) inside double quotes is not seen").
+function maskQuotedText(s) {
+  const maskChar = (ch) => (/\s/.test(ch) ? Q_SPACE : /[;|&()`]/.test(ch) ? Q_SEP : ch)
+  let out = ''
+  let q = null
+  const stack = []          // [closer, outer paren depth] per open substitution
+  let depth = 0
+  for (let i = 0; i < s.length;) {
+    const ch = s[i]
+    if (ch === '\\' && q !== "'" && i + 1 < s.length) {
+      out += q ? maskChar(ch) + maskChar(s[i + 1]) : ch + s[i + 1]
+      i += 2
+      continue
+    }
+    if (q === '"' && (ch === '`' || s.startsWith('$(', i))) {
+      const step = ch === '`' ? 1 : 2
+      stack.push([ch === '`' ? '`' : ')', depth])
+      depth = 0
+      out += s.slice(i, i + step)
+      i += step
+      q = null
+      continue
+    }
+    if (q === null && stack.length) {
+      const closer = stack[stack.length - 1][0]
+      if (closer === ')' && ch === '(') depth++
+      else if (ch === closer && (closer === '`' || depth === 0)) {
+        depth = stack.pop()[1]
+        out += ch
+        i++
+        q = '"'
+        continue
+      } else if (closer === ')' && ch === ')') depth--
+    }
+    if (q === null && (ch === "'" || ch === '"')) { q = ch; out += ch; i++; continue }
+    if (q === ch) { q = null; out += ch; i++; continue }
+    out += q ? maskChar(ch) : ch
+    i++
+  }
   return out
+}
+
+export function stripInertText(command) {
+  return maskQuotedText(stripHeredocBodies(command))
 }
 
 function startsNoServer(args) {

@@ -277,6 +277,63 @@ describe('child-claude guard: heredoc reading (#729)', () => {
   })
 })
 
+// #748 (the #729 review's remainder, Marveen comment 3284): the guard's own
+// bodyIsProgram missed the shapes below, and the base let every one of them
+// through while bash ran the body. The reading now comes from the shared twin
+// lib/heredoc-program.mjs (case file scripts/__tests__/heredoc-program-cases.json,
+// every must-run row checked against bash). The allow rows are the same shapes
+// with a data body: the base let them through too, and so must this.
+describe('child-claude guard: a heredoc body the shell RUNS (#748)', () => {
+  it.each([
+    ['bash 0<<SH\nclaude -p x\nSH'],
+    ['bash 2>&1 <<SH\nclaude -p x\nSH'],
+    ['bash &>/dev/null <<SH\nclaude -p x\nSH'],
+    ['bash /dev/fd/3 3<<SH\nclaude -p x\nSH'],
+    ['eval "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['builtin eval "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['eval "`cat <<EOF\nclaude -p x\nEOF\n`"'],
+    ['. <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['source <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['bash <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['while read l; do $l; done <<EOF\nclaude -p x\nEOF'],
+    ['while read l; do eval "$l"; done <<EOF\nclaude -p x\nEOF'],
+    ['while read l\ndo\n  $l\ndone <<EOF\nclaude -p x\nEOF'],
+    ['f(){ bash; }; f <<SH\nclaude -p x\nSH'],
+    ['function g { sh; }; g <<SH\nclaude -p x\nSH'],
+    ['h() ( bash ); h <<SH\nclaude -p x\nSH'],
+    ['f(){ bash; }; cat <<SH | f\nclaude -p x\nSH'],
+    ['bash \\\n<<SH\nclaude -p x\nSH'],
+    ['`bash <<SH\nclaude -p x\nSH\n`'],
+    ['sudo -u x bash <<SH\nclaude -p x\nSH'],
+    ['if true; then bash <<SH\nclaude -p x\nSH\nfi'],
+    ['if true; then bash; fi <<SH\nclaude -p x\nSH'],
+    ['{ bash; } <<SH\nclaude -p x\nSH'],
+    ['bash -s -- a <<SH\nclaude -p x\nSH'],
+    ['! bash <<SH\nclaude -p x\nSH'],
+    ['bash -c "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['x=$(bash <<SH\nclaude -p x\nSH\n)'],
+  ])('blocks %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['bash 0<<A 3<<B\necho a\nA\nclaude -p x\nB'],
+    ['cat 3<<B | bash\nclaude -p x\nB'],
+    ['y=$(cat <<EOF\nclaude -p x\nEOF\n)'],
+    ['echo "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['bash "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['diff <(cat <<A\nclaude -p x\nA\n) <(cat <<B\nclaude -p x\nB\n)'],
+    ['( cat > f <<EOF\nclaude -p x\nEOF\n)'],
+    ['while read l; do echo "$l"; done <<EOF\nclaude -p x\nEOF'],
+    ['f(){ cat > f; }; f <<EOF\nclaude -p x\nEOF'],
+    ["bash -ec 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ['python3 -m json.tool <<EOF\n{"a": "claude -p x"}\nEOF'],
+    ['sudo -u x cat > f <<EOF\nclaude -p x\nEOF'],
+  ])('allows %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
 describe('child-claude guard: the real hook process', () => {
   const run = (command: string, env: Record<string, string>) => spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),

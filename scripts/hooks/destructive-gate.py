@@ -185,17 +185,46 @@ def _quote_map(text):
     """Minden karakterhez: idezojelen belul van-e (0=nem, 1=aposztrof, 2=idezojel).
 
     Toleransan kezeli a parositatlan idezojelet is: nem dob hibat, csak allapotot valt.
+
+    #748: a dupla idezojelen BELULI `$(` es backtick parancs-behelyettesites: a shell ott
+    visszalep parancs-kontextusba, a zaro `)`/backtickig az idezojel, ujsor es `;` ugyanugy
+    szerkezet, mint kivul. Enelkul az `eval "$(cat <<EOF ... EOF )"` torzse egy idezett
+    szovegnek latszott, es a benne allo parancsot a szegmens-bontas sosem latta.
     """
     state = [0] * len(text)
     q = 0
+    stack = []               # (zaro, kulso zarojel-melyseg) minden nyitott behelyettesitesre
+    depth = 0                # ( ) melyseg a legbelso behelyettesitesen belul
     i = 0
-    while i < len(text):
+    n = len(text)
+    while i < n:
         ch = text[i]
-        if ch == '\\' and q != 1 and i + 1 < len(text):
+        if ch == '\\' and q != 1 and i + 1 < n:
             state[i] = q
             state[i + 1] = q
             i += 2
             continue
+        if q == 2 and (ch == '`' or text.startswith('$(', i)):
+            step = 1 if ch == '`' else 2
+            stack.append(('`' if ch == '`' else ')', depth))
+            depth = 0
+            for k in range(step):
+                state[i + k] = 0
+            i += step
+            q = 0
+            continue
+        if q == 0 and stack:
+            closer = stack[-1][0]
+            if closer == ')' and ch == '(':
+                depth += 1
+            elif ch == closer and (closer == '`' or depth == 0):
+                depth = stack.pop()[1]
+                state[i] = 0
+                i += 1
+                q = 2
+                continue
+            elif closer == ')' and ch == ')':
+                depth -= 1
         if q == 0 and ch in ("'", '"'):
             q = 1 if ch == "'" else 2
             state[i] = 0            # maga a nyito jel nincs "belul"
@@ -231,8 +260,10 @@ def _word(tok):
     return re.sub(r'["\'\\]', '', tok), bool(re.search(r'[$*?\[{`]', tok))
 
 
-def _cmd_runs_stdin(seg):
-    """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
+def _cmd_word(seg):
+    """(szavak, k): a szegmens szavai (_word alak) es a PARANCSNEV indexe, az elotte
+    allo ertekadasok, kulcsszavak, atlatszo burkolok es atiranyitasok atlepese utan.
+    k == len(szavak), ha nincs parancsnev."""
     words = [_word(t) for t in re.split(r'\s+', seg.strip()) if t]
     k = 0
     while k < len(words):
@@ -240,11 +271,17 @@ def _cmd_runs_stdin(seg):
         if (re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS
                 or os.path.basename(w) in _TRANSPARENT):
             k += 1
-        elif re.match(r'^[0-9]*[<>]', w):
+        elif re.match(r'^([0-9]*[<>]|&>)', w):
             # atiranyitas a parancsnev elott; a puszta operator a kovetkezo szot viszi
-            k += 2 if re.match(r'^[0-9]*[<>]+&?$', w) else 1
+            k += 2 if re.match(r'^([0-9]*[<>]+&?|&>>?)$', w) else 1
         else:
             break
+    return words, k
+
+
+def _cmd_runs_stdin(seg):
+    """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
+    words, k = _cmd_word(seg)
     if k >= len(words):
         return False
     w, dyn = words[k]
@@ -258,15 +295,147 @@ def _cmd_runs_stdin(seg):
         # lefuttatja a torzset. A burkolo argumentum-alakjat nem talalgatjuk: marad
         # a regi, szelesebb olvasat.
         return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k:])
-    for x, xdyn in words[k + 1:]:
+    shell = base in _SHELLS
+    flags = _STDIN_SCRIPT_FLAGS.get(base, ())
+    j = k + 1
+    while j < len(words):
+        x, xdyn = words[j]
         if xdyn or x in ('-', '-s'):
             return True
-        if x in SCRIPT_FLAGS:
-            return False
-        if x.startswith('-'):
+        if re.match(r'^([0-9]*[<>]+&?|&>>?)$', x):
+            j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
+            continue
+        if re.match(r'^([0-9]*[<>]|&>)', x):
+            j += 1                 # osszeirt atiranyitas (2>&1, >log): nem operandus
+            continue
+        if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
+            return False           # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m)
+        if shell and re.match(r'^[-+][oO]$', x):
+            j += 2                 # `-o pipefail`, `+O extglob`: a kapcsolo erteket visz
+            continue
+        if x.startswith('-') or (shell and x.startswith('+')):
+            j += 1
             continue
         return False               # egy program-FAJL: a torzs annak a bemenete
     return True
+
+
+# Melyik kapcsolo utan all a PROGRAM (es igy a stdin adat), ertelmezonkent. A kozos
+# SCRIPT_FLAGS nem jo ide: a bash -e az errexit, nem szkript (#748: `X=1 bash -e <<SH`
+# torzse program), a python3 -m modult futtat (a torzs annak a bemenete).
+_STDIN_SCRIPT_FLAGS = {
+    'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'),
+    'python': ('-c', '-m'), 'python3': ('-c', '-m'),
+    'node': ('-e', '-p', '--eval', '--print'), 'perl': ('-e', '-E'), 'ruby': ('-e',), 'php': ('-r',),
+}
+
+# Egyszeru parancsok hatarai egy osszetett parancson (ciklus-torzs, fuggveny-torzs) belul.
+# A `>&1`, `<&0`, `&>log` `&`-je atiranyitas, nem parancshatar (#748: `bash 2>&1 <<SH`).
+_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;|\n(){}`]|\$\(')
+# `nev() { ... }`, `nev() ( ... )`, `function nev { ... }`: a nev es a nyito zarojel.
+_FUNC_DEF_RE = re.compile(
+    r'(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*([{(])'
+    r'|\bfunction\s+([A-Za-z_][A-Za-z0-9_:.-]*)\s*([{(])')
+# Osszetett parancs zaroja -> a nyitoi. `done <<EOF` eseten a torzs a CIKLUSE.
+_CLOSERS = {'done': ('while', 'until', 'for', 'select'), 'fi': ('if',),
+            'esac': ('case',), '}': ('{',)}
+_COMPOUND_TOKEN_RE = re.compile(r'(?<![\w$-])(while|until|for|select|done|if|fi|case|esac)(?![\w-])|[{}]')
+
+
+def _any_runs_stdin(text):
+    """Az osszetett szoveg (ciklus- vagy fuggveny-torzs) barmelyik egyszeru parancsa
+    a stdin-t programkent futtatja-e. `$l` parancsnevkent dinamikus, tehat igen."""
+    return any(_cmd_runs_stdin(p) for p in _SIMPLE_SPLIT.split(text) if p.strip())
+
+
+def _function_bodies(cmd):
+    """{fuggvenynev: torzs-szoveg} a parancsban definialt shell-fuggvenyekre (#748:
+    `f(){ bash; }; f <<SH` -- a torzset a fuggvenyben allo bash futtatja)."""
+    out = {}
+    for m in _FUNC_DEF_RE.finditer(cmd):
+        name = m.group(1) or m.group(3)
+        opener = m.group(2) or m.group(4)
+        closer = '}' if opener == '{' else ')'
+        depth, i = 1, m.end()
+        while i < len(cmd) and depth:
+            if cmd[i] == opener:
+                depth += 1
+            elif cmd[i] == closer:
+                depth -= 1
+            i += 1
+        out[name] = cmd[m.end():i - 1 if depth == 0 else i]
+    return out
+
+
+def _compound_text(cmd, end, closer):
+    """A `closer`-rel (done/fi/esac/}) zarodo osszetett parancs szovege a nyitojatol
+    `end`-ig. Ha a nyito nem talalhato, a parancs eleje ota minden: tultilt, nem enged."""
+    openers = _CLOSERS[closer]
+    stack = []
+    start = 0
+    for m in _COMPOUND_TOKEN_RE.finditer(cmd, 0, end):
+        tok = m.group(0)
+        if tok in openers:
+            stack.append(m.start())
+        elif tok == closer:
+            start = stack.pop() if stack else 0
+    return cmd[start:end]
+
+
+def _simple_runs(seg, funcs, cmd=None, end=None):
+    """Egy egyszeru parancs (a heredoc nyitojanak feje vagy egy cso-tagja) a stdin-t
+    programkent futtatja-e: maga az ertelmezo, egy fuggveny, amelynek a torzseben
+    ilyen all, vagy egy osszetett parancs (ciklus, if, { }) zaroja, amelynek a
+    torzseben ilyen all. `cmd`/`end` csak a fejnel adott (a cso-tagnal a zaro nem
+    ertelmes)."""
+    if _cmd_runs_stdin(seg):
+        return True
+    words, k = _cmd_word(seg)
+    if k < len(words) and words[k][0] in funcs and _any_runs_stdin(funcs[words[k][0]]):
+        return True
+    last = words[-1][0] if words else ''
+    if cmd is not None and last in _CLOSERS:
+        return _any_runs_stdin(_compound_text(cmd, end, last))
+    return False
+
+
+def _enclosing_runs(parts, funcs):
+    """A heredoc-nyito fej `$( `, backtick vagy `(` utani belso resze egy helyettesites:
+    a KULSO parancs donti el, hogy a kimenete program lesz-e (#748):
+      eval "$(cat <<EOF ...)"      -> program     builtin eval "$(cat <<EOF)" -> program
+      . <(cat <<SH ...)            -> program     bash <(cat <<SH ...)        -> program
+      bash -c "$(cat <<EOF ...)"   -> program     x=$(cat <<EOF ...)          -> adat
+      echo "$(cat <<EOF ...)"      -> adat        diff <(cat <<A) <(cat <<B)  -> adat
+    `parts` a fej, a re.split megtartott elvalasztoival: [szoveg, elvalaszto, szoveg, ...]."""
+    i = len(parts) - 1
+    depth = 0
+    while i >= 2 and depth < _MAX_NEST:
+        sep, outer = parts[i - 1], parts[i - 2]
+        if sep not in ('$(', '`', '('):
+            return False
+        procsub = sep == '(' and outer.rstrip()[-1:] in ('<', '>')
+        if sep == '(' and not procsub:
+            return False           # alhej: `( cat <<EOF )` -- a torzs a cat-e
+        outer = outer.rstrip()[:-1] if procsub else outer
+        words, k = _cmd_word(outer)
+        if k < len(words):
+            w, dyn = words[k]
+            base = os.path.basename(w)
+            if dyn or base in ('source', '.', 'eval'):
+                return True
+            if base in funcs and _any_runs_stdin(funcs[base]):
+                return True
+            flags = _STDIN_SCRIPT_FLAGS.get(base, ())
+            if base in INTERPRETERS and (procsub or any(x in flags for x, _ in words[k + 1:])):
+                return True
+            if base in INTERPRETERS and not procsub:
+                # `bash "$(cat <<EOF)"`: az elso operandus a helyettesites maga,
+                # a shell program-FAJLKENT nyitna meg -- nem a torzs fut. Ha viszont
+                # NINCS mas operandus es a helyettesites a `-c` erteke, fent mar igen.
+                return False
+        i -= 2
+        depth += 1
+    return False
 
 
 # Ennel hosszabb nyito sort a _heredoc_runs_body nem bont szavakra: 4000 heredoc egy
@@ -274,7 +443,7 @@ def _cmd_runs_stdin(seg):
 _HEREDOC_LINE_CAP = 4096
 
 
-def _heredoc_runs_body(cmd, h):
+def _heredoc_runs_body(cmd, h, funcs=None):
     """A torzs PROGRAM lesz, vagy egy program BEMENETE?
 
     A kulonbseg nem az, hogy szerepel-e ertelmezo-nev a soron, hanem az, hogy az
@@ -294,18 +463,43 @@ def _heredoc_runs_body(cmd, h):
 
     #729: a parancs a `<<` UTAN is allhat (`<<'X' python3`), es a torzs egy csovon at
     is ertelmezohoz juthat (`cat <<X | python3`). A sorfolytatas (visszaperjel + ujsor) egy sor.
+
+    #748 (a #729 review maradeka, a bazison is atmentek, bash lefuttatja oket):
+      bash 0<<SH                      -> a 0 a fajlleiro, nem szkriptnev
+      eval "$(cat <<EOF)" / . <(cat <<SH) / bash <(cat <<SH) -> a KULSO parancs futtatja
+      while read l; do $l; done <<EOF -> a ciklus torzseben dinamikus parancs
+      f(){ bash; }; f <<SH            -> a fuggveny torzseben shell
+    A JS iker: scripts/hooks/lib/heredoc-program.mjs (child guard, egress-kapu); a kozos
+    esetfajl scripts/__tests__/heredoc-program-cases.json, mindket oldal arra van pinelve.
     """
     ls = cmd.rfind('\n', 0, h.start)
     while ls > 0 and cmd[ls - 1] == '\\':
         ls = cmd.rfind('\n', 0, ls - 1)
     if h.start - ls > _HEREDOC_LINE_CAP or h.line_end - h.tail_start > _HEREDOC_LINE_CAP:
         return True                # nem olvassuk vegig: kodkent marad (tultiltas, nem res)
+    if funcs is None:
+        funcs = _function_bodies(cmd)
     head = cmd[ls + 1:h.start].replace('\\\n', '')
-    head = re.split(r'\|\||&&|[;|&(`]|\$\(', head)[-1]
-    tail = re.split(r'\|\||&&|[;&]', cmd[h.tail_start:h.line_end])[0]
+    fd = re.search(r'(?:(?<=\s)|^)([0-9]+)$', head)   # `bash 0<<SH`: fajlleiro, nem szkript
+    if fd:
+        head = head[:fd.start()]
+        if fd.group(1).lstrip('0'):
+            # `bash 0<<A 3<<B`: a 3-as leiron a torzs nem a stdin, ADAT, kiveve ha a sor a
+            # leirot fajlkent olvassa (`bash /dev/fd/3 3<<SH`): akkor az a program.
+            n = fd.group(1).lstrip('0')
+            line = head + cmd[h.tail_start:h.line_end]
+            if not re.search(r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n, line):
+                return False
+            words, k = _cmd_word(head)
+            return k < len(words)
+    parts = re.split(r'(\|\||&&|(?<![<>])&(?!>)|[;|(`]|\$\()', head)
+    tail = re.split(r'\|\||&&|[;]|(?<![<>])&(?!>)', cmd[h.tail_start:h.line_end])[0]
     pipe = tail.split('|')
-    return (_cmd_runs_stdin(head + ' ' + pipe[0])
-            or any(_cmd_runs_stdin(p) for p in pipe[1:]))
+    if _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start):
+        return True
+    if any(_simple_runs(p, funcs) for p in pipe[1:]):
+        return True
+    return _enclosing_runs(parts, funcs)
 
 
 def _heredoc_split(cmd):
@@ -325,11 +519,12 @@ def _heredoc_split(cmd):
         sys.path.insert(0, here)
     import heredoc_scan
     heredocs, certain = heredoc_scan.find(cmd)
+    funcs = _function_bodies(cmd) if heredocs else {}
     data, code, plain = [], [], []
     for h in heredocs:
         rng = (h.body_start, h.body_end)
         body = cmd[h.body_start:h.body_end]
-        if _heredoc_runs_body(cmd, h):
+        if _heredoc_runs_body(cmd, h, funcs):
             code.append(rng)
         elif not certain or (not h.quoted and ('$(' in body or chr(96) in body)):
             plain.append(rng)
@@ -494,7 +689,7 @@ def _tokens(seg):
 _KEYWORDS = ('if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
              'case', 'esac', 'in', 'select', 'function', 'coproc',
              '!', '{', '}', '(', ')', '[[', ']]')
-_TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env')
+_TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')

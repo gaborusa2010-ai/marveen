@@ -731,6 +731,61 @@ check("lezart heredoc $( )-ben", not blocks("x=$(cat <<'EOF'" + PAY + "EOF\n)\ne
 check("<<< nem heredoc, a kovetkezo sor ls", not blocks("cat <<< 'x'\nls"))
 
 
+# --- 9. heredoc-torzs mint PROGRAM: a #729 review maradeka (#748) -------------------
+# A bazison (e90f4af4) mindegyik MUST-BLOCK sor atment, es a bash lefuttatta a torzset
+# (orakulum: scripts/__tests__/heredoc-program-cases.json, bash_runs). A negativ kontroll
+# ugyanaz az alak adat-torzzsel: a bazison is atment, es itt is at kell mennie.
+print()
+print("#748 heredoc-torzs mint program, MUST-BLOCK:")
+SHPAY = PAY + "SH"
+check("bash 0<<SH: a 0 fajlleiro", blocks("bash 0<<SH" + SHPAY))
+check("bash 2>&1 <<SH", blocks("bash 2>&1 <<SH" + SHPAY))
+check("bash &>/dev/null <<SH", blocks("bash &>/dev/null <<SH" + SHPAY))
+check("bash /dev/fd/3 3<<SH: a leiro a szkript", blocks("bash /dev/fd/3 3<<SH" + SHPAY))
+check('eval "$(cat <<EOF)"', blocks('eval "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('builtin eval "$(cat <<EOF)"', blocks('builtin eval "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('eval "`cat <<EOF`"', blocks('eval "`cat <<EOF' + PAY + 'EOF\n`"'))
+check(". <(cat <<SH)", blocks(". <(cat <<SH" + SHPAY + "\n)"))
+check("source <(cat <<SH)", blocks("source <(cat <<SH" + SHPAY + "\n)"))
+check("bash <(cat <<SH)", blocks("bash <(cat <<SH" + SHPAY + "\n)"))
+check("while read l; do $l; done <<EOF", blocks("while read l; do $l; done <<EOF" + PAY + "EOF"))
+check('while read l; do eval "$l"; done <<EOF', blocks('while read l; do eval "$l"; done <<EOF' + PAY + "EOF"))
+check("tobbsoros while ... done <<EOF", blocks("while read l\ndo\n  $l\ndone <<EOF" + PAY + "EOF"))
+check("f(){ bash; }; f <<SH", blocks("f(){ bash; }; f <<SH" + SHPAY))
+check("function g { sh; }; g <<SH", blocks("function g { sh; }; g <<SH" + SHPAY))
+check("h() ( bash ); h <<SH", blocks("h() ( bash ); h <<SH" + SHPAY))
+check("f(){ bash; }; cat <<SH | f", blocks("f(){ bash; }; cat <<SH | f" + SHPAY))
+check("bash \\<ujsor><<SH", blocks("bash \\\n<<SH" + SHPAY))
+check("`bash <<SH`", blocks("`bash <<SH" + SHPAY + "\n`"))
+check("sudo -u x bash <<SH", blocks("sudo -u x bash <<SH" + SHPAY))
+check("if true; then bash <<SH", blocks("if true; then bash <<SH" + SHPAY + "\nfi"))
+check("if true; then bash; fi <<SH", blocks("if true; then bash; fi <<SH" + SHPAY))
+check("{ bash; } <<SH", blocks("{ bash; } <<SH" + SHPAY))
+check("bash -s -- a <<SH", blocks("bash -s -- a <<SH" + SHPAY))
+check("! bash <<SH", blocks("! bash <<SH" + SHPAY))
+check("V=1 bash -e <<SH: a -e errexit, nem szkript", blocks("V=1 bash -e <<SH" + SHPAY))
+check("bash -o pipefail <<SH", blocks("bash -o pipefail <<SH" + SHPAY))
+check('bash -c "$(cat <<EOF)"', blocks('bash -c "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("x=$(bash <<SH ... )", blocks("x=$(bash <<SH" + SHPAY + "\n)"))
+
+print()
+print("#748 heredoc-torzs mint program, negativ kontroll (adat marad adat):")
+check("bash 0<<A 3<<B: a 3-as leiro adat", not blocks("bash 0<<A 3<<B\necho a\nA" + PAY + "B"))
+check("cat 3<<B | bash: a 3-as leiro nem a cso", not blocks("cat 3<<B | bash" + PAY + "B"))
+check("y=$(cat <<EOF)", not blocks("y=$(cat <<EOF" + PAY + "EOF\n)"))
+check('echo "$(cat <<EOF)"', not blocks('echo "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('bash "$(cat <<EOF)": a kimenet egy szkript NEVE', not blocks('bash "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("diff <(cat <<A) <(cat <<B)", not blocks("diff <(cat <<A" + PAY + "A\n) <(cat <<B" + PAY + "B\n)"))
+check("( cat <<EOF ): alhej, a cat-e", not blocks("( cat > /tmp/f <<EOF" + PAY + "EOF\n)"))
+check('while read l; do echo "$l"; done <<EOF', not blocks('while read l; do echo "$l"; done <<EOF' + PAY + "EOF"))
+check("f(){ cat > /tmp/f; }; f <<EOF", not blocks("f(){ cat > /tmp/f; }; f <<EOF" + PAY + "EOF"))
+check("bash -c 'echo hi' <<EOF", not blocks("bash -c 'echo hi' <<EOF" + PAY + "EOF"))
+check("bash -ec 'echo hi' <<EOF", not blocks("bash -ec 'echo hi' <<EOF" + PAY + "EOF"))
+check("python3 -m json.tool <<EOF", not blocks("python3 -m json.tool <<EOF" + PAY + "EOF"))
+check("env cat > /tmp/f <<EOF", not blocks("env cat > /tmp/f <<EOF" + PAY + "EOF"))
+check("timeout 30 tee /tmp/f <<EOF", not blocks("timeout 30 tee /tmp/f <<EOF" + PAY + "EOF"))
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

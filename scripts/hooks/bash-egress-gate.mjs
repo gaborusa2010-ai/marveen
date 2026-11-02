@@ -50,7 +50,8 @@ import { readFileSync, appendFileSync, mkdirSync, realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
-import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, extractHeredocBodies, verbIndex } from './lib/shell-command.mjs'
+import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, verbIndex } from './lib/shell-command.mjs'
+import { programHeredocs, dataBodySubstitutions } from './lib/heredoc-program.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
@@ -105,6 +106,10 @@ const NET_URL_RE = /^(https?|ftps?|rtmps?|rtsp|srt|tcp|udp|ws|wss):\/\/[^\s'"`]+
 const INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'sh', 'bash', 'zsh'])
 // The subset whose inline program IS a shell command line.
 const SHELLS = new Set(['sh', 'bash', 'zsh'])
+// A heredoc body run by one of these is read as CODE (CODE_FETCHER_RE); any other
+// consumer (a shell, eval, source, a loop, a function, a dynamic name) runs it as a
+// shell command line, so it gets the shell reading below.
+const CODE_INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'php'])
 const INLINE_CODE_FLAGS = new Set(['-c', '-e'])
 
 // Wrappers to step over when looking for the real verb.
@@ -218,7 +223,37 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
   // shared VALUE_FLAGS table (it is curl's referer flag), so `node -e "<program>"`
   // used to arrive here as a bare `node` -- program eaten, fetch invisible. The
   // skill gate already read raw segments for exactly this reason; this one did not.
-  const heredocBodies = extractHeredocBodies(cmd)
+  // #748: WHICH heredoc bodies the shell runs is decided once, for the whole
+  // command, by the twin shared with the destructive gate and the child guard
+  // (lib/heredoc-program.mjs). The consumer need not be the segment holding the
+  // `<<`: a pipe member (`cat <<SH | bash`), an outer eval (`eval "$(cat
+  // <<EOF)"`), a sourced process substitution, a while-read loop or a function
+  // all run the body, and the per-segment reading here missed every one of
+  // them (Marveen's #729 review, comment 3284). A body run by a shell is judged
+  // as a command line of its own, exactly like `sh -c "..."`; one run by
+  // python/node/... by CODE_FETCHER_RE on its text, as before.
+  for (const { body, consumer } of programHeredocs(cmd)) {
+    if (!body) continue
+    if (!CODE_INTERPRETERS.has(consumer)) {
+      if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
+      const inner = bashEgressDecision(body, runtimeList, depth + 1)
+      if (inner.blocked) return inner
+      if (inner.tier === 'allowed') continue
+    }
+    if (!CODE_FETCHER_RE.test(body)) continue
+    sawFetcher = true
+    for (const m of body.match(URL_ANYWHERE_RE) ?? []) targets.push(m)
+  }
+  // A DATA body with an unquoted tag still has its `$( )` and backticks run by
+  // the shell: `cat > f <<EOF ... $(curl <host>) ... EOF` fetched with no log
+  // line (harness row unq_comsub_body, bash runs it). Each such text is a
+  // command line; the body around it stays data.
+  for (const sub of dataBodySubstitutions(cmd)) {
+    if (!sub.trim()) continue
+    if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
+    const inner = bashEgressDecision(sub, runtimeList, depth + 1)
+    if (inner.blocked) return inner
+  }
   for (const rawSeg of splitSegments(tokenizeDetailed(cmd))) {
     const seg = dropFlagValues(rawSeg)
     if (seg.length === 0) continue
@@ -253,42 +288,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
       const rawVi = rawTexts.indexOf(texts[vi])
       const rawArgs = rawVi === -1 ? rawTexts.slice(1) : rawTexts.slice(rawVi + 1)
       const codeIdx = rawArgs.findIndex((t) => INLINE_CODE_FLAGS.has(t))
-      // A heredoc feeds the program on STDIN: no inline flag exists, and the body
-      // was stripped before tokenising. Without this the whole segment was skipped.
-      const inlineProgram = codeIdx === -1 ? '' : rawArgs.slice(codeIdx + 1).join(' ')
-      // Only the heredocs THIS segment owns. Attaching every body in the command
-      // to every interpreter was too wide, and it showed up immediately: a
-      // `cat > file.py <<'X' ... X` followed by `python3 file.py` had the cat's
-      // body judged as the python's program. The marker token (`<<X`) stays in
-      // the owning segment after the body is stripped, so ownership is readable.
-      // The tokeniser has already removed the tag's quotes and backslashes
-      // (<<'END-X' -> <<END-X, <<E\OF -> <<EOF), which is the tag the scanner
-      // reports. `<< 'PY'` leaves the tag in the next token, `-<<PY` glues the
-      // operator to the dash (#729).
-      const ownMarkers = new Set()
-      rawTexts.forEach((t, k) => {
-        const at = t.indexOf('<<')
-        if (at === -1 || t.startsWith('<<<', at)) return
-        const tag = t.slice(at).replace(/^<<-?/, '')
-        ownMarkers.add(tag || (rawTexts[k + 1] ?? ''))
-      })
-      // STDINPROG901: the heredoc is the interpreter's PROGRAM only when the
-      // interpreter actually reads its program from stdin -- `bash <<EOF`,
-      // `python3 - <<PY`. With a SCRIPT FILE argument (`bash send.sh <<EOF`) the
-      // body is the script's INPUT, not code the interpreter runs. Missing that
-      // distinction blocked the fleet's own messaging idiom within a minute:
-      // `bash scripts/agent-msg.sh <to> - <<EOF ...` refused because the MESSAGE
-      // TEXT discussed a fetch. Prose about a fetch is not a fetch.
-      // A redirect token (`<<EOF`, `>out`) is not an operand -- skipping that is
-      // what tells `bash <<EOF` (stdin program) from `bash send.sh <<EOF` (input).
-      const firstOperand = rawArgs.find(
-        (t) => !t.startsWith('<') && !t.startsWith('>') && (!t.startsWith('-') || t === '-'),
-      )
-      const readsStdin = firstOperand === undefined || firstOperand === '-'
-      const ownBodies = readsStdin
-        ? heredocBodies.filter((h) => ownMarkers.has(h.marker)).map((h) => h.body)
-        : []
-      const program = [inlineProgram, ...ownBodies].filter(Boolean).join('\n')
+      // The program fed through a HEREDOC is handled above, for the whole command.
+      const program = codeIdx === -1 ? '' : rawArgs.slice(codeIdx + 1).join(' ')
       if (!program) continue
 
       // `sh -c "curl ..."` is the obvious way around a verb-scoped gate, so the
