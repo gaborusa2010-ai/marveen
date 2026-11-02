@@ -22,10 +22,25 @@ $EnvFile = Join-Path $Dir 'telegram.env'
 $ChatId = '8547011582'
 $FailTicks = 2          # 2 x 5 min: a dashboard restart (~30 s) never alerts
 
+# Logging must never stop the script: on a full C: (the 2026-11-01 case) an
+# Add-Content throw under ErrorActionPreference=Stop would kill the run before
+# the alert is sent (Margo's review, msg 16550).
 function Log($m) {
-  $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m
-  Add-Content -Path $LogFile -Value $line -Encoding UTF8
-  if ((Get-Item $LogFile).Length -gt 1MB) { Move-Item -Force $LogFile ($LogFile + '.1') }
+  try {
+    $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    if ((Get-Item $LogFile).Length -gt 1MB) { Move-Item -Force $LogFile ($LogFile + '.1') }
+  } catch { }
+}
+
+# State lives in the registry, not in a file: a full disk cannot stop it from
+# being saved, so the fail counter still climbs and the DOWN alert still fires.
+$RegKey = 'HKCU:\Software\MarveenOr'
+function Save-State($st) {
+  try {
+    if (-not (Test-Path $RegKey)) { New-Item -Path $RegKey -Force | Out-Null }
+    Set-ItemProperty -Path $RegKey -Name 'state' -Value ($st | ConvertTo-Json -Compress)
+  } catch { Log ('STATE SAVE FAILED: ' + $_.Exception.Message) }
 }
 
 function Send-Tg($text) {
@@ -44,9 +59,12 @@ function Send-Tg($text) {
 }
 
 $state = @{ fails = 0; alerted = $false; downSince = ''; diskDay = '' }
-if (Test-Path $StateFile) {
+$raw = $null
+try { $raw = (Get-ItemProperty -Path $RegKey -Name 'state' -ErrorAction Stop).state } catch { }
+if (-not $raw -and (Test-Path $StateFile)) { try { $raw = Get-Content $StateFile -Raw } catch { } }
+if ($raw) {
   try {
-    $j = Get-Content $StateFile -Raw | ConvertFrom-Json
+    $j = $raw | ConvertFrom-Json
     $state.fails = [int]$j.fails; $state.alerted = [bool]$j.alerted
     $state.downSince = [string]$j.downSince; $state.diskDay = [string]$j.diskDay
   } catch { Log 'state.json unreadable, starting fresh' }
@@ -84,7 +102,8 @@ if ($alive) {
   }
 }
 
-$freeGb = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+$freeGb = 999
+try { $freeGb = [math]::Round((Get-PSDrive C).Free / 1GB, 1) } catch { Log ('disk check failed: ' + $_.Exception.Message) }
 $today = $now.ToString('yyyy-MM-dd')
 if ($freeGb -lt $MinFreeGb -and $state.diskDay -ne $today) {
   if (Send-Tg "Marveen-or (Windows): a C: meghajton csak $freeGb GB szabad hely maradt. November 1-jen a tele C: allitotta le a WSL-t.") {
@@ -92,5 +111,5 @@ if ($freeGb -lt $MinFreeGb -and $state.diskDay -ne $today) {
   }
 }
 
-$state | ConvertTo-Json -Compress | Set-Content -Path $StateFile -Encoding UTF8
+Save-State $state
 if ($DryRun) { Write-Output ("alive=$alive fails=$($state.fails) alerted=$($state.alerted) freeGb=$freeGb") }
