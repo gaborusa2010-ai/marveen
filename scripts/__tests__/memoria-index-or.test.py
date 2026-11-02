@@ -103,6 +103,19 @@ with tempfile.TemporaryDirectory() as d:
     p = payload(out)
     check("missing index -> rc 2 and HIBA payload naming the path", rc == 2 and p and "HIBA" in p["content"] and d in p["content"], (rc, out[:160]))
 
+# 6b. review fixes (marveen 22:57): invalid UTF-8 and a header-only index are HIBA
+with tempfile.TemporaryDirectory() as d:
+    open(os.path.join(d, "MEMORY.md"), "wb").write(b"# Index\n- [a](a.md) \xff\xfe\n")
+    rc, out, err = run(d, "--dry-run")
+    p = payload(out)
+    check("invalid UTF-8 index -> rc 2, HIBA payload, no traceback", rc == 2 and p and "HIBA" in p["content"] and "Traceback" not in err, (rc, out[:120], err[-160:]))
+with tempfile.TemporaryDirectory() as d:
+    open(os.path.join(d, "MEMORY.md"), "w").write("# Index\n\n<!-- fejlec -->\n   \n")
+    rc, out, err = run(d, "--dry-run")
+    p = payload(out)
+    check("header-only index (bytes, zero entries) -> rc 2, HIBA 'NINCS egyetlen bejegyzes'", rc == 2 and p and "NINCS egyetlen bejegyzes" in p["content"], (rc, out[:160]))
+    check("header-only index state is HIBA, not rendben", state(d)["level"] == "HIBA", state(d))
+
 # 7. closed port: exit 3, stderr says so, state keeps the error
 with tempfile.TemporaryDirectory() as d:
     build(d, g.TARGET_LINES + 5)
@@ -154,6 +167,26 @@ with tempfile.TemporaryDirectory() as d:
     os.remove(os.path.join(d, "MEMORY.md"))
     rc, out, err = run(d, env={"DASHBOARD_URL": f"http://127.0.0.1:{srv.server_port}"})
     check("HIBA right after a message -> still posts, rc 2", rc == 2 and "HIBA" in got.get("body", {}).get("content", ""), (rc, out[-120:], got))
+    # 13b. rendben clears the quiet week: a fresh rise posts again at once
+    got.clear()
+    build(d, 10)
+    rc, out, err = run(d, env={"DASHBOARD_URL": f"http://127.0.0.1:{srv.server_port}"})
+    check("rendben clears last_level/last_message_at", rc == 0 and "last_message_at" not in state(d), state(d))
+    build(d, g.TARGET_LINES + 5)
+    rc, out, err = run(d, env={"DASHBOARD_URL": f"http://127.0.0.1:{srv.server_port}"})
+    check("rise after rendben within the week -> POST again", got.get("body", {}).get("content", "").startswith("[MEMORIA-INDEX] FIGYELEM"), (rc, out[-120:]))
+    # 13c. --report-failure: fresh state with message_id -> silent; stale/absent state -> one HIBA message, rc 0
+    got.clear()
+    rc, out, err = run(d, "--report-failure", env={"DASHBOARD_URL": f"http://127.0.0.1:{srv.server_port}"})
+    check("--report-failure right after a posted run -> no POST, rc 0", rc == 0 and not got and "mar jelzett" in out, (rc, out[-120:], got))
+    st = state(d); st["measured_at"] -= 2 * 3600; json.dump(st, open(os.path.join(d, "state.json"), "w"))
+    rc, out, err = run(d, "--report-failure", env={"DASHBOARD_URL": f"http://127.0.0.1:{srv.server_port}"})
+    check("--report-failure with a stale state -> HIBA 'elhalt' POST, rc 0", rc == 0 and "elhalt" in got.get("body", {}).get("content", ""), (rc, out[-120:], got))
+    os.remove(os.path.join(d, "state.json"))
+    rc, out, err = run(d, "--report-failure", "--dry-run")
+    check("--report-failure without state -> payload says no state written", rc == 0 and "nem irt state-et" in (payload(out) or {}).get("content", ""), out[:200])
+    rc, out, err = run(d, "--report-failure", env={"DASHBOARD_URL": "http://127.0.0.1:9"})
+    check("--report-failure on a closed port -> stderr, still rc 0 (no loop)", rc == 0 and "sem ment el" in err, (rc, err[-120:]))
     # 14. corrupt state file is not fatal
     open(os.path.join(d, "state.json"), "w").write("{not json")
     build(d, 10)

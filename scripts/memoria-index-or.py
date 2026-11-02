@@ -21,9 +21,14 @@ LEVELS (loaded lines / chars):
   FIGYELEM  > 160 / 20000                       -> message
   SURGOS    > 180 / 23000                       -> message
   CSONKUL   > 200 / 25000  (harness LIMIT)      -> message, the tail is ALREADY lost
-  HIBA      index missing, unreadable or empty  -> message, exit 2 (a quiet sentinel
+  HIBA      index missing, unreadable, not UTF-8,
+            empty or without a single entry     -> message, exit 2 (a quiet sentinel
                                                    on a missing file is the failure
                                                    this exists to prevent)
+
+ABSENCE: the installer wires OnFailure= to `--report-failure`, which posts one
+message when a run dies without having posted (traceback, exit 3); a HIBA run that
+already posted is recognised from the fresh state file and not repeated.
 
 REPEATS: the same level is reported once per 7 days (the index sits above target
 for days while someone decides); a HIGHER level is reported at once; HIBA every
@@ -80,7 +85,13 @@ def measure(mdir, g):
         p = g.plan(mdir)
     except OSError as e:
         return "HIBA", f"az index nem olvashato: {idx}: {e.strerror or e}", None
+    except ValueError as e:   # UnicodeDecodeError: bytes that are not UTF-8
+        return "HIBA", f"az index nem olvashato: {idx}: {e}", None
     n_l, n_c = p["lines"], p["chars"]
+    if n_l == 0 or not p["entries"]:
+        # Bytes without a single `- [` entry: a wiped or header-only index. This is
+        # the loss the sentinel exists for, not a healthy small index.
+        return "HIBA", f"az indexben NINCS egyetlen bejegyzes sem ({n_l} sor / {n_c} kar): {idx}", p
     if n_l > g.LIMIT_LINES or n_c > g.LIMIT_CHARS:
         level = "CSONKUL"
     elif n_l > URGENT_LINES or n_c > URGENT_CHARS:
@@ -124,18 +135,51 @@ def write_state(path, state):
         print(f"state nem irhato: {path}: {e}", file=sys.stderr)
 
 
+FRESH_SECONDS = 600
+
+
+def report_failure(state_path, url, token_file, sender, to, dry_run):
+    """The absence alarm. systemd runs this when the sentinel service failed (non-zero
+    exit, traceback, missing python). If the failed run itself already posted
+    (HIBA exits 2 after posting), the state file is fresh and carries message_id:
+    nothing more to say. Otherwise one message goes out. Always exit 0: a failing
+    failure-handler would only loop."""
+    prev = read_state(state_path)
+    now = int(time.time())
+    age = now - int(prev.get("measured_at") or 0)
+    if age < FRESH_SECONDS and prev.get("message_id"):
+        print(f"a bukott futas mar jelzett (id={prev['message_id']}, {age} mp-e), nincs tovabbi uzenet")
+        return 0
+    why = prev.get("post_error") or ("a futas nem irt state-et" if age >= FRESH_SECONDS else prev.get("level", "?"))
+    content = (f"[MEMORIA-INDEX] HIBA: az orszem futasa elhalt (systemd OnFailure, {why}). "
+               f"Nezd: journalctl --user -u marveen-memoria-index-or; state: {state_path}")
+    if dry_run:
+        print(json.dumps({"from": sender, "to": to, "content": content}, ensure_ascii=False))
+        return 0
+    try:
+        mid = post(url, token_file, sender, to, content)
+        print(f"hiany-uzenet elkuldve, id={mid}")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"a hiany-uzenet sem ment el ({url}): {e}", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="print the payload, post nothing")
     ap.add_argument("--force", action="store_true", help="post even if the same level went out this week")
     ap.add_argument("--from", dest="sender", default="marveen")
     ap.add_argument("--to", default="marveen")
+    ap.add_argument("--report-failure", action="store_true",
+                    help="systemd OnFailure= hook: say that the sentinel run died, unless it already posted")
     a = ap.parse_args(argv)
     g = load_guard()
     mdir = os.environ.get("MEMORY_INDEX_DIR") or g.M
     url = os.environ.get("DASHBOARD_URL", "http://localhost:3420")
     token_file = os.environ.get("DASHBOARD_TOKEN_FILE", os.path.join(REPO, "store", ".dashboard-token"))
     state_path = os.environ.get("MEMORIA_INDEX_OR_STATE", os.path.join(REPO, "store", "memoria-index-or-state.json"))
+    if a.report_failure:
+        return report_failure(state_path, url, token_file, a.sender, a.to, a.dry_run)
 
     now = int(time.time())
     prev = read_state(state_path)
@@ -149,6 +193,9 @@ def main(argv=None):
     print(f"{level}: {text}")
     rc = 2 if level == "HIBA" else 0
     if level == "rendben":
+        # The quiet week ends here: a later rise is news again, not a repeat.
+        for k in ("last_level", "last_message_at", "last_message_id"):
+            state.pop(k, None)
         write_state(state_path, state)
         return rc
     if not a.force and already_reported(prev, level, now):

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs the memory-index sentinel (scripts/memoria-index-or.py, card #763) as a
 # systemd USER timer, the same shape as marveen-kikapcsolas-lejarat.{timer,service}.
-# Idempotent: rewrites the two unit files, reloads, enables. Run as the user that
+# Idempotent: rewrites the three unit files (timer, service, OnFailure service),
+# reloads, enables. Run as the user that
 # owns ~/.config/systemd/user (the main agent / the owner), not from a sub-agent.
 #
 #   bash scripts/install-memoria-index-or.sh              # install + enable --now
@@ -16,9 +17,18 @@ WRITE_ONLY=0
 [ "${1:-}" = "--write-only" ] && WRITE_ONLY=1
 
 mkdir -p "$UNIT_DIR"
+cat > "$UNIT_DIR/$NAME-fail.service" <<EOF
+[Unit]
+Description=Memory index sentinel died: post one message unless the run already did (card #763)
+
+[Service]
+Type=oneshot
+ExecStart=$PY $DIR/scripts/memoria-index-or.py --report-failure
+EOF
 cat > "$UNIT_DIR/$NAME.service" <<EOF
 [Unit]
 Description=Memory index sentinel: alert when the shared MEMORY.md nears the load limit (card #763)
+OnFailure=$NAME-fail.service
 
 [Service]
 Type=oneshot
@@ -35,7 +45,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-echo "written: $UNIT_DIR/$NAME.service, $UNIT_DIR/$NAME.timer"
+echo "written: $UNIT_DIR/$NAME.service, $UNIT_DIR/$NAME-fail.service, $UNIT_DIR/$NAME.timer"
 [ "$WRITE_ONLY" = 1 ] && exit 0
 
 systemctl --user daemon-reload
