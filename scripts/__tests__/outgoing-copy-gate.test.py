@@ -19,7 +19,7 @@ and must not behave alike: sanctioned passes SILENTLY, empty-without-flag
 passes LOUDLY.
 
 Also carries a regression pass over the checks this task must NOT touch:
-accents, em dash, double-hyphen, mixed-script (homoglyph). Drives the hook as
+accents, em dash, double-hyphen, mixed-script (homoglyph), AI cliches (#754). Drives the hook as
 a subprocess against an isolated OUTGOING_COPY_GATE_RULES file so the real
 store/outgoing-copy-gate-rules.json is never touched. Run:
   python3 scripts/__tests__/outgoing-copy-gate.test.py
@@ -203,6 +203,78 @@ def main():
         # rule and no em dash/double-hyphen/homoglyph -> passes clean.
         code, out, err = run_hook(email_payload(CLEAN_HU_OK), rules_file=active)
         check("fully clean body passes (exit 0)", code, 0)
+
+        # --- 5f. AI-klisek (#754): a CLAUDE.md "Nincs AI klise" szabalya a kapuban --
+        # Minden pozitiv test teljesen ekezetes szoveg, hogy az EGYETLEN ok a klise
+        # legyen (ezt a HIANYZO EKEZETEK hianya is biztositja).
+        cliche_bodies = {
+            "Termeszetesen! nyitas": "Természetesen! Holnap küldöm át a számlát és a részleteket.",
+            "Termeszetesen, nyitas": "Rendben. Természetesen, a számlát holnap küldöm.",
+            "Remek kerdes!": "Remek kérdés! A számlát holnap küldöm át a részletekkel.",
+            "Nagyszeru kerdes": "Nagyszerű kérdés, a számlát holnap küldöm át.",
+            "Szivesen segitek": "Szívesen segítek, a számlát holnap küldöm át a részletekkel.",
+            "Mint mesterseges intelligencia": "Mint mesterséges intelligencia, a számlát nem tudom aláírni, de holnap küldöm.",
+            "Remelem, ez segit (zaras)": "A számlát holnap küldöm át a részletekkel. Remélem, ez segít.",
+            "Great question (angol)": "Great question! The invoice goes out tomorrow with the details.",
+            "Certainly! (angol nyitas)": "Certainly! The invoice goes out tomorrow with the details.",
+            "As an AI (angol)": "As an AI language model I cannot sign it, but the invoice goes out tomorrow.",
+            # Marveen review 2026-11-02: a szukitett mintak POZITIV oldala.
+            "Jo kerdes! (mondatkezdo, felkialtojel)": "Jó kérdés! A számlát holnap küldöm át a részletekkel.",
+            "Good question! (angol, mondatkezdo)": "Good question! The invoice goes out tomorrow with the details.",
+            "As an AI, (angol, vesszovel)": "As an AI, I cannot sign it, but the invoice goes out tomorrow.",
+            "I hope this helps. (angol zaras)": "The invoice goes out tomorrow with the details. I hope this helps.",
+            "felsorolasjel utan": "A válaszok:\n- Természetesen! A számlát holnap küldöm át a részletekkel.",
+            "kettospont utan": "Válasz: Természetesen! A számlát holnap küldöm át a részletekkel.",
+            # Marveen review 2, 2026-11-02: kettospont a szo UTAN, es a zaro "happy to help".
+            "Termeszetesen: (kettospont a szo utan)": "Természetesen: holnap jön a számla a részletekkel.",
+            "- Termeszetesen: (felsorolas + kettospont)": "A válaszok:\n- Természetesen: holnap jön a számla a részletekkel.",
+            "Of course: (angol, kettospont)": "Of course: here it is, the invoice goes out tomorrow.",
+            "Happy to help! (angol zaras)": "The invoice goes out tomorrow with the details. Happy to help!",
+            "I'm happy to help, (angol nyitas)": "I'm happy to help, the invoice goes out tomorrow with the details.",
+            "Mint MI-asszisztens (kotojeles)": "Mint mesterséges intelligencia-asszisztens, a számlát nem írom alá, holnap küldöm.",
+        }
+        for name, body in cliche_bodies.items():
+            code, out, err = run_hook(email_payload(body), rules_file=active)
+            check(f"AI-klise blokkol, email: {name} (exit 2)", code, 2)
+            check_true(f"AI-klise: az ok AI-KLISE, nem mas: {name}",
+                       "AI-KLISE" in err and "HIANYZO EKEZETEK" not in err, err)
+        code, out, err = run_hook(telegram_payload(cliche_bodies["Remek kerdes!"]), rules_file=active)
+        check("AI-klise blokkol, telegram (exit 2)", code, 2)
+        check_true("AI-klise, telegram: az ok AI-KLISE", "AI-KLISE" in err, err)
+        code, out, err = run_hook({"tool_name": "mcp__plugin_discord_discord__reply",
+                                   "tool_input": {"text": cliche_bodies["Certainly! (angol nyitas)"]}},
+                                  rules_file=active)
+        check("AI-klise blokkol, discord (exit 2)", code, 2)
+        # Negativ kontroll: ugyanezek a szavak TARTALMI szerepben nem klisek.
+        not_cliche_bodies = {
+            "termeszetesen mondat kozben": "Ez természetesen nem jelenti azt, hogy a számlát holnap küldöm.",
+            "a kerdes jo, de": "A kérdés jó, de a számlát csak holnap tudom átküldeni a részletekkel.",
+            "szivesen onmagaban": "Szívesen, a számlát holnap küldöm át a részletekkel.",
+            "segit tartalmi igekent": "A számla holnap megy, ez segít a könyvelésnek a részletekkel.",
+            "of course mondat kozben (angol)": "It is of course possible to send the invoice tomorrow.",
+            "question tartalmi szoban (angol)": "The question about the invoice is answered in the details.",
+            "klise kod-spanban idezve": "A kapu ezt tiltja: `Remek kérdés!`, a számlát holnap küldöm át a részletekkel.",
+            # Marveen review 2026-11-02, 4 pont: ezek a 4315 valodi szovegben nem
+            # fordultak elo, es az elso valtozat mind a negyet megfogta.
+            "1. CLAUDE.md sajat hangja": "Ez jó kérdés, nézzük. A számlát holnap küldöm át a részletekkel.",
+            "1. jo kerdes vesszovel, mondatkezdon": "Jó kérdés, hogy mikor jön a futár. A számlát holnap küldöm át.",
+            "1. az a jo kerdes": "Az a jó kérdés, mennyibe kerül. A számlát holnap küldöm át a részletekkel.",
+            "2. as an AI tool (termek-szoveg)": "We pitch it as an AI tool for joiners, the invoice goes out tomorrow.",
+            "3. good question mondat kozben (angol)": "That's a good question for the accountant, the invoice goes out tomorrow.",
+            "3. good question vesszovel, mondatkezdon": "Good question, the accountant answers it tomorrow with the invoice.",
+            "4. remelem, segit + targy": "Remélem, segít a könyvelő eldönteni. A számlát holnap küldöm át a részletekkel.",
+            "4. hope this helps + folytatas (angol)": "I hope this helps the accountant decide before the invoice goes out tomorrow.",
+            # Marveen review 2, 2026-11-02.
+            "r2. happy to help + targy (angol)": "I'm happy to help with the move on Friday, the invoice goes out tomorrow.",
+            "r2. glad to help + targy (angol)": "Glad to help the neighbour, said Anna, the invoice goes out tomorrow.",
+            "r2. szivesen segitek + targy": "Szívesen segítek a költözésben pénteken, a számlát holnap küldöm át.",
+            "r2. mesterseges intelligencia kutato": "Mint mesterséges intelligencia kutató, a számlát holnap küldöm át a részletekkel.",
+        }
+        for name, body in not_cliche_bodies.items():
+            code, out, err = run_hook(email_payload(body), rules_file=active)
+            check(f"nem klise, atmegy: {name} (exit 0)", code, 0)
+        check("tiszta szoveg tovabbra is atmegy a klise-szaballyal (exit 0)",
+              run_hook(email_payload(CLEAN_HU_OK), rules_file=active)[0], 0)
 
         # --- 6. #1184: manage_email dispatch + telegram codeblock gate ------
         # COPYGATEMATCHER904: the multiplexed manage_email must be classified
