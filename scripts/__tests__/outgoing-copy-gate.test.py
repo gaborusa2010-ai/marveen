@@ -232,6 +232,10 @@ def main():
             "Happy to help! (angol zaras)": "The invoice goes out tomorrow with the details. Happy to help!",
             "I'm happy to help, (angol nyitas)": "I'm happy to help, the invoice goes out tomorrow with the details.",
             "Mint MI-asszisztens (kotojeles)": "Mint mesterséges intelligencia-asszisztens, a számlát nem írom alá, holnap küldöm.",
+            # #772 (Marveen review 3, 2026-11-02): a rovid AI-/MI- alak irasjellel klise marad.
+            "772. Mint AI-modell, (vesszovel)": "Mint AI-modell, a számlát nem írom alá, de holnap küldöm a részleteket.",
+            "772. Mint MI-asszisztens. (mondatvegen)": "A számlát holnap küldöm át a részletekkel. Mint MI-asszisztens.",
+            "772. Mint egy AI nyelvi modell, (egy + szokoz)": "Mint egy AI nyelvi modell, a számlát nem írom alá, holnap küldöm.",
         }
         for name, body in cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)
@@ -269,6 +273,10 @@ def main():
             "r2. glad to help + targy (angol)": "Glad to help the neighbour, said Anna, the invoice goes out tomorrow.",
             "r2. szivesen segitek + targy": "Szívesen segítek a költözésben pénteken, a számlát holnap küldöm át.",
             "r2. mesterseges intelligencia kutato": "Mint mesterséges intelligencia kutató, a számlát holnap küldöm át a részletekkel.",
+            # #772: a foglalkozas-kivetel az AI-/MI-modell alakra is all.
+            "772. AI-modell fejleszto": "Mint AI-modell fejlesztő, a számlát holnap küldöm át a részletekkel.",
+            "772. MI-asszisztens tervezo": "Mint MI-asszisztens tervező, a számlát holnap küldöm át a részletekkel.",
+            "772. mesterseges intelligencia-modell kutato": "Mint mesterséges intelligencia-modell kutató, a számlát holnap küldöm át.",
         }
         for name, body in not_cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)

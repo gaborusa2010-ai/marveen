@@ -1580,8 +1580,11 @@ AI_CLICHES = tuple(
         ("Remek kerdes!", _SENTENCE_START + r"(?:(?:remek|nagyszer[uű]|kiv[aá]l[oó]|zseni[aá]lis)\s+k[eé]rd[eé]s\s*[!,]|j[oó]\s+k[eé]rd[eé]s\s*!)"),
         ("Szivesen segitek", r"(?:\b(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\s*(?:[.!]|$)|"
          + _SENTENCE_START + r"(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\s*[,:])"),
-        ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia(?:\s*(?:[,.!]|$)|[- ]?(?:asszisztens|modell|nyelvi\s+modell)\b)"
-         r"|(?:mi|ai)[- ]?(?:modell|asszisztens|nyelvi\s+modell)\b)"),
+        # #772: az irasjel-vagy-mondatveg kovetelmeny MINDEN alakra all, az
+        # "AI-modell" / "MI-asszisztens" osszetettre is ("Mint AI-modell fejlesztő"
+        # foglalkozas, Marveen review 3, 2026-11-02).
+        ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia(?:[- ]?(?:asszisztens|modell|nyelvi\s+modell))?"
+         r"|(?:mi|ai)[- ]?(?:modell|asszisztens|nyelvi\s+modell))\s*(?:[,.!]|$)"),
         ("Remelem, ez segit", r"\brem[eé]lem,?\s+ez\s+seg[ií]t(?:ett)?\s*(?:[.!]|$)"),
         ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,:]"),
         ("Great question", _SENTENCE_START + r"(?:(?:great|excellent|fantastic)\s+question\s*[!,]|good\s+question\s*!)"),
