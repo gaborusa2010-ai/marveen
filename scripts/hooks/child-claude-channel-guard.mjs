@@ -55,6 +55,8 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { find as findHeredocs } from './lib/heredoc-scan.mjs'
+import { heredocRunsBody, functionBodies } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -206,17 +208,95 @@ function tokenlessStateDir({ values, unknown }) {
 // (a commit message, a markdown note) and quoted strings routinely MENTION
 // `claude`. Measured 2026-10-10: the first live version blocked a python heredoc
 // that documented this very guard, because a backtick inside the heredoc text
-// started a new segment. Heredoc bodies are removed. Inside quotes, whitespace
-// and separators are replaced by placeholders, so the quoted text stays one
-// token (an assignment like CLAUDE_CONFIG_DIR="$S/cfg" keeps a non-empty value)
-// but can neither split a segment nor start a command. Known gap, accepted: a
-// `$(claude ...)` inside double quotes is not seen.
-export function stripInertText(command) {
-  const mask = (s) => s.replace(/\s/g, Q_SPACE).replace(/[;|&()`]/g, Q_SEP)
-  let out = command.replace(/<<-?[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, ' ')
-  out = out.replace(/'[^']*'/g, (m) => mask(m))
-  out = out.replace(/"(?:\\.|[^"\\])*"/g, (m) => mask(m))
+// started a new segment. Heredoc bodies that are data are removed. Inside
+// quotes, whitespace and separators are replaced by placeholders, so the quoted
+// text stays one token (an assignment like CLAUDE_CONFIG_DIR="$S/cfg" keeps a
+// non-empty value) but can neither split a segment nor start a command. Known
+// gap, accepted: a `$(claude ...)` inside double quotes is not seen.
+//
+// #729: heredocs are read by lib/heredoc-scan.mjs (quote- and comment-aware),
+// not a regex: a `<<EOF` inside quotes or a comment opened a "body" that hid
+// the next command lines, and <<\EOF / <<'END-X' were not read at all. A body
+// the shell runs stays command text: one fed to a shell reading its program
+// from stdin (`bash <<SH`, `cat <<SH | sh`), and the $( ) / backticks of an
+// unquoted-tag body. When the scan is not certain nothing is removed, so the
+// guard sees more, never less (over-blocking here is the safe side).
+//
+// #748: WHICH body the shell runs is answered by lib/heredoc-program.mjs, the
+// twin of the destructive gate's Python reading, so the two cannot drift: the
+// guard's own copy missed the line continuation, backtick and $( ) splits, the
+// `sudo -u x bash`, `if ..; then bash`, `! bash`, `bash -s -- a` heads, and the
+// shapes the #729 review found open on every gate (bash 0<<SH, eval "$(cat
+// <<EOF)", . <(cat <<SH), a while-read loop, a function holding a shell).
+function stripHeredocBodies(command) {
+  if (!command.includes('<<')) return command
+  const { heredocs, certain } = findHeredocs(command)
+  if (!certain) return command
+  const funcs = functionBodies(command)
+  let out = ''
+  let pos = 0
+  for (const h of heredocs) {
+    if (heredocRunsBody(command, h, funcs)) continue
+    const body = command.slice(h.bodyStart, h.bodyEnd)
+    out += command.slice(pos, h.bodyStart)
+    // An unquoted tag: the shell runs $( ) and backticks in the body. Quote
+    // characters there are literal text, so they must not pair up with quotes
+    // elsewhere and mask a real invocation.
+    if (!h.quoted && /\$\(|`/.test(body)) out += body.replace(/['"]/g, ' ') + '\n'
+    pos = Math.min(h.end + 1, command.length)
+  }
+  return out + command.slice(pos)
+}
+
+// Quoted text, masked so it can neither split a segment nor start a command.
+// #748: a `$( )` or backtick INSIDE double quotes is command context again (the
+// shell runs it), so the walker stops masking at `$(` and resumes at the matching
+// `)`: `eval "$(cat <<EOF ... claude -p x ... EOF )"` keeps its body visible. The
+// regex this replaces masked the whole quoted span, which was the stated gap
+// ("a $(claude ...) inside double quotes is not seen").
+function maskQuotedText(s) {
+  const maskChar = (ch) => (/\s/.test(ch) ? Q_SPACE : /[;|&()`]/.test(ch) ? Q_SEP : ch)
+  let out = ''
+  let q = null
+  const stack = []          // [closer, outer paren depth] per open substitution
+  let depth = 0
+  for (let i = 0; i < s.length;) {
+    const ch = s[i]
+    if (ch === '\\' && q !== "'" && i + 1 < s.length) {
+      out += q ? maskChar(ch) + maskChar(s[i + 1]) : ch + s[i + 1]
+      i += 2
+      continue
+    }
+    if (q === '"' && (ch === '`' || s.startsWith('$(', i))) {
+      const step = ch === '`' ? 1 : 2
+      stack.push([ch === '`' ? '`' : ')', depth])
+      depth = 0
+      out += s.slice(i, i + step)
+      i += step
+      q = null
+      continue
+    }
+    if (q === null && stack.length) {
+      const closer = stack[stack.length - 1][0]
+      if (closer === ')' && ch === '(') depth++
+      else if (ch === closer && (closer === '`' || depth === 0)) {
+        depth = stack.pop()[1]
+        out += ch
+        i++
+        q = '"'
+        continue
+      } else if (closer === ')' && ch === ')') depth--
+    }
+    if (q === null && (ch === "'" || ch === '"')) { q = ch; out += ch; i++; continue }
+    if (q === ch) { q = null; out += ch; i++; continue }
+    out += q ? maskChar(ch) : ch
+    i++
+  }
   return out
+}
+
+export function stripInertText(command) {
+  return maskQuotedText(stripHeredocBodies(command))
 }
 
 function startsNoServer(args) {

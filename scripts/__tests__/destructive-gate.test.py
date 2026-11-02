@@ -535,15 +535,19 @@ check("bash sc.sh <<EOF ... EOF majd torles",
       blocks("bash sc.sh <<EOF\nadat\nEOF\n%s -rf /tmp/x" % RM))
 
 print()
-print("KIMONDOTT KORLAT -- ismeretlen burkolo mogotti ertelmezo:")
-# A `timeout 5 bash sc.sh <<EOF` alak TOVABBRA IS hamis pozitiv. Tudatos dontes:
-# a burkolok argumentum-alakja (a timeout elso argumentuma idotartam, a strace-e
-# nem) esetenkent mas, es a talalgatas ugyanaz a hibaosztaly volna, ami ezt a
-# kartyat megnyitotta. Amig a burkolo nem ismert, marad a szelesebb olvasat.
+print("KIMONDOTT KORLAT -- burkolo mogotti ertelmezo:")
+# #748 2. kor ota a burkolok argumentum-alakja TABLABOL jon (_STDIN_WRAPPERS: a timeout
+# elso operandusa idotartam, a strace-nek nincs), igy a `timeout 5 bash sc.sh <<EOF`
+# mar nem hamis pozitiv: a bash a FAJLT futtatja, a torzs annak a bemenete (bash
+# lefuttatva 2026-11-02: csak a szkript sora irodik ki). Az ISMERETLEN burkolo mogotti
+# ertelmezo viszont ADAT (Marveen review 3543, 5. pont: ertelmezo csak parancs-pozicioban
+# vagy ismert burkolo mogott szamit), ez a kimondott korlat: egy uj burkolo a tablaba valo.
 check("timeout 5 bash <<SH (helyesen blokkol)",
       blocks("timeout 5 bash <<SH\n%s -rf /tmp/x\nSH" % RM))
-check("timeout 5 bash sc.sh <<EOF -- TUDATOSAN blokkol, nem allitjuk helyesnek",
-      blocks("timeout 5 bash sc.sh <<EOF\n%s -rf /tmp/x\nEOF" % RM))
+check("timeout 5 bash sc.sh <<EOF: a torzs a szkript bemenete, adat",
+      not blocks("timeout 5 bash sc.sh <<EOF\n%s -rf /tmp/x\nEOF" % RM))
+check("ismeretlenwrap 5 bash <<SH -- KIMONDOTT KORLAT: ismeretlen burkolo mogott adat",
+      not blocks("ismeretlenwrap 5 bash <<SH\n%s -rf /tmp/x\nSH" % RM))
 
 
 # --- 12. Onvedelem: a rm-engedely nem erhet el az ELES gyokerig (be8ef9f1) ---
@@ -675,6 +679,164 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         gate.PROJECT_ROOT = _orig_root
 
+
+
+# --- 8. heredoc-olvasas: idezojel, komment, tag-alak, ertelmezo-nev (#729) ----
+# Merve a main-en (Cody msg 14663, Marveen review 2932 es a #725 reviewja): mindegyik
+# MUST-BLOCK sor atment, es a bash lefuttatta a payloadot. A negativ kontroll ugyanaz
+# az alak adat-torzzsel: az olvasas javitasa nem tilthat le dokumentaciot.
+print()
+print("#729 heredoc-olvasas, MUST-BLOCK:")
+PAY = "\n" + RM + " -rf /etc/x\n"
+PYRM = "import shutil\n" + RMTREE + '("/etc/x")\n'
+check("idezett <<EOF nem nyit torzset", blocks('echo "<<EOF"' + PAY + "EOF"))
+check("aposztrofos <<EOF nem nyit torzset", blocks("echo '<<EOF'" + PAY + "EOF"))
+check("kommentben allo <<EOF nem nyit torzset", blocks("# <<EOF" + PAY + "EOF"))
+check("sor vegi kommentben allo <<EOF", blocks("ls # <<EOF" + PAY + "EOF"))
+check("ertelmezo-torzs nem-szo taggel", blocks("python3 - <<'END-X'\n" + PYRM + "END-X"))
+check("ertelmezo-torzs visszaperjeles taggel", blocks("python3 - <<\\EOF\n" + PYRM + "EOF"))
+check("reszben idezett tag E\\OF: a zaro utani sor fut",
+      blocks("cat > /dev/null <<E\\OF\njunk\nEOF" + PAY))
+check('reszben idezett tag E"O"F: a zaro utani sor fut',
+      blocks('cat > /dev/null <<E"O"F\njunk\nEOF' + PAY))
+for name in ('"python3"', "'python3'", "\\python3", "py\\thon3", 'p""ython3', "$P", "${P}",
+             "$'python3'", "env -S'python3'", "/usr/bin/pytho?3", "{python3,}"):
+    check("ertelmezo-nev %s - <<'E'" % name, blocks(name + " - <<'E'\n" + PYRM + "E"))
+check("a parancs a heredoc utan: <<'X' python3", blocks("<<'X' python3\n" + PYRM + "X"))
+check("csovon ertelmezohoz: cat <<'X' | python3", blocks("cat <<'X' | python3\n" + PYRM + "X"))
+check("sorfolytatas: python3 \\ NL - <<'E'", blocks("python3 \\\n - <<'E'\n" + PYRM + "E"))
+check("source /dev/stdin <<'E'", blocks("source /dev/stdin <<'E'" + PAY + "E"))
+check("masodik heredoc ugyanazon a soron",
+      blocks("cat <<'A' > /tmp/f; python3 - <<'B'\nadat\nA\n" + PYRM + "B"))
+check("idezetlen adat-torzsben $( ) fut", blocks("cat > /tmp/f <<EOF\n$(" + RM + " -rf /etc/x)\nEOF"))
+check("idezetlen adat-torzsben backtick fut",
+      blocks("cat > /tmp/f <<EOF\n`" + RM + " -rf /etc/x`\nEOF"))
+check("$( )-ben lezaratlan heredoc: bash a ) utan folytat",
+      blocks("x=$(cat <<EOF\nhi\nEOF)" + PAY))
+check("eltolas a[ ]-ben nem heredoc", blocks("a[1<<EOF]=x" + PAY + "EOF"))
+check("eltolas $(( ))-ben nem heredoc", blocks("echo $((1<<2))" + PAY))
+check("tul hosszu nyito sor: a torzs kodkent marad (tultiltas)",
+      blocks("cat" + " " * 5000 + "<<'E'" + PAY + "E"))
+
+print()
+print("#729 heredoc-olvasas, negativ kontroll (adat marad adat):")
+check("adat-torzs nem-szo taggel", not blocks("cat > /tmp/f <<'END-X'" + PAY + "END-X"))
+check("adat-torzs visszaperjeles taggel", not blocks("cat > /tmp/f <<\\EOF" + PAY + "EOF"))
+check("adat-torzs reszben idezett taggel", not blocks("cat > /dev/null <<E\\OF" + PAY + "EOF"))
+check("adat-torzsben a payload, utana ls", not blocks("cat > /tmp/f <<'EOF'" + PAY + "EOF\nls"))
+check("cat - <<'E' ertelmezo-kod adatkent", not blocks("cat - <<'E'\n" + PYRM + "E"))
+check("<<'X' cat: a parancs a heredoc utan, de nem ertelmezo",
+      not blocks("<<'X' cat > /tmp/f\n" + PYRM + "X"))
+check("csovon program-fajlhoz: | python3 proc.py",
+      not blocks("cat <<'X' | python3 proc.py\n" + PYRM + "X"))
+check("idezett tag: a $( ) a torzsben szoveg", not blocks("cat > /tmp/f <<'EOF'\n$(" + RM + " -rf /etc/x)\nEOF"))
+check("ket adat-heredoc egy soron", not blocks("cat <<'A' <<'B'\na" + PAY + "A\nb" + PAY + "B"))
+check("lezart heredoc $( )-ben", not blocks("x=$(cat <<'EOF'" + PAY + "EOF\n)\necho $x"))
+check("<<< nem heredoc, a kovetkezo sor ls", not blocks("cat <<< 'x'\nls"))
+
+
+# --- 9. heredoc-torzs mint PROGRAM: a #729 review maradeka (#748) -------------------
+# A bazison (e90f4af4) mindegyik MUST-BLOCK sor atment, es a bash lefuttatta a torzset
+# (orakulum: scripts/__tests__/heredoc-program-cases.json, bash_runs). A negativ kontroll
+# ugyanaz az alak adat-torzzsel: a bazison is atment, es itt is at kell mennie.
+print()
+print("#748 heredoc-torzs mint program, MUST-BLOCK:")
+SHPAY = PAY + "SH"
+check("bash 0<<SH: a 0 fajlleiro", blocks("bash 0<<SH" + SHPAY))
+check("bash 2>&1 <<SH", blocks("bash 2>&1 <<SH" + SHPAY))
+check("bash &>/dev/null <<SH", blocks("bash &>/dev/null <<SH" + SHPAY))
+check("bash /dev/fd/3 3<<SH: a leiro a szkript", blocks("bash /dev/fd/3 3<<SH" + SHPAY))
+check('eval "$(cat <<EOF)"', blocks('eval "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('builtin eval "$(cat <<EOF)"', blocks('builtin eval "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('eval "`cat <<EOF`"', blocks('eval "`cat <<EOF' + PAY + 'EOF\n`"'))
+check(". <(cat <<SH)", blocks(". <(cat <<SH" + SHPAY + "\n)"))
+check("source <(cat <<SH)", blocks("source <(cat <<SH" + SHPAY + "\n)"))
+check("bash <(cat <<SH)", blocks("bash <(cat <<SH" + SHPAY + "\n)"))
+check("while read l; do $l; done <<EOF", blocks("while read l; do $l; done <<EOF" + PAY + "EOF"))
+check('while read l; do eval "$l"; done <<EOF', blocks('while read l; do eval "$l"; done <<EOF' + PAY + "EOF"))
+check("tobbsoros while ... done <<EOF", blocks("while read l\ndo\n  $l\ndone <<EOF" + PAY + "EOF"))
+check("f(){ bash; }; f <<SH", blocks("f(){ bash; }; f <<SH" + SHPAY))
+check("function g { sh; }; g <<SH", blocks("function g { sh; }; g <<SH" + SHPAY))
+check("h() ( bash ); h <<SH", blocks("h() ( bash ); h <<SH" + SHPAY))
+check("f(){ bash; }; cat <<SH | f", blocks("f(){ bash; }; cat <<SH | f" + SHPAY))
+check("bash \\<ujsor><<SH", blocks("bash \\\n<<SH" + SHPAY))
+check("`bash <<SH`", blocks("`bash <<SH" + SHPAY + "\n`"))
+check("sudo -u x bash <<SH", blocks("sudo -u x bash <<SH" + SHPAY))
+check("if true; then bash <<SH", blocks("if true; then bash <<SH" + SHPAY + "\nfi"))
+check("if true; then bash; fi <<SH", blocks("if true; then bash; fi <<SH" + SHPAY))
+check("{ bash; } <<SH", blocks("{ bash; } <<SH" + SHPAY))
+check("bash -s -- a <<SH", blocks("bash -s -- a <<SH" + SHPAY))
+check("! bash <<SH", blocks("! bash <<SH" + SHPAY))
+check("V=1 bash -e <<SH: a -e errexit, nem szkript", blocks("V=1 bash -e <<SH" + SHPAY))
+check("bash -o pipefail <<SH", blocks("bash -o pipefail <<SH" + SHPAY))
+check('bash -c "$(cat <<EOF)"', blocks('bash -c "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("x=$(bash <<SH ... )", blocks("x=$(bash <<SH" + SHPAY + "\n)"))
+# review 2. kor (Marveen, kartya-komment 3543): a stdin utvonalkent, alhej, here-string,
+# folyamat-helyettesites, burkolo-kapcsolok. Az orakulum mindet lefuttatta (bash_runs),
+# kiveve az ssh/docker/sudo -s sort, amit itt nem lehet futtatni (note a case-fajlban).
+check("bash /dev/stdin <<SH", blocks("bash /dev/stdin <<SH" + SHPAY))
+check("bash /dev/fd/0 <<SH", blocks("bash /dev/fd/0 <<SH" + SHPAY))
+check("bash /proc/self/fd/0 <<SH", blocks("bash /proc/self/fd/0 <<SH" + SHPAY))
+check("bash 3<<SH <&3: a 3-as leiro a stdin-re masolva", blocks("bash 3<<SH <&3" + SHPAY))
+check("(bash) <<SH", blocks("(bash) <<SH" + SHPAY))
+check("( cd /tmp && bash ) <<SH", blocks("( cd /tmp && bash ) <<SH" + SHPAY))
+check("(cat <<SH | bash)", blocks("(cat <<SH | bash)" + SHPAY))
+check('bash <<<"$(cat <<SH)": a here-string a stdin', blocks('bash <<<"$(cat <<SH' + SHPAY + '\n)"'))
+check("tee >(bash) <<SH >/dev/null", blocks("tee >(bash) <<SH >/dev/null" + SHPAY))
+check("timeout -k 1 5s bash <<SH", blocks("timeout -k 1 5s bash <<SH" + SHPAY))
+check("sudo -u x -- bash <<SH", blocks("sudo -u x -- bash <<SH" + SHPAY))
+check("sudo -s <<SH: parancs nelkul a shell olvas", blocks("sudo -s <<SH" + SHPAY))
+check("env -i bash <<SH", blocks("env -i bash <<SH" + SHPAY))
+check("env -u HOME bash <<SH", blocks("env -u HOME bash <<SH" + SHPAY))
+check("env -S'bash -' <<SH", blocks("env -S'bash -' <<SH" + SHPAY))
+check("command -p bash <<SH", blocks("command -p bash <<SH" + SHPAY))
+check("exec -a name bash <<SH", blocks("exec -a name bash <<SH" + SHPAY))
+check("ssh host bash <<SH", blocks("ssh host bash <<SH" + SHPAY))
+check("docker exec -i c bash <<SH", blocks("docker exec -i c bash <<SH" + SHPAY))
+
+print()
+print("#748 heredoc-torzs mint program, negativ kontroll (adat marad adat):")
+check("bash 0<<A 3<<B: a 3-as leiro adat", not blocks("bash 0<<A 3<<B\necho a\nA" + PAY + "B"))
+check("cat 3<<B | bash: a 3-as leiro nem a cso", not blocks("cat 3<<B | bash" + PAY + "B"))
+check("y=$(cat <<EOF)", not blocks("y=$(cat <<EOF" + PAY + "EOF\n)"))
+check('echo "$(cat <<EOF)"', not blocks('echo "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check('bash "$(cat <<EOF)": a kimenet egy szkript NEVE', not blocks('bash "$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("diff <(cat <<A) <(cat <<B)", not blocks("diff <(cat <<A" + PAY + "A\n) <(cat <<B" + PAY + "B\n)"))
+check("( cat <<EOF ): alhej, a cat-e", not blocks("( cat > /tmp/f <<EOF" + PAY + "EOF\n)"))
+check('while read l; do echo "$l"; done <<EOF', not blocks('while read l; do echo "$l"; done <<EOF' + PAY + "EOF"))
+check("f(){ cat > /tmp/f; }; f <<EOF", not blocks("f(){ cat > /tmp/f; }; f <<EOF" + PAY + "EOF"))
+check("bash -c 'echo hi' <<EOF", not blocks("bash -c 'echo hi' <<EOF" + PAY + "EOF"))
+check("bash -ec 'echo hi' <<EOF", not blocks("bash -ec 'echo hi' <<EOF" + PAY + "EOF"))
+check("python3 -m json.tool <<EOF", not blocks("python3 -m json.tool <<EOF" + PAY + "EOF"))
+check("env cat > /tmp/f <<EOF", not blocks("env cat > /tmp/f <<EOF" + PAY + "EOF"))
+check("timeout 30 tee /tmp/f <<EOF", not blocks("timeout 30 tee /tmp/f <<EOF" + PAY + "EOF"))
+# review 2. kor, 5. pont: az ertelmezo neve ARGUMENTUMKENT nem program (az 1. kor ezt blokkolta)
+check("grep -c python <<'EOF': a python egy minta", not blocks("grep -c python <<'EOF'" + PAY + "EOF"))
+check('git commit -m "node fix" -F - <<\'EOF\'', not blocks('git commit -m "node fix" -F - <<\'EOF\'' + PAY + "EOF"))
+check("cat 3<<EOF <&3", not blocks("cat 3<<EOF <&3" + PAY + "EOF"))
+check("cat /dev/fd/3 3<<SH", not blocks("cat /dev/fd/3 3<<SH" + PAY + "SH"))
+check("(cat) <<EOF", not blocks("(cat) <<EOF" + PAY + "EOF"))
+check('echo <<<"$(cat <<EOF)"', not blocks('echo <<<"$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("tee >(cat >/dev/null) <<EOF >/dev/null", not blocks("tee >(cat >/dev/null) <<EOF >/dev/null" + PAY + "EOF"))
+check("docker exec -i c bash -c 'echo hi' <<EOF", not blocks("docker exec -i c bash -c 'echo hi' <<EOF" + PAY + "EOF"))
+check("awk '{print}' <<EOF", not blocks("awk '{print}' <<EOF" + PAY + "EOF"))
+check("sort -S 1M <<EOF: a -S nem az env-e", not blocks("sort -S 1M <<EOF" + PAY + "EOF"))
+check("env -u HOME cat <<EOF", not blocks("env -u HOME cat <<EOF" + PAY + "EOF"))
+check("env -i <<EOF: parancs nelkul csak kiir", not blocks("env -i <<EOF" + PAY + "EOF"))
+
+
+def _missing_module_exit():
+    """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
+    tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")
+    with open(GATE, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+    r = subprocess.run([sys.executable, tmp],
+                       input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+                       capture_output=True, text=True)
+    return r.returncode
+
+
+check("a heredoc_scan modul hianya is exit 2 (fail-closed)", _missing_module_exit() == 2)
 
 print()
 if failed:

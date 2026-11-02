@@ -229,6 +229,146 @@ describe('child-claude guard: what it leaves alone', () => {
   })
 })
 
+// #729: heredocs are read by lib/heredoc-scan.mjs. Every must-block row was
+// checked against bash itself (a fake `claude` on PATH ran); every allow row
+// did not run it. The one deliberate exception is the unclosed heredoc: bash
+// treats the rest as body, the guard cannot be certain and keeps it visible.
+describe('child-claude guard: heredoc reading (#729)', () => {
+  it.each([
+    ['echo hi # <<EOF\nclaude -p x\nEOF'],
+    ['echo "<<EOF"\nclaude -p x'],
+    ["echo '<<EOF'\nclaude -p x"],
+    ['cat > f <<E\\OF\njunk\nEOF\nclaude -p x'],
+    ['cat > f <<E"O"F\njunk\nEOF\nclaude -p x'],
+    ['cat > f <<\\EOF\njunk\nEOF\nclaude -p x'],
+    ["cat > f <<'END-X'\njunk\nEND-X\nclaude -p x"],
+    ['cat > f <<-EOF\n\tjunk\n\tEOF\nclaude -p x'],
+    ['cat > f <<EOF; claude -p x\njunk\nEOF'],
+    ['cat > a <<A; cat > b <<B\none\nA\ntwo\nB\nclaude -p x'],
+    ['bash <<EOF\nclaude -p x\nEOF'],
+    ["bash -s <<'SH'\nclaude -p x\nSH"],
+    ['sh - <<SH\nclaude -p x\nSH'],
+    ['bash -o pipefail <<SH\nclaude -p x\nSH'],
+    ['timeout 30 bash <<SH\nclaude -p x\nSH'],
+    ['X=1 bash -e <<SH\necho a\nclaude -p x\nSH'],
+    ['bash > log <<SH\nclaude -p x\nSH'],
+    ['cat <<SH | bash\nclaude -p x\nSH'],
+    ["cat <<'SH' | sh -s\nclaude -p x\nSH"],
+    ['cat > f <<EOF\n$(claude -p x)\nEOF'],
+    ['cat > f <<EOF\nresult: `claude -p x`\nEOF'],
+    ["cat > f <<EOF\ndon't $(claude -p x)\nEOF\necho 'x'"],
+    ['cat > f <<EOF\nunclosed body\nclaude -p x'],
+  ])('blocks %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["cat > f <<'EOF'\n$(claude -p x)\nEOF"],
+    ['cat > f <<\\EOF\n`claude -p x`\nEOF'],
+    ["cat > f <<'END-X'\nclaude -p x\nEND-X"],
+    ['cat > f <<E\\OF\nclaude -p x\nEOF'],
+    ["bash scripts/agent-msg.sh cody marveen - <<'EOF'\nnever run claude -p here\nEOF"],
+    ["bash -c 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ['python3 - <<PY\n# claude -p x\nPY'],
+    ["cat > f <<EOF\ndon't run claude -p\nEOF"],
+    ["cat <<'EOF' | tee f\nclaude -p x\nEOF"],
+  ])('allows %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
+// #748 (the #729 review's remainder, Marveen comment 3284): the guard's own
+// bodyIsProgram missed the shapes below, and the base let every one of them
+// through while bash ran the body. The reading now comes from the shared twin
+// lib/heredoc-program.mjs (case file scripts/__tests__/heredoc-program-cases.json,
+// every must-run row checked against bash). The allow rows are the same shapes
+// with a data body: the base let them through too, and so must this.
+describe('child-claude guard: a heredoc body the shell RUNS (#748)', () => {
+  it.each([
+    ['bash 0<<SH\nclaude -p x\nSH'],
+    ['bash 2>&1 <<SH\nclaude -p x\nSH'],
+    ['bash &>/dev/null <<SH\nclaude -p x\nSH'],
+    ['bash /dev/fd/3 3<<SH\nclaude -p x\nSH'],
+    ['eval "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['builtin eval "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['eval "`cat <<EOF\nclaude -p x\nEOF\n`"'],
+    ['. <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['source <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['bash <(cat <<SH\nclaude -p x\nSH\n)'],
+    ['while read l; do $l; done <<EOF\nclaude -p x\nEOF'],
+    ['while read l; do eval "$l"; done <<EOF\nclaude -p x\nEOF'],
+    ['while read l\ndo\n  $l\ndone <<EOF\nclaude -p x\nEOF'],
+    ['f(){ bash; }; f <<SH\nclaude -p x\nSH'],
+    ['function g { sh; }; g <<SH\nclaude -p x\nSH'],
+    ['h() ( bash ); h <<SH\nclaude -p x\nSH'],
+    ['f(){ bash; }; cat <<SH | f\nclaude -p x\nSH'],
+    ['bash \\\n<<SH\nclaude -p x\nSH'],
+    ['`bash <<SH\nclaude -p x\nSH\n`'],
+    ['sudo -u x bash <<SH\nclaude -p x\nSH'],
+    ['if true; then bash <<SH\nclaude -p x\nSH\nfi'],
+    ['if true; then bash; fi <<SH\nclaude -p x\nSH'],
+    ['{ bash; } <<SH\nclaude -p x\nSH'],
+    ['bash -s -- a <<SH\nclaude -p x\nSH'],
+    ['! bash <<SH\nclaude -p x\nSH'],
+    ['bash -c "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['x=$(bash <<SH\nclaude -p x\nSH\n)'],
+    // review round 2 (Marveen, card comment 3543): stdin by path, subshell, here-string,
+    // process substitution, wrapper options
+    ['bash /dev/stdin <<SH\nclaude -p x\nSH'],
+    ['bash /dev/fd/0 <<SH\nclaude -p x\nSH'],
+    ['bash /proc/self/fd/0 <<SH\nclaude -p x\nSH'],
+    ['bash 3<<SH <&3\nclaude -p x\nSH'],
+    ['(bash) <<SH\nclaude -p x\nSH'],
+    ['( cd /tmp && bash ) <<SH\nclaude -p x\nSH'],
+    ['(cat <<SH | bash)\nclaude -p x\nSH'],
+    ['bash <<<"$(cat <<SH\nclaude -p x\nSH\n)"'],
+    ['tee >(bash) <<SH >/dev/null\nclaude -p x\nSH'],
+    ['timeout -k 1 5s bash <<SH\nclaude -p x\nSH'],
+    ['sudo -u x -- bash <<SH\nclaude -p x\nSH'],
+    ['sudo -s <<SH\nclaude -p x\nSH'],
+    ['env -i bash <<SH\nclaude -p x\nSH'],
+    ['env -u HOME bash <<SH\nclaude -p x\nSH'],
+    ["env -S'bash -' <<SH\nclaude -p x\nSH"],
+    ['command -p bash <<SH\nclaude -p x\nSH'],
+    ['exec -a name bash <<SH\nclaude -p x\nSH'],
+    ['ssh host bash <<SH\nclaude -p x\nSH'],
+    ['docker exec -i c bash <<SH\nclaude -p x\nSH'],
+  ])('blocks %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['bash 0<<A 3<<B\necho a\nA\nclaude -p x\nB'],
+    ['cat 3<<B | bash\nclaude -p x\nB'],
+    ['y=$(cat <<EOF\nclaude -p x\nEOF\n)'],
+    ['echo "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['bash "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['diff <(cat <<A\nclaude -p x\nA\n) <(cat <<B\nclaude -p x\nB\n)'],
+    ['( cat > f <<EOF\nclaude -p x\nEOF\n)'],
+    ['while read l; do echo "$l"; done <<EOF\nclaude -p x\nEOF'],
+    ['f(){ cat > f; }; f <<EOF\nclaude -p x\nEOF'],
+    ["bash -ec 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ['python3 -m json.tool <<EOF\n{"a": "claude -p x"}\nEOF'],
+    ['sudo -u x cat > f <<EOF\nclaude -p x\nEOF'],
+    // review round 2, point 5: an interpreter name as an ARGUMENT is not a program.
+    // Round 1 blocked these two (regression against main); the body is data.
+    ["grep -c python <<'EOF'\nclaude -p hi\nEOF"],
+    ['git commit -m "node fix" -F - <<\'EOF\'\nclaude -p hi\nEOF'],
+    ['cat 3<<EOF <&3\nclaude -p x\nEOF'],
+    ['cat /dev/fd/3 3<<SH\nclaude -p x\nSH'],
+    ['(cat) <<EOF\nclaude -p x\nEOF'],
+    ['echo <<<"$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['tee >(cat >/dev/null) <<EOF >/dev/null\nclaude -p x\nEOF'],
+    ["docker exec -i c bash -c 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ["awk '{print}' <<EOF\nclaude -p x\nEOF"],
+    ['sort -S 1M <<EOF\nclaude -p x\nEOF'],
+    ['env -u HOME cat <<EOF\nclaude -p x\nEOF'],
+    ['env -i <<EOF\nclaude -p x\nEOF'],
+  ])('allows %j', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
 describe('child-claude guard: the real hook process', () => {
   const run = (command: string, env: Record<string, string>) => spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),

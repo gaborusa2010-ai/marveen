@@ -1,0 +1,1053 @@
+{
+ "_comment": "Shared case file of the heredoc-program twins (#748): scripts/hooks/destructive-gate.py _heredoc_runs_body and scripts/hooks/lib/heredoc-program.mjs heredocRunsBody. cmd carries X where the payload goes; expect has one bool per heredoc (does the shell RUN that body?); bash_runs is what bash itself did with X=echo PWNED_MARK when the file was built. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "cases": [
+  {
+   "name": "sq_tag_data",
+   "cmd": "cat > /tmp/f <<'EOF'\nhello\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "dq_tag",
+   "cmd": "cat > /tmp/f <<\"EOF\"\nhello\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "dash_tag",
+   "cmd": "cat > /tmp/f <<-EOF\n\thello\n\tEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "bs_tag",
+   "cmd": "cat > /tmp/f <<\\EOF\nhello\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "partial_tag",
+   "cmd": "cat > /tmp/f <<E\\OF\njunk\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "partial_tag2",
+   "cmd": "cat > /tmp/f <<E\"O\"F\njunk\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "two_hd",
+   "cmd": "cat <<A >/tmp/a; cat <<B >/tmp/b\na\nA\nb\nB\nX",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "two_hd_swapped",
+   "cmd": "cat <<A >/tmp/a; cat <<B >/tmp/b\na\nB\nA\nX\nB",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "hd_in_comsub",
+   "cmd": "x=$(cat <<EOF\nhi\nEOF\n)\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "hd_in_comsub_paren",
+   "cmd": "x=$(cat <<EOF\nhi\nEOF)\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "hd_comsub_noclose",
+   "cmd": "x=$(cat <<EOF\nhi\n)\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "unterminated",
+   "cmd": "cat > /tmp/f <<EOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "bash_body",
+   "cmd": "bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_body_bs",
+   "cmd": "bash <<\\SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_body_q",
+   "cmd": "bash <<'S-H'\nX\nS-H",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "cat_pipe_sh",
+   "cmd": "cat <<SH | sh\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "tag_after",
+   "cmd": "<<'SH' bash\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "linecont_bash",
+   "cmd": "bash \\\n<<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "linecont_pipe",
+   "cmd": "cat \\\n<<SH | bash\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "pipe_nextline",
+   "cmd": "cat <<SH |\nbash\nX\nSH",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "backtick_bash",
+   "cmd": "y=`bash <<SH\nX\nSH\n`",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "comsub_bash",
+   "cmd": "y=$(bash <<SH\nX\nSH\n)",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sh_s",
+   "cmd": "sh -s <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "nl_in_dq_opener",
+   "cmd": "cat <<EOF >/tmp/f \"a\nb\"\nhi\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "nl_in_comsub_opener",
+   "cmd": "cat <<EOF >/tmp/f $(echo\n)\nhi\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "unq_comsub_body",
+   "cmd": "cat > /tmp/f <<EOF\n$(X)\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "unq_bt_body",
+   "cmd": "cat > /tmp/f <<EOF\n`X`\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "brace_body",
+   "cmd": "cat > /tmp/f <<EOF\n${a:-$(X)}\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "crlf",
+   "cmd": "cat > /tmp/f <<EOF\r\nhi\r\nEOF\r\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "tag_trailing_sp",
+   "cmd": "cat > /tmp/f <<EOF\nhi\nEOF \nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "case_paren",
+   "cmd": "case a in a) cat >/tmp/f <<EOF\nhi\nEOF\n;; esac\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "brace_group",
+   "cmd": "{ cat >/tmp/f <<EOF\nhi\nEOF\n}\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "eval_hd",
+   "cmd": "eval \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "source_hd",
+   "cmd": "source /dev/stdin <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dyn_interp",
+   "cmd": "P=bash; $P <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "xargs_sh",
+   "cmd": "xargs -I{} sh -c {} <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dollar_sq_tag",
+   "cmd": "cat >/tmp/f <<$'EOF'\nhi\nEOF\nX",
+   "expect": [],
+   "note": "the #729 scanner does not read an ANSI-C quoted tag ($'EOF'): no heredoc found, certain=False, the whole text stays code (over-block, not a gap)",
+   "bash_runs": null
+  },
+  {
+   "name": "semicolon_tail",
+   "cmd": "cat >/tmp/f <<EOF; X\nhi\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "bash_s_args",
+   "cmd": "bash -s -- a <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "time_bash",
+   "cmd": "time bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bang_bash",
+   "cmd": "! bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "exec_bash",
+   "cmd": "exec bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "command_bash",
+   "cmd": "command bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "nohup_bash",
+   "cmd": "nohup bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "builtin_eval",
+   "cmd": "builtin eval \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "redir_first",
+   "cmd": ">/tmp/log bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "fd0",
+   "cmd": "bash 0<<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sp_tag",
+   "cmd": "cat >/tmp/f << EOF\nhi\nEOF\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "if_bash",
+   "cmd": "if true; then bash <<SH\nX\nSH\nfi",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_read",
+   "cmd": "while read l; do $l; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_bash",
+   "cmd": "f(){ bash; }; f <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sudo_bash",
+   "cmd": "sudo -u x bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "env_bash",
+   "cmd": "env -i bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "xargs_bash",
+   "cmd": "xargs -0 bash -c <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "proc_sub",
+   "cmd": "bash <(cat <<SH\nX\nSH\n)",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dot_proc_sub",
+   "cmd": ". <(cat <<SH\nX\nSH\n)",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "ext_paren",
+   "cmd": "cat >/tmp/f <<EOF\nhi\nEOF\necho @(a)\nX",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "bash_o_pipefail",
+   "cmd": "bash -o pipefail <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_e_assign",
+   "cmd": "V=1 bash -e <<SH\necho a\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_redir_out",
+   "cmd": "bash > /tmp/log <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_stderr_glued",
+   "cmd": "bash 2>&1 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_c_data",
+   "cmd": "bash -c 'echo hi' <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "bash_ec_data",
+   "cmd": "bash -ec 'echo hi' <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "bash_script_file",
+   "cmd": "bash /dev/null - <<'EOF'\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "python_dash",
+   "cmd": "python3 - <<PY\nimport os; os.system(\"X\")\nPY",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "python_m_data",
+   "cmd": "python3 -m json.tool <<EOF\n{\"a\": \"X\"}\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "python_c_data",
+   "cmd": "python3 -c \"print(1)\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "node_dash",
+   "cmd": "node - <<JS\nrequire(\"child_process\").execSync(\"X\", {stdio: \"inherit\"})\nJS",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "node_e_data",
+   "cmd": "node -e \"1\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "bash_c_comsub",
+   "cmd": "bash -c \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_file_comsub",
+   "cmd": "bash \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "assign_comsub",
+   "cmd": "y=$(cat <<EOF\nX\nEOF\n)",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "echo_comsub",
+   "cmd": "echo \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "diff_procsub",
+   "cmd": "diff <(cat <<A\nX\nA\n) <(cat <<B\nX\nB\n) >/dev/null; true",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "source_procsub",
+   "cmd": "source <(cat <<SH\nX\nSH\n)",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "eval_backtick",
+   "cmd": "eval \"`cat <<EOF\nX\nEOF\n`\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_echo_data",
+   "cmd": "while read l; do echo \"$l\" >/dev/null; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "while_eval",
+   "cmd": "while read l; do eval \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "while_multiline",
+   "cmd": "while read l\ndo\n  $l\ndone <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "until_bash",
+   "cmd": "until false; do bash; break; done <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "if_fi_bash",
+   "cmd": "if true; then bash; fi <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "brace_group_bash",
+   "cmd": "{ bash; } <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_cat_data",
+   "cmd": "f(){ cat > /tmp/f; }; f <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "func_keyword",
+   "cmd": "function g { sh; }; g <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_subshell_body",
+   "cmd": "h() ( bash ); h <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_pipe",
+   "cmd": "f(){ bash; }; cat <<SH | f\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "func_eval_nested",
+   "cmd": "f(){ eval \"$(cat)\"; }; f <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "tee_pipe_data",
+   "cmd": "cat <<'EOF' | tee /tmp/f >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "git_hash_data",
+   "cmd": "git hash-object --stdin <<'EOF' >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "agent_msg_data",
+   "cmd": "bash /dev/null cody marveen - <<'EOF'\nnever run X here\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "timeout_sh",
+   "cmd": "timeout 30 sh <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sudo_dash_data",
+   "cmd": "sudo -u x cat > /tmp/f <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_then_program",
+   "cmd": "cat > /tmp/d <<'D'\nX\nD\nbash <<'P'\nX\nP",
+   "expect": [
+    false,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "two_fd",
+   "cmd": "bash 0<<A 3<<B\nX\nA\ndata\nB",
+   "expect": [
+    true,
+    false
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "fd3_devfd_program",
+   "cmd": "bash /dev/fd/3 3<<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "fd3_pipe_data",
+   "cmd": "cat 3<<B | bash\nX\nB",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "bash_amp_redir",
+   "cmd": "bash &>/dev/stderr <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_amp_redir_sp",
+   "cmd": "bash &> /dev/stderr <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "bash_stdin_dup",
+   "cmd": "bash <&0 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dev_stdin",
+   "cmd": "bash /dev/stdin <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dev_fd0",
+   "cmd": "bash /dev/fd/0 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "proc_fd0",
+   "cmd": "bash /proc/self/fd/0 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "fd3_dup",
+   "cmd": "bash 3<<SH <&3\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_bash",
+   "cmd": "(bash) <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_cd_bash",
+   "cmd": "( cd /tmp && bash ) <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_pipe",
+   "cmd": "(cat <<SH | bash)\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "herestring_sub",
+   "cmd": "bash <<<\"$(cat <<SH\nX\nSH\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "herestring_py",
+   "cmd": "python3 - <<< \"$(cat <<PY\nimport os; os.system(\"X\")\nPY\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "tee_procsub",
+   "cmd": "tee >(bash) <<SH >/dev/null\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "timeout_k",
+   "cmd": "timeout -k 1 5s bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sudo_dashdash",
+   "cmd": "sudo -u x -- bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "command_p_bash",
+   "cmd": "command -p bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "exec_a_bash",
+   "cmd": "exec -a name bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "env_u_bash",
+   "cmd": "env -u HOME bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "env_S_word",
+   "cmd": "env -S'bash -' <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "ssh_bash",
+   "cmd": "ssh host bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "docker_exec_bash",
+   "cmd": "docker exec -i c bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "sudo_s",
+   "cmd": "sudo -s <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "data_grep_python",
+   "cmd": "grep -c python <<'EOF'\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_git_node",
+   "cmd": "git commit -m \"node fix\" -F - <<'EOF'\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_cat_dup",
+   "cmd": "cat 3<<EOF <&3\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_cat_devfd3",
+   "cmd": "cat /dev/fd/3 3<<SH\nX\nSH",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_subshell_cat",
+   "cmd": "(cat) <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_echo_herestr",
+   "cmd": "echo <<<\"$(cat <<EOF\nX\nEOF\n)\" >/dev/null",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_tee_procsub_cat",
+   "cmd": "tee >(cat >/dev/null) <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "docker_exec_bash_c",
+   "cmd": "docker exec -i c bash -c 'echo hi' <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "awk_data",
+   "cmd": "awk '{print}' <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "sort_S_data",
+   "cmd": "sort -S 1M <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "env_u_cat",
+   "cmd": "env -u HOME cat <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "env_i_alone",
+   "cmd": "env -i <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  }
+ ]
+}

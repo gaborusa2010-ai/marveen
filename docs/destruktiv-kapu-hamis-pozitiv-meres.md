@@ -424,3 +424,25 @@ Amit a fenti mérésből **nem** szabad kiolvasni: hogy az új számok ugyanezek
 A `banned-cmd:rm` és a `git push` sor mögötti esetek egy részét az új szabály már át
 is engedi, tehát a hamis pozitív ráta a mérés megismétlése nélkül nem tudható. Ez nem
 becslés, hanem hiány: **a mérést nem futtattam újra az új kapun.**
+
+---
+
+## Utóirat, 2026-11-01 -- heredoc-olvasás (#729)
+
+A heredocot azóta a `scripts/hooks/heredoc_scan.py` olvassa, idézőjel- és komment-tudatosan,
+a soronkénti minta helyett. A régi minta egy idézett vagy kommentben álló `<<EOF` után a
+payload-sort adat-törzsnek vette, a nem-szó, visszaperjeles és részben idézett tagot
+(`<<'END-X'`, `<<\EOF`, `<<E\OF`) rosszul olvasta, és az álcázott értelmező-nevet
+(`\python3`, `$P`, `{python3,}`) vagy a heredoc UTÁN álló parancsot (`<<'X' python3`,
+`cat <<'X' | python3`) nem ismerte fel. Ha az olvasás nem biztos (lezáratlan idézőjel,
+zárójel vagy heredoc, `<<` egy `a=( )` vagy `a[ ]` belsejében), semmi nem fehérül ki:
+a kapu ilyenkor túltilt, nem átenged. Az idézetlen tagú adat-törzs, amelyben `$( )` vagy
+backtick áll, szintén bent marad, mert azt a shell lefuttatja.
+
+Mérés (mind 2026-11-01):
+- 29 must-block és 11 negatív kontroll a tesztben; bash-sel visszamérve mind a 29-ben
+  lefut a payload, a 11-ben egyikben sem. A régi kapun 26 must-block és 3 negatív kontroll
+  piros.
+- 8800 egyedi, valós heredocos parancs a flotta transzkriptjeiből (587 fájl), régi és új
+  kapu: 0 eltérő ítélet (8557 átengedés, 243 tiltás mindkettőn). A "nem biztos" olvasás
+  10 parancson kapcsolt be, egyiken sem változtatott az ítéleten.

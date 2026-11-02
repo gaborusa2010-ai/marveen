@@ -101,7 +101,21 @@ def _assign_prefix_len(toks) -> int:
             elif ch == "]":
                 depth -= 1
                 if depth == 0:
-                    return n if re.match(r"\+?=", tok[i + 1:]) else 0
+                    if re.match(r"\+?=", tok[i + 1:]):
+                        return n
+                    return _subscript_assign_end(toks)
+    return _subscript_assign_end(toks)
+
+
+def _subscript_assign_end(toks) -> int:
+    """A `]` the tokenizer no longer shows as quoted or expanded (`a["]"]=x`,
+    `a[\\]]=x`, `a[${v:-]}]=x`) closes the bracket early above, yet bash still
+    reads one assignment word and runs what follows (#729, #725 review 4). The
+    first token holding `]=` / `]+=` ends it: an extra reading that only ever
+    finds more commands, never fewer."""
+    for n, tok in enumerate(toks, 1):
+        if re.search(r"\]\+?=", tok):
+            return n
     return 0
 # KWSPLIT924: shell reserved words that put the NEXT word in command position.
 # The segmenter splits on operators only, so `if true; then sendmail x; fi`
@@ -114,8 +128,11 @@ def _assign_prefix_len(toks) -> int:
 # stay false. `for` / `case` are not here either: the word after them is a name
 # or a subject, not a command. Mirrored in email-send-gate.mjs (CMD_POSITION_KEYWORDS);
 # the shared send-invocation-cases.json binds the two.
-_CMD_POSITION_KEYWORDS = frozenset(("if", "then", "else", "elif", "do", "while", "until", "{", "!"))
-_SENDER_PROG = re.compile(r"^(sendmail|msmtp|swaks)$", re.I)
+# `}` too (#729): after an array assignment bash runs the words behind it,
+# `a+=()} python3 x.py` ran x.py while the segment's program read `}`.
+_CMD_POSITION_KEYWORDS = frozenset(("if", "then", "else", "elif", "do", "while", "until", "{", "}", "!"))
+# #729 (#725 review 3): mail / mailx / ssmtp send the same way (`mail -s s b@y < body`).
+_SENDER_PROG = re.compile(r"^(sendmail|msmtp|swaks|mail|mailx|ssmtp|mutt|s-nail)$", re.I)
 _SENDPY = re.compile(r"^send\.py$", re.I)
 # SUBAGENTMAILGATE1016: a version-suffixed interpreter (python3.12, python3.13t) is the same python.
 _PYTHON = re.compile(r"^python(3(\.\d+t?)?)?$", re.I)
@@ -318,6 +335,7 @@ def _mask_subshell_markers(cmd: str) -> str:
     out = []
     q = None  # None | "'" | '"'
     i, n = 0, len(cmd)
+    escaped_end = -1  # the index right after the last backslash pair
     while i < n:
         ch = cmd[i]
         if q:
@@ -329,7 +347,7 @@ def _mask_subshell_markers(cmd: str) -> str:
         if ch in "'\"":
             q = ch; out.append(ch); i += 1; continue
         if ch == "\\" and i + 1 < n:
-            out.append(cmd[i:i + 2]); i += 2; continue
+            out.append(cmd[i:i + 2]); i += 2; escaped_end = i; continue
         if ch == "\n" or ch == "`":
             out.append(";"); i += 1; continue
         if ch == "$" and i + 1 < n and cmd[i + 1] == "(":
@@ -338,7 +356,9 @@ def _mask_subshell_markers(cmd: str) -> str:
         # `&>f`, `&>>f`) is not a separator; it used to cut the segment, and every
         # word after it was lost (`python3 2>&1 x.py`). It is carried as _AMP
         # through the tokenizer and put back in the token.
-        if ch == "&" and ((i and cmd[i - 1] in "<>") or (
+        # An escaped `\>` is a plain character: `\>&sendmail b` runs `>` in the
+        # background, then sendmail (#729, #725 2949 b).
+        if ch == "&" and ((i and cmd[i - 1] in "<>" and escaped_end != i) or (
                 i + 1 < n and cmd[i + 1] == ">" and not (i and cmd[i - 1] in "&|"))):
             out.append(_AMP); i += 1; continue
         out.append(ch); i += 1
@@ -371,6 +391,9 @@ def _segments_tokens(cmd: str):
     # command, so `# hi\nsend''mail ...` lost its send. `#` is an ordinary
     # character here, as in the JS twin's tokenizer.
     lex.commenters = ""
+    # bash splits words on space and tab only (newlines are `;` by now): a CR is
+    # part of the word, so `<<< \r python3 x.py` is python3 run (#729, 2949 d).
+    lex.whitespace = " \t\n"
     segments, cur, ops = [], _Seg(), ""
     for tok in lex:
         tok = tok.replace(_AMP, "&")
@@ -513,6 +536,9 @@ _HEAD_DEPTH = 8
 _REDIRECT = re.compile(r"^(?:\d*|&)(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)(.*)$", re.S)
 
 
+_LEAD_EXPANSION = re.compile(r"(?:\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z_0-9]*|[@*0-9]))+")
+
+
 def _command_heads(toks, _d: int = 0):
     """Every token list that can be the real command of this segment, after the
     leading assignments, command-position keywords, redirections and wrappers are
@@ -529,6 +555,13 @@ def _command_heads(toks, _d: int = 0):
         toks = list(toks) + moved
     if not toks:
         return [toks]
+    # #729 (#725 2949 c): an unset or empty expansion is no word at all, so
+    # `$nothing sendmail b`, `${nothing}sendmail b` and `$coproc sendmail b` run
+    # sendmail. The word behind (or the rest of the glued word) is read too.
+    lead = _LEAD_EXPANSION.match(toks[0])
+    if lead and _d < _HEAD_DEPTH:
+        rest = toks[0][lead.end():]
+        return [toks] + _command_heads(([rest] if rest else []) + list(toks[1:]), _d + 1)
     w = _basename(toks[0])
     if _d >= _HEAD_DEPTH:
         # Still a wrapper at the depth bound: the real command is out of sight,
@@ -800,7 +833,7 @@ def join_subscripts(cmd: str) -> str:
     out = list(cmd)
     i = 0
     while i < n:
-        if not plain[i] or (i and not (cmd[i - 1].isspace() or cmd[i - 1] in ";&|(")):
+        if not plain[i] or (i and not (cmd[i - 1].isspace() or cmd[i - 1] in ";&|(`")):
             i += 1
             continue
         m = _SUBSCRIPT_START.match(cmd, i)
@@ -1375,7 +1408,7 @@ def _is_send(cmd: str, _depth: int, base) -> bool:
         # Konzervativ visszaeses: csak akkor auditalunk, ha eros kuldes-literal
         # all a szovegben -- igy egy fura, de valodi kuldes nem csuszik at
         # neman, a tipikus belso parancsok viszont nem kapnak hamis pozitivot.
-        return bool(_FALLBACK_LITERALS.search(cmd))
+        return bool(_FALLBACK_LITERALS.search(cmd)) or _lines_send(cmd, _depth, base, written)
     if _segments_send(segments, _depth, base, written):
         return True
     # the same command with every substitution as one undecidable word
@@ -1388,7 +1421,23 @@ def _is_send(cmd: str, _depth: int, base) -> bool:
             if _segments_send(_segments_tokens(alt), _depth, base, written):
                 return True
         except ValueError:
-            return bool(_FALLBACK_LITERALS.search(cmd))
+            return bool(_FALLBACK_LITERALS.search(cmd)) or _lines_send(cmd, _depth, base, written)
+    return False
+
+
+def _lines_send(cmd: str, depth: int, base, written) -> bool:
+    """`bash -c` reads a line at a time: a syntax error throws away the line it
+    is on, and the NEXT line still runs (`x=(\t((case $x in #||"cat` NL
+    `python3 sm.py` ran sm.py, #729, #725 2949 a). So when the whole command does
+    not parse, every line is also judged on its own; a line that does not parse
+    by itself is skipped; heredoc bodies are dropped first, they are input, not
+    lines. One pass over the lines, so a long command stays linear."""
+    for line in _HEREDOC.sub(r"\1", cmd).split("\n"):
+        try:
+            if line.strip() and _segments_send(_segments_tokens(line), depth, base, written):
+                return True
+        except ValueError:
+            continue
     return False
 
 # --- Hungarian detection (accent-insensitive markers) -----------------------
