@@ -110,6 +110,10 @@ const EXPECTED: Record<string, string[]> = {
     'check-before-send.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
     'closed-topic-gate.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
     'line-cap-gate.py @ Write|Edit|MultiEdit',
+    // dontes-lookup-gate.py (card #664, owner Telegram msg 10437): a question to the
+    // owner waits for a decision-log lookup; Bash carries the tg-valasztas.py question.
+    'dontes-lookup-gate.py @ Bash',
+    'dontes-lookup-gate.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
   ],
   // Local additions on this install: ledger-midturn-capture.py backfills mid-turn
   // inbound rows into the conversation ledger (MIDTURN901); require-checked.py

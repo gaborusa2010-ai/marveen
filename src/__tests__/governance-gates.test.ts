@@ -736,6 +736,22 @@ describe('telegram copy gate wiring', () => {
     expect(ptu).toHaveLength(3)
     expect(ptu[0]).toEqual({ matcher: 'WebFetch', hooks: [{ type: 'command', command: 'node "/x/egress-gate.mjs"' }] })
   })
+  it('wires the decision-log gate on the Telegram entry AND the Bash entry (#664)', () => {
+    const settings: Record<string, unknown> = {
+      // An entry from before #664: closed-topic only. It must be replaced, not kept beside the new one.
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'python3 "/x/scripts/hooks/closed-topic-gate.py"' }] }] },
+    }
+    injectTelegramCopyGate(settings)
+    injectTelegramCopyGate(settings)
+    const ptu = (settings.hooks as Record<string, unknown>).PreToolUse as Array<{ matcher?: string }>
+    const bash = ptu.filter((e) => e.matcher === 'Bash')
+    expect(bash).toHaveLength(1)
+    expect(JSON.stringify(bash[0])).toContain('closed-topic-gate.py')
+    expect(JSON.stringify(bash[0])).toContain('dontes-lookup-gate.py')
+    const tg = ptu.filter((e) => e.matcher === TELEGRAM_COPY_GATE_MATCHER)
+    expect(tg).toHaveLength(1)
+    expect(JSON.stringify(tg[0])).toContain('dontes-lookup-gate.py')
+  })
 })
 
 // --- readonly-repo-gate: only the EXACT install command is exempt ---

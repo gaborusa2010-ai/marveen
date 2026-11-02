@@ -1533,6 +1533,13 @@ export function closedTopicGateCommand(): string {
   return `python3 "${join(PROJECT_ROOT, 'scripts', 'hooks', 'closed-topic-gate.py')}"`
 }
 
+// The decision-log gate rides next to it (card #664, owner Telegram msg 10437,
+// 2026-11-02: on for every agent). A question to the owner waits until
+// scripts/dontes-kereso.py ran after the owner's last message. Fails open too.
+export function dontesLookupGateCommand(): string {
+  return `python3 "${join(PROJECT_ROOT, 'scripts', 'hooks', 'dontes-lookup-gate.py')}"`
+}
+
 // Idempotently wire the outgoing-copy-gate PreToolUse hook onto the Telegram
 // send tools. Same shape + dedupe discipline as injectEmailSendGate, with one
 // deliberate difference: the dedupe filter is scoped to entries that carry BOTH
@@ -1545,6 +1552,7 @@ export function injectTelegramCopyGate(existing: Record<string, unknown>): void 
     : (existing.hooks = {})) as Record<string, unknown>
   const command = pythonHookCommand(join(PROJECT_ROOT, 'scripts', 'hooks', 'outgoing-copy-gate.py'))
   const closedTopic = closedTopicGateCommand()
+  const dontesLookup = dontesLookupGateCommand()
   // Registration guard: a /tmp or missing path must never enter shared settings.
   if (isUnsafeHookCommand(command)) return
   const entry = {
@@ -1552,15 +1560,17 @@ export function injectTelegramCopyGate(existing: Record<string, unknown>): void 
     hooks: [
       { type: 'command', command, timeout: 10 },
       ...(isUnsafeHookCommand(closedTopic) ? [] : [{ type: 'command', command: closedTopic, timeout: 10 }]),
+      ...(isUnsafeHookCommand(dontesLookup) ? [] : [{ type: 'command', command: dontesLookup, timeout: 10 }]),
     ],
   }
   // The button question (scripts/tg-valasztas.py) goes out through the Bot API
   // from Bash, which the Telegram matcher never sees; sub-agents send it too
   // (Prospero, msg 11852: tg 8794). The gate itself only acts on a Bash call
   // that runs that script.
-  const bashEntry = isUnsafeHookCommand(closedTopic)
-    ? []
-    : [{ matcher: 'Bash', hooks: [{ type: 'command', command: closedTopic, timeout: 10 }] }]
+  const bashHooks = [closedTopic, dontesLookup]
+    .filter((c) => !isUnsafeHookCommand(c))
+    .map((c) => ({ type: 'command', command: c, timeout: 10 }))
+  const bashEntry = bashHooks.length ? [{ matcher: 'Bash', hooks: bashHooks }] : []
   const prev = Array.isArray(hooks.PreToolUse) ? (hooks.PreToolUse as unknown[]) : []
   hooks.PreToolUse = [
     ...prev.filter((e) => {
@@ -1578,7 +1588,10 @@ export function injectTelegramCopyGate(existing: Record<string, unknown>): void 
 function isClosedTopicBashEntry(e: unknown): boolean {
   const list = (e as { matcher?: unknown; hooks?: unknown })?.hooks
   return (e as { matcher?: unknown })?.matcher === 'Bash' && Array.isArray(list) && list.length > 0
-    && list.every((h) => String((h as { command?: unknown })?.command ?? '').includes('closed-topic-gate.py'))
+    && list.every((h) => {
+      const c = String((h as { command?: unknown })?.command ?? '')
+      return c.includes('closed-topic-gate.py') || c.includes('dontes-lookup-gate.py')
+    })
 }
 
 // Which tools the destructive-gate inspects. Bash carries the banned commands
@@ -1776,7 +1789,9 @@ export function ensureTelegramCopyGate(name: string): boolean {
   })
   if (wiredHere && hookCommandWired(JSON.stringify(ptu), command)
     && JSON.stringify(ptu).includes('closed-topic-gate.py')
-    && ptu.some(isClosedTopicBashEntry)) return false
+    && ptu.some((e) => isClosedTopicBashEntry(e) && JSON.stringify(e).includes('dontes-lookup-gate.py'))
+    && ptu.some((e) => (e as { matcher?: unknown })?.matcher === TELEGRAM_COPY_GATE_MATCHER
+      && JSON.stringify(e).includes('dontes-lookup-gate.py'))) return false
   injectTelegramCopyGate(settings)
   atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
   return true
