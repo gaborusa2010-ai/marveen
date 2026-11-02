@@ -2243,6 +2243,20 @@ export function resolveSchedulerAlertToken(
  */
 const STARVE_SKIPS = 10
 const STARVE_SILENT_MS = 6 * 60 * 60 * 1000
+// #243 (dc80b854): a fixed 10-skip bar is unreachable for a weekly task. Rows
+// expire after 30 days (TASK_RUN_TTL_MS), so at most 4-5 weekly rows ever sit
+// in the window -- bumblebee-hygiene-scan went 22 days without a run and the
+// alert never had a chance. Once the task has been silent longer than a week
+// (longer than any cadence up to weekly), two skips in a row are enough: a
+// weekly task then speaks at its second miss, a daily one at its eighth.
+// A yearly task never holds two rows in the window and stays quiet, which is
+// the intended trade-off (no false alarm every January).
+const STARVE_LONG_SILENT_MS = 8 * 24 * 60 * 60 * 1000
+const STARVE_SKIPS_LONG_SILENT = 2
+
+export function starvationThreshold(silentMs: number): number {
+  return silentMs >= STARVE_LONG_SILENT_MS ? STARVE_SKIPS_LONG_SILENT : STARVE_SKIPS
+}
 
 export function isStarvationAlertPoint(skips: number, threshold = STARVE_SKIPS): boolean {
   if (skips < threshold) return false
@@ -2257,11 +2271,22 @@ function recordSkip(taskName: string, agentName: string, reason: string, status 
   // `reason` column stays the finer-grained record. countConsecutiveSkips skips
   // over 'skipped-precheck' rows (#423): a quiet preCheck is not starvation.
   appendTaskRun(taskName, agentName, status, reason)
+  // A quiet preCheck round leaves the count unchanged; checking here would
+  // re-page a streak that sits on an alert point on every quiet round.
+  if (status !== 'skipped-precheck') checkStarvation(taskName, agentName)
+}
+
+// Shared by recordSkip and the catch-up 'missed' path (#243): a missed
+// occurrence extends the streak, so it must also be a point where we look.
+function checkStarvation(taskName: string, agentName: string): void {
   try {
-    const { skips, lastFiredTs, reasons } = countConsecutiveSkips(taskName, agentName)
-    if (!isStarvationAlertPoint(skips)) return
+    const { skips, lastFiredTs, aliveRefTs, reasons } = countConsecutiveSkips(taskName, agentName)
     // No successful run in the window reads as "very stale", never as "new".
     const silentMs = lastFiredTs === null ? Number.POSITIVE_INFINITY : Date.now() - lastFiredTs
+    // The threshold follows proof of life, not the last fire: a preCheck-gated
+    // task that measured "nothing to do" yesterday is not long-silent (#243).
+    const aliveSilentMs = aliveRefTs === null ? Number.POSITIVE_INFINITY : Date.now() - aliveRefTs
+    if (!isStarvationAlertPoint(skips, starvationThreshold(aliveSilentMs))) return
     if (silentMs < STARVE_SILENT_MS) return
     const hours = Number.isFinite(silentMs) ? Math.round(silentMs / 3_600_000) : null
     const since = hours === null ? 'a megfigyelt ablakban egyaltalan nem' : `${hours} oraja nem`
@@ -3101,7 +3126,10 @@ export function startScheduleRunner(): NodeJS.Timeout {
         const missedTargets = task.agent === 'all'
           ? [MAIN_AGENT_ID, ...listAgentNames().filter(a => isAgentRunning(a))]
           : [task.agent || MAIN_AGENT_ID]
-        for (const agentName of missedTargets) appendTaskRun(task.name, agentName, 'missed')
+        for (const agentName of missedTargets) {
+          appendTaskRun(task.name, agentName, 'missed')
+          checkStarvation(task.name, agentName)
+        }
         continue
       }
       const lateCatchUpMs = decision === 'catch-up' ? ageMs : undefined

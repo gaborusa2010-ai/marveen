@@ -12,7 +12,7 @@
 // still-starving task fall silent again (the original bug in a new hat), or it
 // fires on every tick and gets muted.
 import { describe, it, expect } from 'vitest'
-import { isStarvationAlertPoint } from '../web/schedule-runner.js'
+import { isStarvationAlertPoint, starvationThreshold } from '../web/schedule-runner.js'
 
 describe('starvation alert: when to speak', () => {
   it('stays quiet below the threshold', () => {
@@ -43,5 +43,35 @@ describe('starvation alert: when to speak', () => {
     expect(isStarvationAlertPoint(6, 3)).toBe(true)
     expect(isStarvationAlertPoint(12, 3)).toBe(true)
     expect(isStarvationAlertPoint(10, 3)).toBe(false)
+  })
+})
+
+// #243 (dc80b854): bumblebee-hygiene-scan (weekly) went 22 days without a run
+// and the 10-skip bar could never be reached, because rows expire after 30 days.
+describe('starvation threshold follows the silence, not a fixed count', () => {
+  const H = 3_600_000
+  const D = 24 * H
+
+  it('short silence keeps the 10-skip bar', () => {
+    expect(starvationThreshold(7 * H)).toBe(10)
+    expect(starvationThreshold(7 * D)).toBe(10)
+  })
+
+  it('more than a week of silence drops it to 2', () => {
+    expect(starvationThreshold(8 * D)).toBe(2)
+    expect(starvationThreshold(Number.POSITIVE_INFINITY)).toBe(2)
+  })
+
+  it('a weekly task speaks at its second consecutive miss', () => {
+    // last fired 14 days ago, two skips since
+    expect(isStarvationAlertPoint(2, starvationThreshold(14 * D))).toBe(true)
+    // one skip, 7 days of silence: not due yet
+    expect(isStarvationAlertPoint(1, starvationThreshold(7 * D))).toBe(false)
+  })
+
+  it('a daily task speaks at skip 8 and is not re-paged at 10', () => {
+    const points = Array.from({ length: 20 }, (_, i) => i + 1)
+      .filter((n) => isStarvationAlertPoint(n, starvationThreshold(n * D)))
+    expect(points).toEqual([8, 16])
   })
 })

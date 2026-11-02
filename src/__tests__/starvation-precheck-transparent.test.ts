@@ -33,3 +33,34 @@ describe('countConsecutiveSkips treats skipped-precheck as transparent', () => {
     expect(countConsecutiveSkips('t', 'a').skips).toBe(3)
   })
 })
+
+// #243 (dc80b854): a 'missed' row (catch-up too stale to run) is NOT a run.
+describe('countConsecutiveSkips counts missed as a skip', () => {
+  it('missed does not reset the streak or become the last fire', () => {
+    seq(['fired', 'missed', 'skipped', 'skipped'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.skips).toBe(3)
+    expect(r.lastFiredTs).toBe(BASE)
+    expect(r.reasons).toContain('missed')
+  })
+})
+
+// #243 review: the long-silence threshold must not treat a healthy
+// preCheck-gated task, or a brand-new one, as silent for 8+ days.
+describe('countConsecutiveSkips aliveRefTs', () => {
+  it('a quiet preCheck round is proof of life', () => {
+    seq(['fired', 'skipped', 'skipped', 'skipped-precheck', 'skipped-precheck'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.lastFiredTs).toBe(BASE)
+    expect(r.aliveRefTs).toBe(BASE + 4000)
+  })
+  it('no run in the window: the oldest row, not infinity', () => {
+    seq(['skipped', 'skipped'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.lastFiredTs).toBeNull()
+    expect(r.aliveRefTs).toBe(BASE)
+  })
+  it('empty history: null', () => {
+    expect(countConsecutiveSkips('t', 'a').aliveRefTs).toBeNull()
+  })
+})
