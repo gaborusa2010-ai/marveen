@@ -236,6 +236,18 @@ def main():
             "772. Mint AI-modell, (vesszovel)": "Mint AI-modell, a számlát nem írom alá, de holnap küldöm a részleteket.",
             "772. Mint MI-asszisztens. (mondatvegen)": "A számlát holnap küldöm át a részletekkel. Mint MI-asszisztens.",
             "772. Mint egy AI nyelvi modell, (egy + szokoz)": "Mint egy AI nyelvi modell, a számlát nem írom alá, holnap küldöm.",
+            # #772 review 1 (Marveen): a lezaro jel kettospont, kerdojel, pontosvesszo,
+            # zarojel es zaro idezojel is lehet, a puszta ES az osszetett alakon.
+            "772r1. puszta, kettospont": "Mint mesterséges intelligencia: a számlát nem írom alá, holnap küldöm.",
+            "772r1. osszetett, kettospont": "Mint egy MI-modell: a számlát nem írom alá, holnap küldöm a részleteket.",
+            "772r1. puszta, kerdojel": "Mint mesterséges intelligencia? Nem írom alá, a számlát holnap küldöm.",
+            "772r1. osszetett, kerdojel": "Mint AI-asszisztens? Nem írom alá, a számlát holnap küldöm a részletekkel.",
+            "772r1. puszta, pontosvesszo": "Mint mesterséges intelligencia; a számlát nem írom alá, holnap küldöm.",
+            "772r1. osszetett, pontosvesszo": "Mint AI-asszisztens; a számlát nem írom alá, holnap küldöm a részleteket.",
+            "772r1. puszta, zarojel": "(Mint mesterséges intelligencia) a számlát nem írom alá, holnap küldöm.",
+            "772r1. osszetett, zarojel": "(Mint AI-asszisztens) a számlát nem írom alá, holnap küldöm a részleteket.",
+            "772r1. puszta, zaro idezojel": "„Mint mesterséges intelligencia”, mondta, a számlát holnap küldöm át.",
+            "772r1. osszetett, zaro idezojel": "„Mint AI-asszisztens”, mondta, a számlát holnap küldöm át a részletekkel.",
         }
         for name, body in cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)

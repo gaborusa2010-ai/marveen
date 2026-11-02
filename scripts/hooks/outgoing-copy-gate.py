@@ -1582,9 +1582,15 @@ AI_CLICHES = tuple(
          + _SENTENCE_START + r"(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\s*[,:])"),
         # #772: az irasjel-vagy-mondatveg kovetelmeny MINDEN alakra all, az
         # "AI-modell" / "MI-asszisztens" osszetettre is ("Mint AI-modell fejlesztő"
-        # foglalkozas, Marveen review 3, 2026-11-02).
+        # foglalkozas, Marveen review 3, 2026-11-02). A lezaro osztaly a mondatzaro
+        # jeleken tul a kettospont, pontosvesszo, zarojel, zaro idezojel es a harom
+        # pont is (Marveen #772 review 1: a regi \b ezeket fogta, a szukebb [,.!] nem).
+        # Az ASCII aposztrof NINCS benne: a valodi szovegekben a 'Mint mesterseges
+        # intelligencia' alak a kapu-cimke idezese (kereszt-ellenorzes), nem hasznalat.
+        # Ismert hatar: "Mint AI-modell nem tudom" (ige, irasjel nelkul) atmegy,
+        # mint a puszta alak: regex nem tud iget foglalkozas-fonevtol megkulonboztetni.
         ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia(?:[- ]?(?:asszisztens|modell|nyelvi\s+modell))?"
-         r"|(?:mi|ai)[- ]?(?:modell|asszisztens|nyelvi\s+modell))\s*(?:[,.!]|$)"),
+         r"|(?:mi|ai)[- ]?(?:modell|asszisztens|nyelvi\s+modell))\s*(?:[,.!?:;)\]\"\u201d\u00bb\u2019\u2026]|$)"),
         ("Remelem, ez segit", r"\brem[eé]lem,?\s+ez\s+seg[ií]t(?:ett)?\s*(?:[.!]|$)"),
         ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,:]"),
         ("Great question", _SENTENCE_START + r"(?:(?:great|excellent|fantastic)\s+question\s*[!,]|good\s+question\s*!)"),
