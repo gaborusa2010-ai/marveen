@@ -7,13 +7,18 @@ are dropped by the plugin unless they are its own permission prompts, and poll
 answers are never delivered. Verified 2026-09-24: msg 3934 sent, tap arrived as
 msg 3936.
 
-Usage: tg-valasztas.py [--agent NAME] "Question text" "Option 1" "Option 2" [...]
+Usage: tg-valasztas.py [--agent NAME] [--tema "short topic"] "Question text" "Option 1" "Option 2" [...]
        tg-valasztas.py [--agent NAME] --valasz "Acknowledgement text"
 
 --valasz sends a plain message that REMOVES the keyboard (remove_keyboard). Use it
 for the first answer after the owner answered, tapped OR typed (msg 3999): one_time_keyboard only collapses the
 keyboard, it stays reachable behind the keyboard icon and can be tapped again
 (msg 3992 was a second tap on the 3987 keyboard). Owner's request, msg 3995.
+
+--tema sets the keyboard's input_field_placeholder: the grey line right above the
+buttons, so the owner sees what they answer even after the chat scrolled on
+(owner msg 9484/9486). Max 64 characters; without --tema the start of the question
+text is used.
 
 Every agent sends through ITS OWN bot (owner's decision, msg 3943: "Igen, mindenkire").
 The agent is --agent, else guessed from the working directory (agents/<name>/...),
@@ -68,6 +73,11 @@ def clear_placeholders(agent, chat, tok):
 ENV = BASE + "/.env"
 OWNER_CHAT = "8547011582"
 
+def placeholder(s):
+    # Telegram limit: 1-64 characters; longer text fails the whole sendMessage.
+    s = " ".join(s.split())
+    return s if len(s) <= 64 else s[:63].rstrip() + "\u2026"
+
 def pick_agent(argv):
     if len(argv) > 2 and argv[1] == "--agent":
         return argv[2], argv[3:]
@@ -81,6 +91,11 @@ def main():
         rest = rest[1:]
     if (close and len(rest) != 1) or (not close and len(rest) < 3):
         sys.exit(__doc__)
+    tema = None
+    if len(rest) > 1 and rest[0] == "--tema":
+        tema, rest = rest[1], rest[2:]
+        if not close and len(rest) < 3:
+            sys.exit(__doc__)
     text, opts = rest[0], rest[1:]
     if agent and agent != "marveen":
         env = open(f"{BASE}/agents/{agent}/.claude/channels/telegram/.env").read()
@@ -94,6 +109,8 @@ def main():
     else:
         kb = {"keyboard": [[{"text": o}] for o in opts],
               "one_time_keyboard": True, "resize_keyboard": True}
+        if placeholder(tema or text):
+            kb["input_field_placeholder"] = placeholder(tema or text)
     data = urllib.parse.urlencode({"chat_id": chat, "text": text,
                                    "reply_markup": json.dumps(kb, ensure_ascii=False)}).encode()
     r = json.load(urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/sendMessage", data))
