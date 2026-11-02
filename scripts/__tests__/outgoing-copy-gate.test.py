@@ -225,6 +225,13 @@ def main():
             "I hope this helps. (angol zaras)": "The invoice goes out tomorrow with the details. I hope this helps.",
             "felsorolasjel utan": "A válaszok:\n- Természetesen! A számlát holnap küldöm át a részletekkel.",
             "kettospont utan": "Válasz: Természetesen! A számlát holnap küldöm át a részletekkel.",
+            # Marveen review 2, 2026-11-02: kettospont a szo UTAN, es a zaro "happy to help".
+            "Termeszetesen: (kettospont a szo utan)": "Természetesen: holnap jön a számla a részletekkel.",
+            "- Termeszetesen: (felsorolas + kettospont)": "A válaszok:\n- Természetesen: holnap jön a számla a részletekkel.",
+            "Of course: (angol, kettospont)": "Of course: here it is, the invoice goes out tomorrow.",
+            "Happy to help! (angol zaras)": "The invoice goes out tomorrow with the details. Happy to help!",
+            "I'm happy to help, (angol nyitas)": "I'm happy to help, the invoice goes out tomorrow with the details.",
+            "Mint MI-asszisztens (kotojeles)": "Mint mesterséges intelligencia-asszisztens, a számlát nem írom alá, holnap küldöm.",
         }
         for name, body in cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)
@@ -257,6 +264,11 @@ def main():
             "3. good question vesszovel, mondatkezdon": "Good question, the accountant answers it tomorrow with the invoice.",
             "4. remelem, segit + targy": "Remélem, segít a könyvelő eldönteni. A számlát holnap küldöm át a részletekkel.",
             "4. hope this helps + folytatas (angol)": "I hope this helps the accountant decide before the invoice goes out tomorrow.",
+            # Marveen review 2, 2026-11-02.
+            "r2. happy to help + targy (angol)": "I'm happy to help with the move on Friday, the invoice goes out tomorrow.",
+            "r2. glad to help + targy (angol)": "Glad to help the neighbour, said Anna, the invoice goes out tomorrow.",
+            "r2. szivesen segitek + targy": "Szívesen segítek a költözésben pénteken, a számlát holnap küldöm át.",
+            "r2. mesterseges intelligencia kutato": "Mint mesterséges intelligencia kutató, a számlát holnap küldöm át a részletekkel.",
         }
         for name, body in not_cliche_bodies.items():
             code, out, err = run_hook(email_payload(body), rules_file=active)

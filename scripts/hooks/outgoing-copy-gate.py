@@ -1551,33 +1551,42 @@ EM_DASH = "—"
 # TARTALOM NELKUL allnak egy mondat elejen vagy vegen. Ami mondat kozben, tartalmi
 # szerepben all ("ez termeszetesen nem jelenti", "a kerdes jo, de"), az NEM klise,
 # es a mintak ezt nem fogjak meg: a "Termeszetesen", a "Certainly / Of course" es
-# a "Remek / Great question" csak MONDATKEZDO helyzetben, vesszovel vagy
-# felkialtojellel szamit; a "Jo kerdes" / "Good question" CSAK felkialtojellel,
+# a "Remek / Great question" csak MONDATKEZDO helyzetben, vesszovel, kettosponttal
+# vagy felkialtojellel szamit; a "Jo kerdes" / "Good question" CSAK felkialtojellel,
 # mert a vesszos alak sima beszed ("Jo kerdes, hogy mikor jon a futar."), es a
 # gyoker CLAUDE.md maga is ezt a hangot keri ("Ez jo kerdes, nezzuk."). Az
 # "as an AI" csak vesszovel, "I"-vel, "language model"-lel vagy "assistant"-tal
-# folytatva ("as an AI tool for joiners" termek-szoveg); a "Remelem, ez segit" /
+# folytatva ("as an AI tool for joiners" termek-szoveg); a puszta "mint mesterseges
+# intelligencia" csak irasjellel vagy mondatvegen (a "kutato" folytatas foglalkozas),
+# kotojeles "-asszisztens" / "-modell" alakban is; a "Remelem, ez segit" /
 # "I hope this helps" csak az "ez/this" targgyal ES mondatvegen ("Remelem, segit
 # a konyvelo eldonteni" tartalmi). Marveen review 2026-11-02, 4 pont.
 # Ekezet nelkuli alakot is fog (az ekezet-szabaly amugy is megallitana, de a
 # klise-uzenet pontosabb okot ad), kis- es nagybetut egyarant.
-# A PROZAN fut (strip_technical utan): kod-spanban idezett klise nem talalat.
+# A nev-maszkolt szovegen fut (strip_for_name): kod-spanban idezett klise nem talalat.
 # Mondatkezdo helyzet: sor eleje, mondatzaro iras jel, VAGY kettospont utan
 # ("Valasz: Termeszetesen!"), es egy felsorolasjel ("- Termeszetesen!") sem
 # rejti el (Marveen review 2026-11-02, opcionalis pont).
 _SENTENCE_START = r"(?:^|(?<=[.!?:])\s)\s*(?:[-*\u2022]\s+)?"
+# "I'm happy to help with the move" tartalmi: a klise a ZARO alak ("Happy to
+# help!") vagy a mondatkezdo, vesszovel ("Happy to help, ..."). Ugyanigy a
+# "Szivesen segitek a koltozesben". (Marveen review 2, 2026-11-02.)
+_HELP_PREFIX = r"(?:i(?:'d|\s+would)\s+be\s+|i'm\s+|i\s+am\s+)?"
 AI_CLICHES = tuple(
     (label, re.compile(pattern, re.I | re.M))
     for label, pattern in (
-        ("Termeszetesen!", _SENTENCE_START + r"term[eé]szetesen\s*[!,]"),
-        ("Hogyne!", _SENTENCE_START + r"hogyne\s*!"),
+        ("Termeszetesen!", _SENTENCE_START + r"term[eé]szetesen\s*[!,:]"),
+        ("Hogyne!", _SENTENCE_START + r"hogyne\s*[!:]"),
         ("Remek kerdes!", _SENTENCE_START + r"(?:(?:remek|nagyszer[uű]|kiv[aá]l[oó]|zseni[aá]lis)\s+k[eé]rd[eé]s\s*[!,]|j[oó]\s+k[eé]rd[eé]s\s*!)"),
-        ("Szivesen segitek", r"\b(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\b"),
-        ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia|mi[- ]?(?:modell|asszisztens|nyelvi\s+modell)|ai[- ]?(?:modell|asszisztens|nyelvi\s+modell))\b"),
+        ("Szivesen segitek", r"(?:\b(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\s*(?:[.!]|$)|"
+         + _SENTENCE_START + r"(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\s*[,:])"),
+        ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia(?:\s*(?:[,.!]|$)|[- ]?(?:asszisztens|modell|nyelvi\s+modell)\b)"
+         r"|(?:mi|ai)[- ]?(?:modell|asszisztens|nyelvi\s+modell)\b)"),
         ("Remelem, ez segit", r"\brem[eé]lem,?\s+ez\s+seg[ií]t(?:ett)?\s*(?:[.!]|$)"),
-        ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,]"),
+        ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,:]"),
         ("Great question", _SENTENCE_START + r"(?:(?:great|excellent|fantastic)\s+question\s*[!,]|good\s+question\s*!)"),
-        ("Happy to help", r"\b(?:i(?:'d|\s+would)\s+be\s+|i'm\s+|i\s+am\s+)?(?:happy|glad)\s+to\s+help\b"),
+        ("Happy to help", r"(?:\b" + _HELP_PREFIX + r"(?:happy|glad)\s+to\s+help\s*(?:[.!]|$)|"
+         + _SENTENCE_START + _HELP_PREFIX + r"(?:happy|glad)\s+to\s+help\s*[,:])"),
         ("As an AI", r"\bas\s+an?\s+ai\b(?:\s+(?:language\s+)?(?:model|assistant)\b|\s*,|\s+i\b)"),
         ("I hope this helps", r"\b(?:i\s+)?hope\s+(?:this|that)\s+helps\s*(?:[.!]|$)"),
     )
@@ -1585,7 +1594,7 @@ AI_CLICHES = tuple(
 
 
 def ai_cliche_hits(prose: str):
-    """[(cimke, talalt szoveg)] -- minden mintabol az elso talalat, a prozan."""
+    """[(cimke, talalt szoveg)] -- minden mintabol az elso talalat, a nev-maszkolt szovegen."""
     hits = []
     for label, rx in AI_CLICHES:
         m = rx.search(prose)
@@ -2199,10 +2208,12 @@ def audit(text: str):
             f"DUPLA KOTOJEL gondolatjel-potlokent {dh} helyen (' -- ') -- Szabi jelzese: "
             "ugyanugy zavaro, mint az em dash. Ird at kotojel nelkul: kettospont, zarojel, vagy uj mondat."
         )
-    # AI-KLISE (#754): a lista es az indoklas az AI_CLICHES tablanal. A prozan
-    # merjuk, igy a kod-spanban idezett alak (pl. ez a szabaly-lista maga egy
-    # dokumentacioban) nem talalat.
-    cliches = ai_cliche_hits(prose)
+    # AI-KLISE (#754): a lista es az indoklas az AI_CLICHES tablanal. A NEV-maszkolt
+    # szovegen merjuk: a kod-span, URL, utvonal, e-mail kiesik (az idezett klise nem
+    # talalat), de a kotojeles szo megmarad. A teljes technikai maszk a kisbetus
+    # kotojeles azonositot is kiveszi, es azzal a "mesterseges intelligencia-asszisztens"
+    # lathatatlan volt (Marveen review 2, 2026-11-02, 3. pont).
+    cliches = ai_cliche_hits(strip_for_name(plain))
     if cliches:
         shown = "; ".join(f"{found!r} ({label})" for label, found in cliches[:5])
         problems.append(
