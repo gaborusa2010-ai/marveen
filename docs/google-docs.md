@@ -7,7 +7,13 @@ Google Docs API with no extra services to run.
 
 ## Install
 
-The helper needs two Google libraries. Install them into a dedicated venv so
+**No install needed if the shared Google OAuth token is set up**
+(`scripts/muhely/google_auth.py`, `store/.google-oauth.json`, documents scope).
+Without the libraries below, or without a gdocs-specific credential, the helper
+falls back to that token over plain REST: `python3 scripts/gdocs.py read <doc>`.
+Measured 2026-11-02: read and replace work this way on this machine.
+
+For the service-account or separate-OAuth paths the helper needs two Google libraries. Install them into a dedicated venv so
 they don't touch the system Python:
 
 ```bash

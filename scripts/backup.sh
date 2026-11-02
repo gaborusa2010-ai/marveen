@@ -117,13 +117,44 @@ echo "backup: mode=${BACKUP_MODE}  archive=$(basename "${ARCHIVE}")"
 # than the oldest kept full.
 KEEP_FULL="${KEEP_FULL:-2}"
 
+# Host-disk guard (WSL). The distro lives in an ext4.vhdx on a Windows drive;
+# the vhdx grows as the stage and the archive are written and never shrinks on
+# its own. 2026-11-01 both outages (14:42 and 20:00) were a backup run filling
+# C: (Volsnap 24 "insufficient disk space on volume C:" at 14:40:41, C: 2 GB
+# free at 20:00:47): every write inside the VM then stalled. So refuse to start
+# below a floor and say why; a skipped backup is an alert, a full C: is an outage.
+# Since 2026-11-02 06:09 the running distro's vhdx is on F: (Ubuntu-F, #750),
+# so F: is the drive that grows; C: is watched by host-disk-watch.sh. If the
+# fleet ever goes back to the C: distro, that copy has its own backup.sh.
+BACKUP_HOST_MOUNT="${BACKUP_HOST_MOUNT:-/mnt/f}"
+BACKUP_HOST_MIN_FREE_GB="${BACKUP_HOST_MIN_FREE_GB:-25}"
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  host_free_kb="$(df -Pk "${BACKUP_HOST_MOUNT}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  if [[ -z "${host_free_kb}" ]]; then
+    echo "backup: FAIL could not read free space on ${BACKUP_HOST_MOUNT} (the vhdx host drive), not starting" >&2
+    exit 7
+  fi
+  if (( host_free_kb < BACKUP_HOST_MIN_FREE_GB * 1024 * 1024 )); then
+    echo "backup: FAIL only $(( host_free_kb / 1024 / 1024 )) GB free on ${BACKUP_HOST_MOUNT} (floor ${BACKUP_HOST_MIN_FREE_GB} GB): the run could fill the vhdx host drive and freeze WSL, not starting" >&2
+    exit 7
+  fi
+fi
+
 mkdir -p "${BACKUP_DIR}"
 cd "${REPO_ROOT}"
 
 # Checkpoint WAL into the main DB file so the snapshot is self-contained.
-# Tolerate a missing sqlite3 CLI -- just fall back to copying the files as-is.
-if [[ -f store/claudeclaw.db ]] && command -v sqlite3 >/dev/null 2>&1; then
-  sqlite3 store/claudeclaw.db 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null || true
+# Tolerate a missing sqlite3 CLI -- fall back to python3's sqlite3 module, and
+# only if neither exists copy the files as-is. The WSL box has no sqlite3 CLI
+# (CLAUDE.md), so until 2026-11-02 this never ran there and every archive took
+# the DB and a live -wal copied at two different moments.
+if [[ -f store/claudeclaw.db ]]; then
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 store/claudeclaw.db 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null || true
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1], timeout=10); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.close()' \
+      store/claudeclaw.db >/dev/null 2>&1 || true
+  fi
 fi
 
 # --- Build the two path lists (each relative to its own base). -------------
@@ -654,6 +685,15 @@ fi
 if [[ -d "${HOME}/Library/LaunchAgents" ]]; then
   ( cd "${HOME}" && find Library/LaunchAgents -maxdepth 1 -name "com.${MAIN_AGENT_ID}.*.plist" -print ) >> "${HOMELIST}"
 fi
+# ...and the Linux equivalent. On WSL every fleet service and timer (dashboard,
+# channels, day-starts, budgets, watchdogs, the C:-drive watch) is a systemd
+# --user unit, and none of them was in the archive until 2026-11-02: the F:
+# restore test that morning (#750) found the live system had units the restored
+# copy lacked, e.g. marveen-host-disk-watch.timer, set up hours earlier. The
+# whole directory is taken (756K, 139 files on 2026-11-02), including the
+# *.target.wants/ symlinks, so `systemctl --user daemon-reload` after a restore
+# brings back the enabled state too, not just the unit text.
+add_if "${HOMELIST}" "${HOME}" .config/systemd/user
 
 # The sweep over the repo root can name a path one of the add_if lines above
 # already took. Duplicates are harmless to the copy (it just runs twice) but they
