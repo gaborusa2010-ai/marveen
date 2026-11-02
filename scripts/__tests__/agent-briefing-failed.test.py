@@ -58,6 +58,13 @@ check("another sender naming the id does not supersede", 15250 in got)
 check("an id inside a longer number does not supersede", 15265 in got and 15270 in got)
 check("an OLDER message naming the id does not supersede",
       [m["id"] for m in run([msg(20, "failed", 1), msg(10, "delivered", 2, content="re 20")])] == [10, 20])
+check("the recipient's own later reply naming the id supersedes",
+      [m["id"] for m in run([msg(15257, "failed", 44, content="kerdes"),
+                             msg(15418, "failed", 34, sender="x", to="cody",
+                                 content="valasz a 15257-re")])] == [])
+check("the recipient naming the id to a THIRD agent does not supersede",
+      [m["id"] for m in run([msg(30, "failed", 2),
+                             msg(31, "delivered", 1, sender="x", to="roxy", content="lasd 30")])] == [30])
 check("empty inbox -> no messages", run([]) == [])
 t = abb.render("x", [], run([]))
 check("empty inbox -> no NEM ERT EL section", "NEM ERT EL HOZZAD" not in t and "NINCS KIOSZTOTT MUNKAD" in t)

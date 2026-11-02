@@ -134,17 +134,18 @@ def _undelivered(m, now):
 
 
 def _superseded(m, msgs):
-    """A failed message is superseded when a NEWER message from the same sender to
-    the same agent names its id ("Ez felulirja a 15241-et", "re 15241"): the newer
-    one carries it forward, and listing both hands over a cancelled request
-    (Margo's #710 check: 15257 overrode 15241, the sheet listed both)."""
+    """A failed message is superseded when a NEWER message names its id and either
+    comes from the same sender to the same agent ("Ez felulirja a 15241-et",
+    "re 15241": the newer one carries it forward, Margo's #710 check) or is the
+    recipient's own reply to the sender ("valasz a 15257-re": it was handled after
+    all, 11-02 06:00 sheet handed Margo back 15257 she had answered in 15418)."""
     mid = m.get("id")
     if not isinstance(mid, int):
         return False
     pat = re.compile(r"(?<!\d)%d(?!\d)" % mid)
+    pair = (m.get("from_agent"), m.get("to_agent"))
     return any(isinstance(n.get("id"), int) and n["id"] > mid
-               and n.get("from_agent") == m.get("from_agent")
-               and n.get("to_agent") == m.get("to_agent")
+               and (n.get("from_agent"), n.get("to_agent")) in (pair, pair[::-1])
                and pat.search(n.get("content") or "")
                for n in msgs)
 
