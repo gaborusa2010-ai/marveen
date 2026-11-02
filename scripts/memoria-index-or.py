@@ -140,13 +140,17 @@ FRESH_SECONDS = 600
 
 def report_failure(state_path, url, token_file, sender, to, dry_run):
     """The absence alarm. systemd runs this when the sentinel service failed (non-zero
-    exit, traceback, missing python). If the failed run itself already posted
+    exit, traceback, guard import error). It runs with the same python as the main
+    unit, so a missing interpreter is NOT covered. If the failed run itself already posted
     (HIBA exits 2 after posting), the state file is fresh and carries message_id:
     nothing more to say. Otherwise one message goes out. Always exit 0: a failing
     failure-handler would only loop."""
     prev = read_state(state_path)
     now = int(time.time())
-    age = now - int(prev.get("measured_at") or 0)
+    try:
+        age = now - int(prev.get("measured_at") or 0)
+    except (TypeError, ValueError):   # hand-edited state: treat as unknown, i.e. stale
+        age = FRESH_SECONDS
     if age < FRESH_SECONDS and prev.get("message_id"):
         print(f"a bukott futas mar jelzett (id={prev['message_id']}, {age} mp-e), nincs tovabbi uzenet")
         return 0
@@ -173,13 +177,15 @@ def main(argv=None):
     ap.add_argument("--report-failure", action="store_true",
                     help="systemd OnFailure= hook: say that the sentinel run died, unless it already posted")
     a = ap.parse_args(argv)
-    g = load_guard()
-    mdir = os.environ.get("MEMORY_INDEX_DIR") or g.M
     url = os.environ.get("DASHBOARD_URL", "http://localhost:3420")
     token_file = os.environ.get("DASHBOARD_TOKEN_FILE", os.path.join(REPO, "store", ".dashboard-token"))
     state_path = os.environ.get("MEMORIA_INDEX_OR_STATE", os.path.join(REPO, "store", "memoria-index-or-state.json"))
     if a.report_failure:
+        # Before load_guard(): if memory-index-guard.py does not import (a bad merge),
+        # the main run dies with a traceback and THIS branch must still be able to say so.
         return report_failure(state_path, url, token_file, a.sender, a.to, a.dry_run)
+    g = load_guard()
+    mdir = os.environ.get("MEMORY_INDEX_DIR") or g.M
 
     now = int(time.time())
     prev = read_state(state_path)
