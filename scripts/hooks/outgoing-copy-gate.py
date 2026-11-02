@@ -1545,6 +1545,44 @@ _char_script = char_script   # the name this file used before the extraction
 
 EM_DASH = "—"
 
+# AI-KLISE (#754, rendszerterkep-teszt 2026-11-02, tetel 72): a CLAUDE.md "Nincs AI
+# klise" szabalya eddig csak emlekezet volt, a kapu nem merte. Itt a lista, amit
+# a kapu MEGTAGAD. Szandekosan SZUK: a nyito es zaro udvariassagi formulak, amik
+# TARTALOM NELKUL allnak egy mondat elejen vagy vegen. Ami mondat kozben, tartalmi
+# szerepben all ("ez termeszetesen nem jelenti", "a kerdes jo, de"), az NEM klise,
+# es a mintak ezt nem fogjak meg: a "Termeszetesen" es a "Certainly / Of course"
+# csak MONDATKEZDO helyzetben, vesszovel vagy felkialtojellel szamit.
+# Ekezet nelkuli alakot is fog (az ekezet-szabaly amugy is megallitana, de a
+# klise-uzenet pontosabb okot ad), kis- es nagybetut egyarant.
+# A PROZAN fut (strip_technical utan): kod-spanban idezett klise nem talalat.
+_SENTENCE_START = r"(?:^|(?<=[.!?])\s)\s*"
+AI_CLICHES = tuple(
+    (label, re.compile(pattern, re.I | re.M))
+    for label, pattern in (
+        ("Termeszetesen!", _SENTENCE_START + r"term[eé]szetesen\s*[!,]"),
+        ("Hogyne!", _SENTENCE_START + r"hogyne\s*!"),
+        ("Remek kerdes!", r"\b(?:remek|nagyszer[uű]|kiv[aá]l[oó]|j[oó]|zseni[aá]lis)\s+k[eé]rd[eé]s\b"),
+        ("Szivesen segitek", r"\b(?:sz[ií]vesen|[oö]r[oö]mmel)\s+seg[ií]tek\b"),
+        ("Mint mesterseges intelligencia", r"\bmint\s+(?:egy\s+)?(?:mesters[eé]ges\s+intelligencia|mi[- ]?(?:modell|asszisztens|nyelvi\s+modell)|ai[- ]?(?:modell|asszisztens|nyelvi\s+modell))\b"),
+        ("Remelem, ez segit", r"\brem[eé]lem,?\s+(?:ez\s+)?seg[ií]t(?:ett)?\b"),
+        ("Certainly!", _SENTENCE_START + r"(?:certainly|absolutely|of\s+course)\s*[!,]"),
+        ("Great question", r"\b(?:great|excellent|good|fantastic)\s+question\b"),
+        ("Happy to help", r"\b(?:i(?:'d|\s+would)\s+be\s+|i'm\s+|i\s+am\s+)?(?:happy|glad)\s+to\s+help\b"),
+        ("As an AI", r"\bas\s+an?\s+ai(?:\s+(?:language\s+)?(?:model|assistant))?\b"),
+        ("I hope this helps", r"\b(?:i\s+)?hope\s+(?:this|that)\s+helps\b"),
+    )
+)
+
+
+def ai_cliche_hits(prose: str):
+    """[(cimke, talalt szoveg)] -- minden mintabol az elso talalat, a prozan."""
+    hits = []
+    for label, rx in AI_CLICHES:
+        m = rx.search(prose)
+        if m:
+            hits.append((label, m.group(0).strip()))
+    return hits
+
 # GATEPERSIST816: owner-specific NAME rules load from an UNTRACKED local file,
 # not from this (public-repo) script. The generic checks (accents, em dash,
 # double hyphen, mixed-script) are universal Hungarian-copy QA and ship in the
@@ -2150,6 +2188,16 @@ def audit(text: str):
         problems.append(
             f"DUPLA KOTOJEL gondolatjel-potlokent {dh} helyen (' -- ') -- Szabi jelzese: "
             "ugyanugy zavaro, mint az em dash. Ird at kotojel nelkul: kettospont, zarojel, vagy uj mondat."
+        )
+    # AI-KLISE (#754): a lista es az indoklas az AI_CLICHES tablanal. A prozan
+    # merjuk, igy a kod-spanban idezett alak (pl. ez a szabaly-lista maga egy
+    # dokumentacioban) nem talalat.
+    cliches = ai_cliche_hits(prose)
+    if cliches:
+        shown = "; ".join(f"{found!r} ({label})" for label, found in cliches[:5])
+        problems.append(
+            f"AI-KLISE, {len(cliches)} db: {shown} -- allo szabaly (CLAUDE.md: nincs AI klise). "
+            "Hagyd el, es kezdd a tartalommal; a kerdest valaszold meg, ne minositsd."
         )
     # 4. ellenorzes (GATEHOMOGLIF816): vegyes irasrendszeru szo. SZANDEKOSAN
     # NEM magyar-kapuzott (elteres Marveen specjetol, ervvel): az FP-vedelem
