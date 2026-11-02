@@ -181,24 +181,53 @@ CLASH="$(comm -12 \
   <(git diff --name-only --no-renames HEAD "$MT_TREE" | sort) \
   <(git diff --name-only --no-renames HEAD | sort))"
 
-if [ -n "$CLASH" ]; then
-  DETAIL="$(echo "$CLASH" | tr '\n' ' ')"
-  NEWSTATE="nem mentett helyi modositas utkozne: $DETAIL"
-  # Quiet repeat: same result AND same cause as last tick -> state only, no wake-up.
-  if [ "$PREV_RESULT" = "blocked" ] && [ "$PREV_DETAIL" = "$NEWSTATE" ]; then
-    state blocked "$NEWSTATE"
-    echo "$TS BLOCKED (unchanged, not notified): $DETAIL" >&2
+# blocked_report <state detail> <journal word> <notify text> -- state + notify for a
+# merge the working tree blocks; quiet when the same cause repeats (same rule as
+# the error and conflict paths: the first block wakes marveen, the repeats do not).
+blocked_report() {
+  if [ "$PREV_RESULT" = "blocked" ] && [ "$PREV_DETAIL" = "$1" ]; then
+    state blocked "$1"
+    echo "$TS BLOCKED (unchanged, not notified): $2" >&2
     exit 0
   fi
-  state blocked "$NEWSTATE"
-  notify "$(printf '%s\n' \
+  state blocked "$1"
+  notify "$3"
+  echo "$TS BLOCKED $2" >&2
+  exit 0
+}
+
+if [ -n "$CLASH" ]; then
+  DETAIL="$(echo "$CLASH" | tr '\n' ' ')"
+  blocked_report "nem mentett helyi modositas utkozne: $DETAIL" "by local edits: $DETAIL" "$(printf '%s\n' \
     "[UPSTREAM-SYNC] Az upstream kiadott ${BEHIND} commitot, de NEM tudtam osszefesulni." \
     "Ok: ezeket a fajlokat a frissites is modositja, es a munkakonyvtarban is modositva vannak:" \
     "$DETAIL" \
     "Nem nyultam hozzajuk. Amig ez all, a frissites tovabbra is elbukik a pull fazisban." \
     "Teendo: commitold vagy dobd el ezeket a helyi modositasokat, aztan: bash scripts/upstream-sync.sh")"
-  echo "$TS BLOCKED by local edits: $DETAIL" >&2
-  exit 0
+fi
+
+# Files the merge would CREATE that already exist here outside git (#746).
+# merge-tree never looks at the working tree, so it says clean; the real merge
+# then refuses an UNTRACKED one with the names buried in git's message (the
+# report above lost them: "Please move or remove them before you merge"), and
+# an IGNORED one it overwrites with no message at all (measured 2026-11-02: a
+# locally excluded file silently became upstream's copy). Both stop here, with
+# the names, before any merge runs.
+ADDED="$(git diff --name-only --diff-filter=A --no-renames HEAD "$MT_TREE" | sort)"
+CLOBBER=""
+if [ -n "$ADDED" ]; then
+  CLOBBER="$({ comm -12 <(printf '%s\n' "$ADDED") <(git ls-files --others --exclude-standard | sort)
+               comm -12 <(printf '%s\n' "$ADDED") <(git ls-files --others --ignored --exclude-standard | sort) \
+                 | sed 's/$/ (ignored)/'; } | sed '/^$/d')"
+fi
+if [ -n "$CLOBBER" ]; then
+  DETAIL="$(echo "$CLOBBER" | tr '\n' ' ')"
+  blocked_report "kovetetlen helyi fajlt irna felul: $DETAIL" "by untracked files: $DETAIL" "$(printf '%s\n' \
+    "[UPSTREAM-SYNC] Az upstream kiadott ${BEHIND} commitot, de NEM tudtam osszefesulni." \
+    "Ok: ezeket a fajlokat a frissites ujonnan hozna letre, de a munkakonyvtarban mar leteznek, git-en kivul:" \
+    "$DETAIL" \
+    "Nem nyultam hozzajuk. A kovetetlent a merge nem irna felul (elbukna), a figyelmen kivul hagyottat (ignored) viszont szo nelkul felulirna, ezert all meg itt mindketto." \
+    "Teendo: commitold, nevezd at vagy torold ezeket a helyi fajlokat, aztan: bash scripts/upstream-sync.sh")"
 fi
 
 # conflict_report <space-separated paths> [first line] -- state + notify for a

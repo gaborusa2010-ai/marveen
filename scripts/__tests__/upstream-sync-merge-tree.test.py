@@ -198,6 +198,72 @@ with tempfile.TemporaryDirectory() as td:
     run(work, env)
     check('merge refused repeat: one notification', notes(work) == 1, notes(work))
 
+# --- 8. upstream adds files that exist here UNTRACKED (#746) ------------------
+# merge-tree cannot see the working tree, so it said clean; the real merge then
+# refused ("Please move or remove them before you merge") and the error report
+# lost the file names. Now the dry run names them and no merge runs.
+def add_n_dx(seed):
+    write(os.path.join(seed, 'n'), 'upstream\n')
+    os.makedirs(os.path.join(seed, 'd'))
+    write(os.path.join(seed, 'd', 'x'), 'upstream\n')
+    git(seed, 'add', 'n', 'd/x')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_n_dx)
+    npath = os.path.join(work, 'n')
+    os.makedirs(os.path.join(work, 'd'))
+    write(npath, 'mine, untracked\n')
+    write(os.path.join(work, 'd', 'x'), 'mine too\n')
+    before = (open(npath).read(), os.stat(npath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    p = run(work)
+    st = state(work)
+    check('untracked clobber: exit 0', p.returncode == 0, p.stderr)
+    check('untracked clobber: state blocked naming n and d/x',
+          st['result'] == 'blocked' and {'n', 'd/x'} <= set(st['detail'].split()), st)
+    after = (open(npath).read(), os.stat(npath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    check('untracked clobber: n bytes, mtime and HEAD unchanged', before == after, (before, after))
+    check('untracked clobber: no merge was run', 'reset: moving to HEAD' not in git(work, 'reflog')
+          and not os.path.exists(os.path.join(work, '.git', 'MERGE_HEAD')))
+    note_text = open(os.path.join(work, 'store', 'notify.log')).read()
+    check('untracked clobber: one notification naming the files',
+          notes(work) == 1 and {'n', 'd/x'} <= set(note_text.split()), (notes(work), note_text))
+    run(work)
+    check('untracked clobber repeat: quiet', notes(work) == 1 and state(work)['result'] == 'blocked', notes(work))
+
+# --- 9. upstream adds a file that exists here IGNORED (#746) ------------------
+# The real merge OVERWRITES an ignored file without a word (measured 2026-11-02),
+# so this one is data loss, not a refusal: it must block the same way.
+def add_i(seed):
+    write(os.path.join(seed, 'i'), 'upstream\n')
+    git(seed, 'add', 'i')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_i)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\ni\n')
+    ipath = os.path.join(work, 'i')
+    write(ipath, 'mine, ignored\n')
+    p = run(work)
+    st = state(work)
+    check('ignored clobber: state blocked naming i as ignored',
+          st['result'] == 'blocked' and 'i (ignored)' in st['detail'], st)
+    check('ignored clobber: i kept, no merge run',
+          open(ipath).read() == 'mine, ignored\n' and 'reset: moving to HEAD' not in git(work, 'reflog')
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, open(ipath).read())
+    check('ignored clobber: one notification', notes(work) == 1, notes(work))
+    run(work)
+    check('ignored clobber repeat: quiet', notes(work) == 1, notes(work))
+
+# --- 10. an unrelated untracked file: still merges, file kept ----------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_n_dx)
+    write(os.path.join(work, 'u'), 'unrelated\n')
+    p = run(work)
+    st = state(work)
+    check('unrelated untracked: merged, u kept, n and d/x created',
+          st['result'] == 'merged' and open(os.path.join(work, 'u')).read() == 'unrelated\n'
+          and open(os.path.join(work, 'n')).read() == 'upstream\n'
+          and os.path.exists(os.path.join(work, 'd', 'x')), (st, p.stderr))
+
 print()
 if FAILS:
     print('%d FAILED: %s' % (len(FAILS), FAILS), file=sys.stderr)
