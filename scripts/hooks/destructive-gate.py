@@ -260,47 +260,159 @@ def _word(tok):
     return re.sub(r'["\'\\]', '', tok), bool(re.search(r'[$*?\[{`]', tok))
 
 
-def _cmd_word(seg):
-    """(szavak, k): a szegmens szavai (_word alak) es a PARANCSNEV indexe, az elotte
-    allo ertekadasok, kulcsszavak, atlatszo burkolok es atiranyitasok atlepese utan.
-    k == len(szavak), ha nincs parancsnev."""
-    words = [_word(t) for t in re.split(r'\s+', seg.strip()) if t]
-    k = 0
+# Az atlatszo elotag KULON szoban erteket vivo kapcsoloi (`env -u VAR`, `exec -a NEV`,
+# `time -o FAJL`); minden mas `-x` szo az elotag mogott egy kapcsolo.
+_PREFIX_VALUES = {'env': ('-u', '--unset', '-C', '--chdir'), 'exec': ('-a',),
+                  'time': ('-f', '-o', '--format', '--output')}
+
+
+def _after_transparent(words, k, base):
+    """Az atlatszo elotag es a kapcsoloi utani szo indexe (`env -i bash`, `command -p bash`,
+    `exec -a nev bash`). Az `env -S...` szo a helyen marad: _runs_words egy szoban allo
+    parancsnak olvassa."""
+    values = _PREFIX_VALUES.get(base, ())
+    j = k + 1
+    while j < len(words):
+        x = words[j][0]
+        if x == '--':
+            return j + 1
+        if not x.startswith('-') or x.startswith(('-S', '--split-string')):
+            return j
+        j += 2 if x in values else 1
+    return j
+
+
+def _skip_prefix(words, k):
+    """A parancsnev indexe k-tol: ertekadasok, kulcsszavak, atlatszo burkolok (a
+    kapcsoloikkal egyutt) es atiranyitasok atlepese utan (len(words), ha nem maradt semmi)."""
     while k < len(words):
         w = words[k][0]
-        if (re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS
-                or os.path.basename(w) in _TRANSPARENT):
+        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS:
             k += 1
+        elif os.path.basename(w) in _TRANSPARENT:
+            k = _after_transparent(words, k, os.path.basename(w))
         elif re.match(r'^([0-9]*[<>]|&>)', w):
             # atiranyitas a parancsnev elott; a puszta operator a kovetkezo szot viszi
             k += 2 if re.match(r'^([0-9]*[<>]+&?|&>>?)$', w) else 1
         else:
             break
+    return k
+
+
+def _cmd_word(seg):
+    """(szavak, k): a szegmens szavai (_word alak) es a PARANCSNEV indexe, az elotte
+    allo ertekadasok, kulcsszavak, atlatszo burkolok es atiranyitasok atlepese utan.
+    k == len(szavak), ha nincs parancsnev. Az alhejet vagy folyamat-helyettesitest zaro
+    `)` lezarja az egyszeru parancsot (`(bash) <<EOF`, `tee >(bash) <<EOF`, #748 review):
+    az utana allo szavak nem az operandusai."""
+    words = [_word(t) for t in re.split(r'\s+', seg.replace(')', ' ) ').strip()) if t]
+    k = _skip_prefix(words, 0)
+    for i in range(k + 1, len(words)):
+        if words[i][0] == ')':
+            words = words[:i]
+            break
     return words, k
+
+
+# Burkolok, amelyek a stdin-juket a futtatott parancsnak adjak at. `values`: a KULON
+# szoban erteket vivo kapcsolok (`sudo -u x`, `timeout -k 1 5`); `skip`: a parancs elotti
+# pozicionalis operandusok szama (timeout IDOTARTAM, chroot GYOKER, flock FAJL). A burkolo
+# mogotti parancsot ugyanugy olvassuk, mint barmelyik masikat. A JS iker tablaja
+# (lib/heredoc-program.mjs WRAPPERS) ezzel azonos. (A kapu sajat _PREFIX_WRAPPERS listaja
+# a parancsnev-kereseshez valo, mas alak, mas cel.)
+_STDIN_WRAPPERS = {
+    'sudo': (('-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-T', '-U', '--user', '--group', '--chdir',
+              '--host', '--prompt', '--role', '--type', '--other-user'), 0),
+    'doas': (('-u', '-C'), 0),
+    'timeout': (('-k', '-s', '--kill-after', '--signal'), 1),
+    'nice': (('-n', '--adjustment'), 0),
+    'ionice': (('-c', '-n', '-p', '-P', '-u'), 0),
+    'stdbuf': (('-i', '-o', '-e'), 0),
+    'strace': (('-e', '-o', '-p', '-s', '-a', '-b', '-E', '-P', '-S', '-X', '-I', '-O', '-u'), 0),
+    'ltrace': (('-e', '-o', '-p', '-s', '-a', '-n', '-u', '-l', '-x'), 0),
+    'chroot': (('--userspec', '--groups'), 1),
+    'flock': (('-w', '-E', '--timeout', '--conflict-exit-code'), 1),
+    'setsid': ((), 0),
+    'unbuffer': ((), 0),
+    'watch': (('-n', '-d', '--interval', '--differences'), 0),
+    'caffeinate': (('-t', '-w'), 0),
+    'unshare': (('-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root'), 0),
+    'nsenter': (('-t', '--target', '-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-r', '--root'), 0),
+    'systemd-run': (('-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine',
+                     '--slice', '--on-active', '--on-calendar'), 0),
+}
+# `sudo -s <<EOF` / `sudo -i <<EOF` parancs nelkul: a felhasznalo shellje olvassa a torzset.
+_SHELL_FLAGS_OF = {'sudo': ('-s', '-i', '--shell', '--login'), 'doas': ('-s',)}
+# Ezek a torzset a futtatott parancs ARGUMENTUMAIVA teszik (`xargs -I{} sh -c {}`):
+# a torzs program, ha barhol mogottuk ertelmezo all.
+_ARGV_FEEDERS = ('xargs', 'parallel')
+# Tavoli es kontener-futtatok: a parancs az elso ertelmezo-szo mogottuk; a sajat
+# kapcsolo-alakjukat (host, image, -v, -p, ...) nem modellezzuk.
+_REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl')
+# Egy utvonal, ami MAGA a standard bemenet: `bash /dev/stdin <<EOF` a torzset futtatja.
+_STDIN_PATH_RE = re.compile(r'^/(?:dev/stdin|(?:dev|proc/self)/fd/0+)$')
+
+
+def _after_stdin_wrapper(words, k, spec):
+    """A burkolo altal futtatott parancs indexe a kapcsoloi es operandusai utan; None, ha nincs."""
+    values, skip = spec
+    j = k + 1
+    while j < len(words):
+        x = words[j][0]
+        if x == '--':
+            j += 1
+            break
+        if x.startswith('-'):
+            j += 2 if x in values else 1
+            continue
+        if skip > 0:
+            skip -= 1
+            j += 1
+            continue
+        break
+    return j if j < len(words) else None
 
 
 def _cmd_runs_stdin(seg):
     """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
     words, k = _cmd_word(seg)
-    if k >= len(words):
+    return _runs_words(words, k, 0)
+
+
+def _runs_words(words, k, depth):
+    """A szavak k-adik poziciojatol allo parancs a stdin-jet programkent futtatja-e.
+    Az ertelmezonek PARANCS-pozicioban kell allnia: kozvetlenul, vagy egy ismert alaku
+    burkolo mogott. Egy ismeretlen parancs ARGUMENTUMA nem program (#748 review:
+    `grep -c python <<EOF`, `git commit -m "node fix" -F - <<EOF` adat)."""
+    k = _skip_prefix(words, k)
+    if k >= len(words) or depth > _MAX_NEST:
         return False
     w, dyn = words[k]
     base = os.path.basename(w)
     if dyn or base in ('source', '.', 'eval'):
         return True
-    if any(x.startswith(('-S', '--split-string')) for x, _ in words[k:]):
+    if base.startswith(('-S', '--split-string')):
         return True                # env -S'python3 -': a parancs egy szoban
     if base not in INTERPRETERS:
-        # Ismeretlen burkolo mogott allo ertelmezo (timeout, strace, ...) ugyanugy
-        # lefuttatja a torzset. A burkolo argumentum-alakjat nem talalgatjuk: marad
-        # a regi, szelesebb olvasat.
-        return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k:])
+        if base in _STDIN_WRAPPERS:
+            j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
+            if j is not None:
+                return _runs_words(words, j, depth + 1)
+            return any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:])
+        if base in _ARGV_FEEDERS:
+            return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k + 1:])
+        if base in _REMOTE_RUNNERS:
+            for j in range(k + 1, len(words)):
+                if os.path.basename(words[j][0]) in INTERPRETERS:
+                    return _runs_words(words, j, depth + 1)
+            return False
+        return False
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
-        if xdyn or x in ('-', '-s'):
+        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x):
             return True
         if re.match(r'^([0-9]*[<>]+&?|&>>?)$', x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
@@ -413,6 +525,14 @@ def _enclosing_runs(parts, funcs):
         sep, outer = parts[i - 1], parts[i - 2]
         if sep not in ('$(', '`', '('):
             return False
+        hs = sep != '(' and re.search(r'<<<\s*["\']?\s*$', outer)
+        if hs:
+            # `bash <<<"$(cat <<EOF)"`: a here-string a KULSO parancs stdin-je (#748 review)
+            if _simple_runs(outer[:hs.start()], funcs):
+                return True
+            i -= 2
+            depth += 1
+            continue
         procsub = sep == '(' and outer.rstrip()[-1:] in ('<', '>')
         if sep == '(' and not procsub:
             return False           # alhej: `( cat <<EOF )` -- a torzs a cat-e
@@ -469,6 +589,13 @@ def _heredoc_runs_body(cmd, h, funcs=None):
       eval "$(cat <<EOF)" / . <(cat <<SH) / bash <(cat <<SH) -> a KULSO parancs futtatja
       while read l; do $l; done <<EOF -> a ciklus torzseben dinamikus parancs
       f(){ bash; }; f <<SH            -> a fuggveny torzseben shell
+    A #748 review (Marveen, 2026-11-02) alakjai, az elso kor meg atengedte oket:
+      bash /dev/stdin <<EOF, bash /dev/fd/0 <<EOF -> a "szkriptfajl" MAGA a stdin
+      bash 3<<EOF <&3                 -> a dup a 3-as leiro torzset a stdin-re teszi
+      (bash) <<EOF, tee >(bash) <<EOF -> alhej / folyamat-helyettesites a shell korul
+      bash <<<"$(cat <<EOF)"          -> a here-string a helyettesitest teszi stdin-ne
+    es egy TULTILTAS, amit az elso kor hozott be: egy ismeretlen parancs ARGUMENTUMA
+    (`grep -c python <<EOF`) nem program; az ertelmezo parancs-pozicioban kell alljon.
     A JS iker: scripts/hooks/lib/heredoc-program.mjs (child guard, egress-kapu); a kozos
     esetfajl scripts/__tests__/heredoc-program-cases.json, mindket oldal arra van pinelve.
     """
@@ -485,13 +612,17 @@ def _heredoc_runs_body(cmd, h, funcs=None):
         head = head[:fd.start()]
         if fd.group(1).lstrip('0'):
             # `bash 0<<A 3<<B`: a 3-as leiron a torzs nem a stdin, ADAT, kiveve ha a sor a
-            # leirot fajlkent olvassa (`bash /dev/fd/3 3<<SH`): akkor az a program.
+            # leirot fajlkent olvassa (`bash /dev/fd/3 3<<SH`: az utvonal a `-` helyett all)
+            # vagy a stdin-re masolja (`bash 3<<SH <&3`, #748 review): akkor a parancsot
+            # ugy olvassuk, mintha a stdin-jen kapna a torzset.
             n = fd.group(1).lstrip('0')
-            line = head + cmd[h.tail_start:h.line_end]
-            if not re.search(r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n, line):
+            path = r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n
+            dup = r'(?:^|\s)0?<&\s*0*%s-?(?=\s|$)' % n
+            line = head + ' ' + re.split(r'\|\||&&|[;]|(?<![<>])&(?!>)', cmd[h.tail_start:h.line_end])[0]
+            if not re.search(path, line) and not re.search(dup, line):
                 return False
-            words, k = _cmd_word(head)
-            return k < len(words)
+            line = re.sub(dup, ' ', re.sub(path, '-', line))
+            return _simple_runs(line, funcs)
     parts = re.split(r'(\|\||&&|(?<![<>])&(?!>)|[;|(`]|\$\()', head)
     tail = re.split(r'\|\||&&|[;]|(?<![<>])&(?!>)', cmd[h.tail_start:h.line_end])[0]
     pipe = tail.split('|')

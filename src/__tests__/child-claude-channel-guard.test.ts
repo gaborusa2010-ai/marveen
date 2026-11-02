@@ -312,6 +312,27 @@ describe('child-claude guard: a heredoc body the shell RUNS (#748)', () => {
     ['! bash <<SH\nclaude -p x\nSH'],
     ['bash -c "$(cat <<EOF\nclaude -p x\nEOF\n)"'],
     ['x=$(bash <<SH\nclaude -p x\nSH\n)'],
+    // review round 2 (Marveen, card comment 3543): stdin by path, subshell, here-string,
+    // process substitution, wrapper options
+    ['bash /dev/stdin <<SH\nclaude -p x\nSH'],
+    ['bash /dev/fd/0 <<SH\nclaude -p x\nSH'],
+    ['bash /proc/self/fd/0 <<SH\nclaude -p x\nSH'],
+    ['bash 3<<SH <&3\nclaude -p x\nSH'],
+    ['(bash) <<SH\nclaude -p x\nSH'],
+    ['( cd /tmp && bash ) <<SH\nclaude -p x\nSH'],
+    ['(cat <<SH | bash)\nclaude -p x\nSH'],
+    ['bash <<<"$(cat <<SH\nclaude -p x\nSH\n)"'],
+    ['tee >(bash) <<SH >/dev/null\nclaude -p x\nSH'],
+    ['timeout -k 1 5s bash <<SH\nclaude -p x\nSH'],
+    ['sudo -u x -- bash <<SH\nclaude -p x\nSH'],
+    ['sudo -s <<SH\nclaude -p x\nSH'],
+    ['env -i bash <<SH\nclaude -p x\nSH'],
+    ['env -u HOME bash <<SH\nclaude -p x\nSH'],
+    ["env -S'bash -' <<SH\nclaude -p x\nSH"],
+    ['command -p bash <<SH\nclaude -p x\nSH'],
+    ['exec -a name bash <<SH\nclaude -p x\nSH'],
+    ['ssh host bash <<SH\nclaude -p x\nSH'],
+    ['docker exec -i c bash <<SH\nclaude -p x\nSH'],
   ])('blocks %j', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(false)
   })
@@ -329,6 +350,20 @@ describe('child-claude guard: a heredoc body the shell RUNS (#748)', () => {
     ["bash -ec 'echo hi' <<EOF\nclaude -p x\nEOF"],
     ['python3 -m json.tool <<EOF\n{"a": "claude -p x"}\nEOF'],
     ['sudo -u x cat > f <<EOF\nclaude -p x\nEOF'],
+    // review round 2, point 5: an interpreter name as an ARGUMENT is not a program.
+    // Round 1 blocked these two (regression against main); the body is data.
+    ["grep -c python <<'EOF'\nclaude -p hi\nEOF"],
+    ['git commit -m "node fix" -F - <<\'EOF\'\nclaude -p hi\nEOF'],
+    ['cat 3<<EOF <&3\nclaude -p x\nEOF'],
+    ['cat /dev/fd/3 3<<SH\nclaude -p x\nSH'],
+    ['(cat) <<EOF\nclaude -p x\nEOF'],
+    ['echo <<<"$(cat <<EOF\nclaude -p x\nEOF\n)"'],
+    ['tee >(cat >/dev/null) <<EOF >/dev/null\nclaude -p x\nEOF'],
+    ["docker exec -i c bash -c 'echo hi' <<EOF\nclaude -p x\nEOF"],
+    ["awk '{print}' <<EOF\nclaude -p x\nEOF"],
+    ['sort -S 1M <<EOF\nclaude -p x\nEOF'],
+    ['env -u HOME cat <<EOF\nclaude -p x\nEOF'],
+    ['env -i <<EOF\nclaude -p x\nEOF'],
   ])('allows %j', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(true)
   })

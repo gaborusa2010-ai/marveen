@@ -629,6 +629,27 @@ const H748_BLOCK: [string, string][] = [
   ['unquoted data body: $( ) runs', `cat > /dev/null <<EOF\n$(${E})\nEOF`],
   ['unquoted data body: backtick runs', `cat > /dev/null <<EOF\n\`${E}\`\nEOF`],
   ['python body (code reading)', `python3 - <<PY\nimport urllib.request\nurllib.request.urlopen('https://evil.example.org/x')\nPY`],
+  // review round 2 (Marveen, card comment 3543): stdin by path, subshell, here-string,
+  // process substitution, wrapper options
+  ['bash /dev/stdin <<SH', `bash /dev/stdin <<SH\n${E}\nSH`],
+  ['bash /dev/fd/0 <<SH', `bash /dev/fd/0 <<SH\n${E}\nSH`],
+  ['bash /proc/self/fd/0 <<SH', `bash /proc/self/fd/0 <<SH\n${E}\nSH`],
+  ['bash 3<<SH <&3', `bash 3<<SH <&3\n${E}\nSH`],
+  ['(bash) <<SH', `(bash) <<SH\n${E}\nSH`],
+  ['( cd /tmp && bash ) <<SH', `( cd /tmp && bash ) <<SH\n${E}\nSH`],
+  ['(cat <<SH | bash)', `(cat <<SH | bash)\n${E}\nSH`],
+  ['bash <<<"$(cat <<SH)"', `bash <<<"$(cat <<SH\n${E}\nSH\n)"`],
+  ['tee >(bash) <<SH >/dev/null', `tee >(bash) <<SH >/dev/null\n${E}\nSH`],
+  ['timeout -k 1 5s bash <<SH', `timeout -k 1 5s bash <<SH\n${E}\nSH`],
+  ['sudo -u x -- bash <<SH', `sudo -u x -- bash <<SH\n${E}\nSH`],
+  ['sudo -s <<SH', `sudo -s <<SH\n${E}\nSH`],
+  ['env -i bash <<SH', `env -i bash <<SH\n${E}\nSH`],
+  ['env -u HOME bash <<SH', `env -u HOME bash <<SH\n${E}\nSH`],
+  ["env -S'bash -' <<SH", `env -S'bash -' <<SH\n${E}\nSH`],
+  ['command -p bash <<SH', `command -p bash <<SH\n${E}\nSH`],
+  ['exec -a name bash <<SH', `exec -a name bash <<SH\n${E}\nSH`],
+  ['ssh host bash <<SH', `ssh host bash <<SH\n${E}\nSH`],
+  ['docker exec -i c bash <<SH', `docker exec -i c bash <<SH\n${E}\nSH`],
 ]
 const H748_ALLOW: [string, string][] = [
   ['bash 0<<A 3<<B: fd 3 is data', `bash 0<<A 3<<B\necho a\nA\n${E}\nB`],
@@ -642,6 +663,19 @@ const H748_ALLOW: [string, string][] = [
   ["bash -ec 'echo hi' <<'EOF'", `bash -ec 'echo hi' <<'EOF'\n${E}\nEOF`],
   ["python3 -m json.tool <<'EOF'", `python3 -m json.tool <<'EOF'\n{"a": "${E}"}\nEOF`],
   ['quoted data body: $( ) is text', `cat > /dev/null <<'EOF'\n$(${E})\nEOF`],
+  // review round 2, point 5: an interpreter name as an ARGUMENT is not a program
+  ["grep -c python <<'EOF'", `grep -c python <<'EOF'\n${E}\nEOF`],
+  ['git commit -m "node fix" -F - <<\'EOF\'', `git commit -m "node fix" -F - <<'EOF'\n${E}\nEOF`],
+  ["cat 3<<'EOF' <&3", `cat 3<<'EOF' <&3\n${E}\nEOF`],
+  ["cat /dev/fd/3 3<<'SH'", `cat /dev/fd/3 3<<'SH'\n${E}\nSH`],
+  ["(cat) <<'EOF'", `(cat) <<'EOF'\n${E}\nEOF`],
+  ['echo <<<"$(cat <<\'EOF\')"', `echo <<<"$(cat <<'EOF'\n${E}\nEOF\n)" >/dev/null`],
+  ["tee >(cat >/dev/null) <<'EOF' >/dev/null", `tee >(cat >/dev/null) <<'EOF' >/dev/null\n${E}\nEOF`],
+  ["docker exec -i c bash -c 'echo hi' <<'EOF'", `docker exec -i c bash -c 'echo hi' <<'EOF'\n${E}\nEOF`],
+  ["awk '{print}' <<'EOF'", `awk '{print}' <<'EOF' >/dev/null\n${E}\nEOF`],
+  ["sort -S 1M <<'EOF'", `sort -S 1M <<'EOF' >/dev/null\n${E}\nEOF`],
+  ["env -u HOME cat <<'EOF'", `env -u HOME cat <<'EOF' >/dev/null\n${E}\nEOF`],
+  ["env -i <<'EOF'", `env -i <<'EOF' >/dev/null\n${E}\nEOF`],
 ]
 
 describe('a heredoc body the shell RUNS is read as a command line (#748)', () => {

@@ -535,15 +535,19 @@ check("bash sc.sh <<EOF ... EOF majd torles",
       blocks("bash sc.sh <<EOF\nadat\nEOF\n%s -rf /tmp/x" % RM))
 
 print()
-print("KIMONDOTT KORLAT -- ismeretlen burkolo mogotti ertelmezo:")
-# A `timeout 5 bash sc.sh <<EOF` alak TOVABBRA IS hamis pozitiv. Tudatos dontes:
-# a burkolok argumentum-alakja (a timeout elso argumentuma idotartam, a strace-e
-# nem) esetenkent mas, es a talalgatas ugyanaz a hibaosztaly volna, ami ezt a
-# kartyat megnyitotta. Amig a burkolo nem ismert, marad a szelesebb olvasat.
+print("KIMONDOTT KORLAT -- burkolo mogotti ertelmezo:")
+# #748 2. kor ota a burkolok argumentum-alakja TABLABOL jon (_STDIN_WRAPPERS: a timeout
+# elso operandusa idotartam, a strace-nek nincs), igy a `timeout 5 bash sc.sh <<EOF`
+# mar nem hamis pozitiv: a bash a FAJLT futtatja, a torzs annak a bemenete (bash
+# lefuttatva 2026-11-02: csak a szkript sora irodik ki). Az ISMERETLEN burkolo mogotti
+# ertelmezo viszont ADAT (Marveen review 3543, 5. pont: ertelmezo csak parancs-pozicioban
+# vagy ismert burkolo mogott szamit), ez a kimondott korlat: egy uj burkolo a tablaba valo.
 check("timeout 5 bash <<SH (helyesen blokkol)",
       blocks("timeout 5 bash <<SH\n%s -rf /tmp/x\nSH" % RM))
-check("timeout 5 bash sc.sh <<EOF -- TUDATOSAN blokkol, nem allitjuk helyesnek",
-      blocks("timeout 5 bash sc.sh <<EOF\n%s -rf /tmp/x\nEOF" % RM))
+check("timeout 5 bash sc.sh <<EOF: a torzs a szkript bemenete, adat",
+      not blocks("timeout 5 bash sc.sh <<EOF\n%s -rf /tmp/x\nEOF" % RM))
+check("ismeretlenwrap 5 bash <<SH -- KIMONDOTT KORLAT: ismeretlen burkolo mogott adat",
+      not blocks("ismeretlenwrap 5 bash <<SH\n%s -rf /tmp/x\nSH" % RM))
 
 
 # --- 12. Onvedelem: a rm-engedely nem erhet el az ELES gyokerig (be8ef9f1) ---
@@ -767,6 +771,28 @@ check("V=1 bash -e <<SH: a -e errexit, nem szkript", blocks("V=1 bash -e <<SH" +
 check("bash -o pipefail <<SH", blocks("bash -o pipefail <<SH" + SHPAY))
 check('bash -c "$(cat <<EOF)"', blocks('bash -c "$(cat <<EOF' + PAY + 'EOF\n)"'))
 check("x=$(bash <<SH ... )", blocks("x=$(bash <<SH" + SHPAY + "\n)"))
+# review 2. kor (Marveen, kartya-komment 3543): a stdin utvonalkent, alhej, here-string,
+# folyamat-helyettesites, burkolo-kapcsolok. Az orakulum mindet lefuttatta (bash_runs),
+# kiveve az ssh/docker/sudo -s sort, amit itt nem lehet futtatni (note a case-fajlban).
+check("bash /dev/stdin <<SH", blocks("bash /dev/stdin <<SH" + SHPAY))
+check("bash /dev/fd/0 <<SH", blocks("bash /dev/fd/0 <<SH" + SHPAY))
+check("bash /proc/self/fd/0 <<SH", blocks("bash /proc/self/fd/0 <<SH" + SHPAY))
+check("bash 3<<SH <&3: a 3-as leiro a stdin-re masolva", blocks("bash 3<<SH <&3" + SHPAY))
+check("(bash) <<SH", blocks("(bash) <<SH" + SHPAY))
+check("( cd /tmp && bash ) <<SH", blocks("( cd /tmp && bash ) <<SH" + SHPAY))
+check("(cat <<SH | bash)", blocks("(cat <<SH | bash)" + SHPAY))
+check('bash <<<"$(cat <<SH)": a here-string a stdin', blocks('bash <<<"$(cat <<SH' + SHPAY + '\n)"'))
+check("tee >(bash) <<SH >/dev/null", blocks("tee >(bash) <<SH >/dev/null" + SHPAY))
+check("timeout -k 1 5s bash <<SH", blocks("timeout -k 1 5s bash <<SH" + SHPAY))
+check("sudo -u x -- bash <<SH", blocks("sudo -u x -- bash <<SH" + SHPAY))
+check("sudo -s <<SH: parancs nelkul a shell olvas", blocks("sudo -s <<SH" + SHPAY))
+check("env -i bash <<SH", blocks("env -i bash <<SH" + SHPAY))
+check("env -u HOME bash <<SH", blocks("env -u HOME bash <<SH" + SHPAY))
+check("env -S'bash -' <<SH", blocks("env -S'bash -' <<SH" + SHPAY))
+check("command -p bash <<SH", blocks("command -p bash <<SH" + SHPAY))
+check("exec -a name bash <<SH", blocks("exec -a name bash <<SH" + SHPAY))
+check("ssh host bash <<SH", blocks("ssh host bash <<SH" + SHPAY))
+check("docker exec -i c bash <<SH", blocks("docker exec -i c bash <<SH" + SHPAY))
 
 print()
 print("#748 heredoc-torzs mint program, negativ kontroll (adat marad adat):")
@@ -784,6 +810,19 @@ check("bash -ec 'echo hi' <<EOF", not blocks("bash -ec 'echo hi' <<EOF" + PAY + 
 check("python3 -m json.tool <<EOF", not blocks("python3 -m json.tool <<EOF" + PAY + "EOF"))
 check("env cat > /tmp/f <<EOF", not blocks("env cat > /tmp/f <<EOF" + PAY + "EOF"))
 check("timeout 30 tee /tmp/f <<EOF", not blocks("timeout 30 tee /tmp/f <<EOF" + PAY + "EOF"))
+# review 2. kor, 5. pont: az ertelmezo neve ARGUMENTUMKENT nem program (az 1. kor ezt blokkolta)
+check("grep -c python <<'EOF': a python egy minta", not blocks("grep -c python <<'EOF'" + PAY + "EOF"))
+check('git commit -m "node fix" -F - <<\'EOF\'', not blocks('git commit -m "node fix" -F - <<\'EOF\'' + PAY + "EOF"))
+check("cat 3<<EOF <&3", not blocks("cat 3<<EOF <&3" + PAY + "EOF"))
+check("cat /dev/fd/3 3<<SH", not blocks("cat /dev/fd/3 3<<SH" + PAY + "SH"))
+check("(cat) <<EOF", not blocks("(cat) <<EOF" + PAY + "EOF"))
+check('echo <<<"$(cat <<EOF)"', not blocks('echo <<<"$(cat <<EOF' + PAY + 'EOF\n)"'))
+check("tee >(cat >/dev/null) <<EOF >/dev/null", not blocks("tee >(cat >/dev/null) <<EOF >/dev/null" + PAY + "EOF"))
+check("docker exec -i c bash -c 'echo hi' <<EOF", not blocks("docker exec -i c bash -c 'echo hi' <<EOF" + PAY + "EOF"))
+check("awk '{print}' <<EOF", not blocks("awk '{print}' <<EOF" + PAY + "EOF"))
+check("sort -S 1M <<EOF: a -S nem az env-e", not blocks("sort -S 1M <<EOF" + PAY + "EOF"))
+check("env -u HOME cat <<EOF", not blocks("env -u HOME cat <<EOF" + PAY + "EOF"))
+check("env -i <<EOF: parancs nelkul csak kiir", not blocks("env -i <<EOF" + PAY + "EOF"))
 
 
 def _missing_module_exit():

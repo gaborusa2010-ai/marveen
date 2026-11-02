@@ -796,6 +796,258 @@
     true
    ],
    "bash_runs": true
+  },
+  {
+   "name": "dev_stdin",
+   "cmd": "bash /dev/stdin <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "dev_fd0",
+   "cmd": "bash /dev/fd/0 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "proc_fd0",
+   "cmd": "bash /proc/self/fd/0 <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "fd3_dup",
+   "cmd": "bash 3<<SH <&3\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_bash",
+   "cmd": "(bash) <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_cd_bash",
+   "cmd": "( cd /tmp && bash ) <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "subshell_pipe",
+   "cmd": "(cat <<SH | bash)\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "herestring_sub",
+   "cmd": "bash <<<\"$(cat <<SH\nX\nSH\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "herestring_py",
+   "cmd": "python3 - <<< \"$(cat <<PY\nimport os; os.system(\"X\")\nPY\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "tee_procsub",
+   "cmd": "tee >(bash) <<SH >/dev/null\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "timeout_k",
+   "cmd": "timeout -k 1 5s bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "sudo_dashdash",
+   "cmd": "sudo -u x -- bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "command_p_bash",
+   "cmd": "command -p bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "exec_a_bash",
+   "cmd": "exec -a name bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "env_u_bash",
+   "cmd": "env -u HOME bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "env_S_word",
+   "cmd": "env -S'bash -' <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "ssh_bash",
+   "cmd": "ssh host bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "docker_exec_bash",
+   "cmd": "docker exec -i c bash <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "sudo_s",
+   "cmd": "sudo -s <<SH\nX\nSH",
+   "expect": [
+    true
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "data_grep_python",
+   "cmd": "grep -c python <<'EOF'\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_git_node",
+   "cmd": "git commit -m \"node fix\" -F - <<'EOF'\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_cat_dup",
+   "cmd": "cat 3<<EOF <&3\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_cat_devfd3",
+   "cmd": "cat /dev/fd/3 3<<SH\nX\nSH",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_subshell_cat",
+   "cmd": "(cat) <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_echo_herestr",
+   "cmd": "echo <<<\"$(cat <<EOF\nX\nEOF\n)\" >/dev/null",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "data_tee_procsub_cat",
+   "cmd": "tee >(cat >/dev/null) <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "docker_exec_bash_c",
+   "cmd": "docker exec -i c bash -c 'echo hi' <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "note": "not comparable: the oracle cannot run this command here (no remote host, no container, no root); the intent is the documented shape",
+   "bash_runs": null
+  },
+  {
+   "name": "awk_data",
+   "cmd": "awk '{print}' <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "sort_S_data",
+   "cmd": "sort -S 1M <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "env_u_cat",
+   "cmd": "env -u HOME cat <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "env_i_alone",
+   "cmd": "env -i <<EOF >/dev/null\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }
