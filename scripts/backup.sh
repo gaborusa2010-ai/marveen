@@ -548,8 +548,11 @@ fi
 # A gyoker-blokkban (lentebb) a kizaras HELYES MARAD: az altala fedett mappak
 # (scripts 181, src 581, docs 51, templates 15 kovetett fajl) mind gitben vannak,
 # ott a .bak valoban eldobhato masolat.
+# progress/ and *.pid are channel runtime, excluded here as in the agents/
+# block: a seen-marker deleted between this list and staging failed the whole
+# 2026-11-02 20:00 run with exit 6 (#765).
 if [[ -d .claude ]]; then
-  find .claude -type f -print >> "${REPOLIST}"
+  find .claude -type f -not -path '*/progress/*' -not -name '*.pid' -print >> "${REPOLIST}"
 fi
 
 # EVERYTHING ELSE IN THE REPO ROOT, inverted the same way agents/ is above.
