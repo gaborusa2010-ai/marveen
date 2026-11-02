@@ -33,3 +33,18 @@ describe('countConsecutiveSkips treats skipped-precheck as transparent', () => {
     expect(countConsecutiveSkips('t', 'a').skips).toBe(3)
   })
 })
+
+// #243 (dc80b854): a 'missed' row (catch-up too stale to run) is NOT a run.
+describe('countConsecutiveSkips counts missed as a skip', () => {
+  it('missed does not reset the streak or become the last fire', () => {
+    seq(['fired', 'missed', 'skipped', 'skipped'])
+    const r = countConsecutiveSkips('t', 'a')
+    expect(r.skips).toBe(3)
+    expect(r.lastFiredTs).toBe(BASE)
+    expect(r.reasons).toContain('missed')
+  })
+  it('a run after a missed one still resets', () => {
+    seq(['missed', 'fired', 'skipped'])
+    expect(countConsecutiveSkips('t', 'a').skips).toBe(1)
+  })
+})

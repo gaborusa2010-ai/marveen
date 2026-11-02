@@ -5594,9 +5594,14 @@ export function countConsecutiveSkips(name: string, agent: string, window = 400)
     // skips on both sides of it still add up, and the last real fire stays
     // the reference for the silence bar.
     if (r.status === 'skipped-precheck') continue
-    if (r.status === 'skipped') {
+    // 'missed' is a skip too (#243, dc80b854): the catch-up path writes it for
+    // an occurrence that was too stale to run, i.e. the task did NOT run. It
+    // used to fall through to the "last fired" branch, so the silence bar was
+    // measured from a moment the task was down and the streak was cut short.
+    if (r.status === 'skipped' || r.status === 'missed') {
       skips++
-      if (r.reason) reasons.add(r.reason)
+      const reason = r.status === 'missed' ? 'missed' : r.reason
+      if (reason) reasons.add(reason)
       continue
     }
     lastFiredTs = r.ts
