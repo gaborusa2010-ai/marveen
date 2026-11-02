@@ -131,6 +131,30 @@ the Docker volumes (3) are **separate** and must be moved on their own.
    the week reappears. That is the safe direction for a backup, but it is real:
    after a restore, the tree may be a superset of what the old machine had.
 
+   **Before the rsync onto a tree that already holds a DB, delete its old
+   `store/claudeclaw.db-wal` and `-shm`.** Measured in the 2026-11-02 F: restore
+   (#750): restoring onto an older copy of the distro left that copy's
+   evening `-wal` beside the fresh `claudeclaw.db`. Whether an archive carries a
+   `-wal` depends on the night (backup.sh checkpoints first, and a truncated
+   one may not be there), and whatever rsync does not overwrite stays: SQLite
+   would replay a stale one into the new DB at first open, board and memories
+   mixed from two times, or a corrupt file. Stop the dashboard first, then
+   `rm -f <repo>/store/claudeclaw.db-wal <repo>/store/claudeclaw.db-shm`,
+   then rsync, then `python3 -c "import sqlite3;print(sqlite3.connect('<repo>/store/claudeclaw.db').execute('pragma integrity_check').fetchone())"`.
+
+   **systemd user units (WSL/Linux).** Since 2026-11-02 the archive carries
+   `home/.config/systemd/user` (every service and timer, with the
+   `*.target.wants/` links). After the rsync: `systemctl --user daemon-reload`,
+   then `systemctl --user list-timers --all` and compare with the old box.
+   Archives from before 2026-11-02 do NOT have them.
+
+   **Deliberately NOT in the archive** (found missing in the 2026-11-02 test,
+   left out on purpose): Claude login credentials (log in again per agent,
+   `docs/tudas/generalt/fleet-auth.md`: never copy a `.credentials.json`),
+   agent conversation transcripts (`~/.claude/projects/*/*.jsonl`, runtime bulk;
+   only the `memory/` dirs are taken) and `logs/`. A restore onto a fresh
+   machine comes up without old transcripts and logs; that is expected.
+
    Verify perms: `ls -l <repo>/store/.dashboard-token <repo>/.claude/channels/*/.env`
    should show `-rw-------`. (`scripts/backup.sh` already archives BOTH the install-scoped
    and the legacy home path -- measured 2026-09-23, lines 545-558 -- so a restore from the

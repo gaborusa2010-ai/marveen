@@ -141,9 +141,21 @@ SKIP_SUFFIXES_ANYWHERE = (".pid",)
 #       agents/cody/external/solidcraft/target, rebuilt by `cargo build`.
 #   */tests/_work -- added 2026-10-28, same pairing: test scratch dirs that
 #       videogyar's test_edit.py copies from tests/fixtures (5.3 GB measured).
+#   .claude/channels/worksource/*/serving.json -- added 2026-10-29, a FILE
+#       (the walk matches files against this list too): the worksource bridge's
+#       heartbeat ({agent, pid, ts}, WORKSOURCE_HEARTBEAT_FILE in
+#       src/web/worksource-queue.ts), wrong the moment the bridge restarts.
+#       backup.sh never takes it (its channels find is -maxdepth 2). It showed
+#       as "home/.claude 4 fajl" for the agents idle since the last manifest.
+#   .claude/logs -- added 2026-11-01 (mentes-orszem msg 15706): one file,
+#       channel-image-resize.log, 135 lines on 2026-11-01, every one a test
+#       run (134 under /tmp/hsf913-fx-*, 1 under a scratchpad imgtest dir).
+#       Diagnostic output only, no state to restore.
 SKIP_PATHS = (".claude/channels/worksource/*/done",
               "*/target/debug", "*/target/release", "*/target/tmp",
-              "*/tests/_work")
+              "*/tests/_work",
+              ".claude/channels/worksource/*/serving.json",
+              ".claude/logs", ".claude/logs/*")
 
 # Suffixes skipped ONLY under the repo's store/ -- the checker's half of a rule
 # backup.sh already states out loud in its store block:
@@ -283,6 +295,9 @@ def walk_files(base, top, skip_names, newer_than=None):
             if is_backup_copy(f):
                 continue
             if f.endswith(SKIP_SUFFIXES_ANYWHERE):
+                continue
+            if any(fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, f), base), pat)
+                   for pat in SKIP_PATHS):
                 continue
             if base == REPO and top == "store" and f.endswith(SKIP_SUFFIXES_STORE):
                 continue
