@@ -2,6 +2,9 @@
 """Bad-input table and approval path of szamla-kor.py (SPEC 6.2 and section 4).
 
 Usage: muhely-szamla-kor-cases.py <worktree> <store-src> <tmpdir>
+<store-src> is normally the synthetic fixture written by muhely-szamla-kor-fixture.py
+(#758); the cases pick candidates()[0] and candidates()[-1], see the fixture
+for the ledger order they rely on.
 Every case gets its own sandbox copy of the scripts and of the store files the
 run reads; the store source itself is only read.  Prints one ok/FAIL line per
 case and exits 1 if any case failed.
@@ -155,7 +158,9 @@ write(root, "muhely-jobs.json", ledger)
 rc, out, err = run(root, "draft", "--date", "2026-11-01",
                    "--run", run_toml(root, day["client"], [day["id"]]))
 manifest = json.load(open(os.path.join(rundir(root, "2026-11-01"), "run.json"), encoding="utf-8"))
-entry = manifest["invoices"][0]
+# The overridden invoice is appended after the other clients' defaults, so
+# it is not invoices[0] once the store has more than one client.
+entry = next(x for x in manifest["invoices"] if x["client"] == day["client"] and not x["key"].endswith("--cis"))
 desc = json.load(open(entry["json_path"], encoding="utf-8"))["lines"][0]["desc"] if entry.get("json_path") else ""
 pdf = subprocess.run([sys.executable, os.path.join(root, "scripts", "muhely", "pdftext.py"), entry.get("pdf_path") or "/nonexistent"],
                      text=True, capture_output=True).stdout
