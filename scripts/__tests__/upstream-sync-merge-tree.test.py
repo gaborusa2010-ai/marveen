@@ -321,6 +321,28 @@ with tempfile.TemporaryDirectory() as td:
           and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2)
     check('untracked parent file: one notification', notes(work) == 1, notes(work))
 
+# --- 15. the clobber check itself fails: no merge (#776) -----------------------
+# An empty CLOBBER after a failed check used to read as "nothing collides", and
+# the real merge overwrote the ignored file the check never got to look for.
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_i)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\ni\n')
+    ipath = os.path.join(work, 'i')
+    write(ipath, 'mine, ignored\n')
+    env = shim_git(td, 'if [ "$1" = ls-files ]; then echo "fatal: simulated ls-files" >&2; exit 128; fi')
+    p = run(work, env)
+    st = state(work)
+    check('clobber check error: exit 0', p.returncode == 0, p.stderr)
+    check('clobber check error: state error with the git message',
+          st['result'] == 'error' and 'simulated ls-files' in st['detail'], st)
+    check('clobber check error: i kept, no merge run',
+          open(ipath).read() == 'mine, ignored\n' and 'reset: moving to HEAD' not in git(work, 'reflog')
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, open(ipath).read())
+    check('clobber check error: one notification naming the error',
+          notes(work) == 1 and 'simulated ls-files' in open(os.path.join(work, 'store', 'notify.log')).read(), notes(work))
+    run(work, env)
+    check('clobber check error repeat: quiet', notes(work) == 1 and state(work)['result'] == 'error', notes(work))
+
 # --- 14. a name with a space comes out whole ---------------------------------
 def add_spaced(seed):
     write(os.path.join(seed, 'my file'), 'upstream\n')
@@ -333,6 +355,24 @@ with tempfile.TemporaryDirectory() as td:
     st = state(work)
     check('spaced name: blocked and named whole',
           st['result'] == 'blocked' and 'my file' in st['detail'], (st, p.stderr))
+
+# --- 16. a name with a NEWLINE is one word in the state and the notification --
+# The block was right before; the name arrived as two words (#776 side note).
+def add_newlined(seed):
+    write(os.path.join(seed, 'a\nb'), 'upstream\n')
+    git(seed, 'add', 'a\nb')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_newlined)
+    write(os.path.join(work, 'a\nb'), 'mine\n')
+    p = run(work)
+    st = state(work)
+    note_text = open(os.path.join(work, 'store', 'notify.log')).read()
+    check('newlined name: blocked, shown as one escaped word in state and notification',
+          st['result'] == 'blocked' and 'a\\nb' in st['detail'].split() and 'a\\nb' in note_text.split(), (st, p.stderr))
+    check('newlined name: file kept, no merge run',
+          open(os.path.join(work, 'a\nb')).read() == 'mine\n'
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2)
 
 print()
 if FAILS:
