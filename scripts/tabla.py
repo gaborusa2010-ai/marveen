@@ -279,15 +279,39 @@ def wait_reason(args):
     return {"kind": "date", "note": note, "until": deadline_ts(args.hatarido)}
 
 
+def evidence_arg(args):
+    # The move endpoint stores this in done_evidence (src/web/routes/kanban.ts, max 2000).
+    if args.bizonyitek is None:
+        return None
+    if args.status != "done":
+        raise UsageError("--bizonyitek only goes with done")
+    text = text_arg(args.bizonyitek, "--bizonyitek").strip()
+    if len(text) > 2000:
+        raise UsageError("--bizonyitek is longer than 2000 characters")
+    return text
+
+
 def cmd_mozgat(args, identity):
     wait = wait_reason(args)
+    evidence = evidence_arg(args)
     card = resolve_card(identity, args.ref, full=False)
     path = "/api/kanban/%s/move" % urllib.parse.quote(str(card["id"]), safe="")
     payload = {"status": args.status, "actor": identity}
     if wait is not None:
         payload["wait"] = wait
+    if evidence is not None:
+        payload["evidence"] = evidence
     status, body, _ = call(identity, "POST", path, payload)
     require_ok(status, body)
+    # Upstream 4484998c (#728): an agent's done without evidence answers 200 ok with
+    # status "testing". A bare "ok" here would hide that the card did not close.
+    landed = body.get("status", args.status) if isinstance(body, dict) else args.status
+    if landed != args.status:
+        note = body.get("note") or ""
+        print(f"the card moved to {landed}, not {args.status}. {note}".strip(), file=sys.stderr)
+        if args.json:
+            json_out(body)
+        raise SystemExit(3)
     json_out(body) if args.json else print("ok")
 
 
@@ -436,7 +460,7 @@ def parser():
     p = add(sub, "kartya"); p.add_argument("ref"); p.set_defaults(func=cmd_kartya)
     p = add(sub, "lista"); p.add_argument("--mind", action="store_true"); p.add_argument("--statusz", choices=STATUSES); p.set_defaults(func=cmd_lista)
     p = add(sub, "komment"); p.add_argument("ref"); group = p.add_mutually_exclusive_group(required=True); group.add_argument("text", nargs="?"); group.add_argument("--fajl"); p.add_argument("--allapot"); p.set_defaults(func=cmd_komment)
-    p = add(sub, "mozgat"); p.add_argument("ref"); p.add_argument("status", choices=STATUSES); p.add_argument("--ok"); p.add_argument("--hatarido"); p.set_defaults(func=cmd_mozgat)
+    p = add(sub, "mozgat"); p.add_argument("ref"); p.add_argument("status", choices=STATUSES); p.add_argument("--ok"); p.add_argument("--hatarido"); p.add_argument("--bizonyitek"); p.set_defaults(func=cmd_mozgat)
     p = add(sub, "uzenet"); p.add_argument("id", type=int); p.set_defaults(func=cmd_uzenet)
     p = add(sub, "uzenetek"); p.add_argument("--nyitott", action="store_true"); p.add_argument("--limit", type=int); p.add_argument("--before", type=int); p.set_defaults(func=cmd_uzenetek)
     p = add(sub, "lezar"); p.add_argument("id", type=int); p.add_argument("--eredmeny"); p.add_argument("--csendes", action="store_true"); p.set_defaults(func=cmd_lezar)

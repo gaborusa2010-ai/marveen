@@ -7,7 +7,7 @@ vi.mock('../settings-store.js', async (importOriginal) => {
 })
 
 import {
-  createLabel, getKanbanCard, getLabelsForCard, initDatabase, listKanbanCards, listLabels, normaliseDueDate,
+  createLabel, getKanbanCard, getLabelsForCard, initDatabase, listKanbanCards, listLabels, normaliseCardDate,
 } from '../db.js'
 import { callKanban } from './kanban-features-helpers.js'
 
@@ -72,7 +72,7 @@ describe('kanban client intake API', () => {
     const response = await callKanban('POST', '/api/kanban/intake', { client_name: 'Anna', request: 'Kérés', wanted_by: '2026-10-17' })
     // The date field's convention: a bare day is stored as UTC midnight of that day.
     expect(getKanbanCard(response.body.id)!.due_date).toBe(Date.UTC(2026, 9, 17) / 1000)
-    expect(normaliseDueDate('2026-10-17')).toBe(Date.UTC(2026, 9, 17) / 1000)
+    expect(normaliseCardDate('2026-10-17')).toBe(Date.UTC(2026, 9, 17) / 1000)
   })
 
   it('titles the card from the first non-empty line of the request', async () => {

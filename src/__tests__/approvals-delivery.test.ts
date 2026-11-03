@@ -97,7 +97,7 @@ describe('wiring contracts on the route source', () => {
     // sliced at its first `return true` (the 403 guard's) and still swallowed
     // the branch's own notifyMainAgent call.
     const post = ROUTE.slice(ROUTE.indexOf("path === '/api/approvals' && method === 'POST'"))
-    const owner = post.lastIndexOf('notifyOwner(approval)')
+    const owner = post.lastIndexOf('notifyOwner(approval, chatApprovedMessageId)')
     const main = post.lastIndexOf('notifyMainAgent(approval)')
     expect(owner).toBeGreaterThan(0)
     expect(main).toBeGreaterThan(owner)
@@ -110,7 +110,9 @@ describe('wiring contracts on the route source', () => {
     const post = ROUTE.slice(ROUTE.indexOf("path === '/api/approvals' && method === 'POST'"))
     const start = post.indexOf('if (typeof pre_approved_by')
     expect(start).toBeGreaterThan(0)
-    const branch = post.slice(start, post.indexOf('notifyOwner(approval)', start))
+    // Upstream's asking-path call is notifyOwner(approval, chatApprovedMessageId):
+    // match the prefix, or indexOf is -1 and the slice runs to the file's end.
+    const branch = post.slice(start, post.indexOf('notifyOwner(approval', start))
     expect(branch).toContain('resolveApproval(id')
     expect(branch).toContain('notifyMainAgent(approval)')
     expect(branch).not.toContain('notifyOwner(')

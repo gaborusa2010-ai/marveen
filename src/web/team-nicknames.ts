@@ -1,9 +1,10 @@
 // Character nicknames for the kanban board.
 //
-// The owner asked for them (Telegram msg 3550, 2026-09-22): "Jo lenne ha a
-// becenevuk is benne lenne: peldaul Roxy a Pixel Magus lehetne egy varazslo
-// karakter". They belong with the portraits he asked for in msg 3547 -- the
-// nickname is what the picture is a picture OF.
+// An optional character name per team member, shown next to the plain name on
+// the kanban lanes, on the cards and on the Team page. It belongs with the
+// portraits: the nickname is what the picture is a picture OF.
+// Local provenance: the owner asked for them (Telegram msg 3550, 2026-09-22),
+// with the portraits (msg 3547).
 //
 // Deployment-local, like the model-profile map: store/ is gitignored, so a
 // fleet's own names never leave the machine, and config-examples/ documents the
@@ -11,7 +12,7 @@
 // renders with its name, which is what the board did before this existed.
 //
 // Keyed by the assignee name as the kanban knows it (the owner's full name, the
-// bot name, or an agent id), matched case-insensitively so "Roxy" and "roxy"
+// bot name, or an agent id), matched case-insensitively so "Alice" and "alice"
 // are the same person.
 import { existsSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'

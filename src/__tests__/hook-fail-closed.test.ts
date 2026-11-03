@@ -254,8 +254,8 @@ describe('the real security gates on a disposable copy', () => {
     const entries = (settings.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[])
       .flatMap((e) => e.hooks.map((h) => ({ matcher: e.matcher, command: h.command })))
     const security = entries.filter((e) => /outgoing-copy-gate\.py|email-approval-gate\.py|egress-gate\.mjs/.test(e.command))
-    // 14 on the local fork: upstream's 13 plus the egress gate on Bash.
-    expect(security.length).toBe(14)
+    // 16 on the local fork: upstream's 15 plus the egress gate on Bash.
+    expect(security.length).toBe(16)
     for (const e of security) {
       expect(e.command, e.matcher).toContain(GATE_FAIL_CLOSED_TAG)
       const rel = e.command.match(/scripts\/(hooks\/[a-z-]+\.(?:py|mjs))/)![1]

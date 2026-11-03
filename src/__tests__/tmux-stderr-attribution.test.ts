@@ -88,14 +88,12 @@ describe('tmux stderr attribution (TMUXWINDOWATTR920)', () => {
   // per site whether absence is an error or the expected answer.
   const ALLOWED_LEAKS: Array<{ file: string; sub: string; count: number; why: string }> = [
     { file: 'agent-worker.ts', sub: 'send-keys', count: 3, why: 'worker start/restart key injection; a missing worker session is caught by the caller' },
-    { file: 'channel-mcp-reconnect.ts', sub: 'send-keys', count: 8, why: '/mcp reconnect keystrokes into the main pane; the caller reads the pane afterwards' },
+    { file: 'channel-mcp-reconnect.ts', sub: 'send-keys', count: 3, why: 'the typed /mcp command, its Enter and the dialog-dismiss Escape; the module reads the reply off the pane' },
     { file: 'channel-monitor.ts', sub: 'send-keys', count: 3, why: 'Enter/Escape nudges into a pane the monitor has just measured as present' },
     { file: 'channel-monitor.ts', sub: 'respawn-pane', count: 3, why: 'respawn-pane -k is the hard-restart action itself; its failure is reported by the caller' },
     { file: 'channel-plugin-unlock.ts', sub: 'send-keys', count: 9, why: 'consent-dialog keystrokes; the caller captures the pane between steps' },
     { file: 'channel-plugin-unlock.ts', sub: 'capture-pane', count: 3, why: 'pane capture around the keystrokes above; failure returns null to the caller' },
     { file: 'context-restart-gate-runner.ts', sub: 'send-keys', count: 2, why: '/clear + Enter into a gated session the runner has just verified' },
-    { file: 'routes/background-tasks.ts', sub: 'capture-pane', count: 1, why: 'background task output capture; null on failure' },
-    { file: 'routes/background-tasks.ts', sub: 'kill-session', count: 1, why: 'killing a finished background session; "already dead" is expected' },
   ]
 
   const SUBS = ['list-panes', 'has-session', 'kill-session', 'send-keys', 'capture-pane', 'respawn-pane',
@@ -171,13 +169,17 @@ describe('tmux stderr attribution (TMUXWINDOWATTR920)', () => {
     // and a leak fixed WITHOUT updating the list fails too (count down) -- the
     // list is the debt ledger and must stay true.
     expect(measured).toEqual(allowed)
-    expect(allowed.reduce((n, e) => n + e.count, 0)).toBe(33)
+    // 26 = the union the v1.45.0 merge produced: upstream's reconnect rewrite (3,
+    // efc5ae7f) and background-tasks going async (12b7e59a), plus our two extra
+    // channel-plugin-unlock calls (#642 / a663528f: send-keys 9, capture-pane 3).
+    expect(allowed.reduce((n, e) => n + e.count, 0)).toBe(26)
   })
 
   it('the converted sites are NOT in the leak scan (positive control on the real tree)', () => {
     const keys = new Set(scanLeaks().map((l) => `${l.file}|${l.sub}`))
     for (const k of ['channel-monitor.ts|list-panes', 'channel-monitor.ts|has-session', 'context-restart-gate-runner.ts|list-panes',
-      'channel-plugin-unlock.ts|list-panes', 'stuck-tool-call-watcher.ts|list-panes', 'agent-worker.ts|kill-session']) {
+      'channel-plugin-unlock.ts|list-panes', 'stuck-tool-call-watcher.ts|list-panes', 'agent-worker.ts|kill-session',
+      'routes/background-tasks.ts|capture-pane', 'routes/background-tasks.ts|kill-session']) {
       expect(keys.has(k), k).toBe(false)
     }
   })

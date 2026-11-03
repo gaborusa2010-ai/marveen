@@ -93,6 +93,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/kanban/") and path.endswith("/move"):
             if body and body.get("status") == "waiting" and "/b8acdfb6aaaa/" in path:
                 return self.send(409, {"error": "blocked move hint"})
+            if body and body.get("status") == "done" and not body.get("evidence"):
+                return self.send(200, {"ok": True, "status": "testing", "evidence_required": True, "note": "evidence note"})
             return self.send(200, {"ok": True})
         if path.startswith("/api/kanban/"):
             card_id = path.rsplit("/", 1)[-1]
@@ -224,6 +226,19 @@ for name, extra in (("waiting without --ok", ("waiting",)),
                     ("a date before 1970", ("waiting", "--ok", "x", "--hatarido", "1960-01-01")),
                     ("a blank --ok", ("waiting", "--ok", "   ")),
                     ("an --ok over 200 characters", ("waiting", "--ok", "y" * 201))):
+    before = len(requests)
+    r = run("mozgat", "2", *extra)
+    check(name + " is a usage error with no request", r.returncode == 2 and len(requests) == before)
+r = run("mozgat", "2", "done")
+check("done without evidence that lands in testing is exit 3, not ok",
+      r.returncode == 3 and "ok" not in r.stdout.split() and "moved to testing, not done" in r.stderr and "evidence note" in r.stderr)
+r = run("mozgat", "2", "done", "--bizonyitek", "  vitest 12/12  ")
+check("--bizonyitek is sent as evidence", r.returncode == 0 and r.stdout.strip() == "ok" and last_move().get("evidence") == "vitest 12/12")
+r = run("mozgat", "2", "testing")
+check("a move without --bizonyitek sends no evidence", r.returncode == 0 and "evidence" not in last_move())
+for name, extra in (("--bizonyitek on a non-done move", ("testing", "--bizonyitek", "x")),
+                    ("a blank --bizonyitek", ("done", "--bizonyitek", "  ")),
+                    ("a --bizonyitek over 2000 characters", ("done", "--bizonyitek", "y" * 2001))):
     before = len(requests)
     r = run("mozgat", "2", *extra)
     check(name + " is a usage error with no request", r.returncode == 2 and len(requests) == before)

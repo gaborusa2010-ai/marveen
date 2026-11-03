@@ -9,6 +9,7 @@
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import type { CostOpsConfig, CostConfidence } from './config.js'
+import { evaluateAgentBudgets, type AgentBudgetStatus } from './agent-budgets.js'
 
 // ---- month math (UTC, deterministic given `now`) ---------------------------
 
@@ -182,6 +183,7 @@ export interface CostSummary {
     cache_read_tokens: number
     cache_creation_tokens: number
   }
+  agent_budgets: AgentBudgetStatus[]
   data_freshness: number | null
   config_present: boolean
   config_errors: string[]
@@ -268,7 +270,8 @@ export function getCostSummary(
     }
   }
 
-  // token_usage: VOLUME/ACTIVITY only -- NOT priced in v0.1 (no model column).
+  // token_usage: VOLUME/ACTIVITY only here. Tokens are priced only for the
+  // per-agent budgets, from the operator's token_prices (see agent-budgets.ts).
   const tu = db.prepare(`
     SELECT COUNT(*) as calls, COUNT(DISTINCT agent) as agents,
       COALESCE(SUM(input_tokens),0) as input_tokens,
@@ -292,11 +295,12 @@ export function getCostSummary(
     breakdown: { fixed_manual: round2(breakdown.fixed_manual), provider: round2(breakdown.provider), estimate: round2(breakdown.estimate) },
     budget,
     token_usage: {
-      note: 'volume/activity only -- not priced in v0.1 (token_usage has no model column; token->cost mapping lands in v0.2 after model/session enrichment)',
+      note: 'volume/activity only -- not priced here (tokens are priced only for per-agent budgets, from the operator token_prices)',
       calls: tu.calls, agents: tu.agents,
       input_tokens: tu.input_tokens, output_tokens: tu.output_tokens,
       cache_read_tokens: tu.cache_read_tokens, cache_creation_tokens: tu.cache_creation_tokens,
     },
+    agent_budgets: evaluateAgentBudgets(db, config, now),
     data_freshness: latestFreshness,
     config_present: opts.configExists ?? true,
     config_errors: opts.configErrors ?? [],

@@ -62,6 +62,12 @@ export function buildMarveenIdentityCore(
   }
 }
 
+// CORPAVATAR1024 (owner decision 2026-10-18): the bot's and the owner's portraits stay
+// public (auth-gate exempts these two GETs), but no other website may embed them. The
+// dashboard and the Bridge webview load them by a relative URL, from the dashboard's own
+// origin, which same-origin allows; another site's <img> is refused by the browser.
+const AVATAR_CORP = 'same-origin'
+
 export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promise<boolean> {
   const { req, res, path, method } = ctx
 
@@ -92,7 +98,8 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
       // this to pin/label the owner's own message thread instead of a hardcoded
       // literal, so a renamed install recognizes its real owner.
       ownerName: currentOwnerName(),
-      // See the note on `nickname` in routes/agents.ts -- same field, main agent.
+      // Character nickname (store/team-nicknames.json), same field as on /api/agents.
+      // See the note on `nickname` in routes/agents.ts for why it is a field.
       nickname: nicknameFor(currentBotName()),
       description,
       model: getActiveMarveenModel(),
@@ -192,6 +199,7 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
   }
 
   if (path === '/api/marveen/avatar' && method === 'GET') {
+    res.setHeader('Cross-Origin-Resource-Policy', AVATAR_CORP)
     // no-cache, NOT max-age. This used to be `cacheSeconds: 3600`, on the
     // assumption that the only writer is the upload route -- which bumps the
     // frontend avatar epoch and re-busts the URL for the session that did it.
@@ -202,6 +210,7 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
     // 3586: "de nekem meg mindig a regi robotos kepek jonnek elo".
     // no-cache still caches -- it only forces revalidation, so an unchanged
     // avatar costs one 304 (a couple hundred bytes), not a re-download.
+    // (Upstream serves this with cacheSeconds: 3600; kept no-cache locally.)
     for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) {
       const p = join(PROJECT_ROOT, 'store', `marveen-avatar${ext}`)
       if (existsSync(p)) { serveFile(req, res, p); return true }
@@ -212,17 +221,18 @@ export async function tryHandleMarveen(ctx: RouteContext, webDir: string): Promi
     return true
   }
 
-  // The owner's own portrait, for the kanban lanes (his ask, Telegram msg 3547).
-  // Read-only on purpose: there is no upload route, because the picture is put
-  // in place by whoever draws it, the same way an agent avatar is. No gallery
-  // fallback either -- a generic robot standing in for the owner would be worse
-  // than the initial the board already draws, and the frontend falls back to
-  // that initial on a 404.
+  // The owner's own portrait, for the kanban lanes (his ask, Telegram msg 3547)
+  // and the owner strip.
+  // Read-only on purpose: there is no upload route, the picture is put in place
+  // on disk (store/owner-avatar.{png,jpg,jpeg,webp}), the same way an agent
+  // avatar is. No gallery fallback either: a generic robot standing in for the
+  // owner would be worse than the initial the board already draws, and the
+  // frontend falls back to that initial on a 404. no-cache (revalidate) rather
+  // than a max-age, because nothing busts the URL when the file is replaced.
   if (path === '/api/marveen/owner-avatar' && method === 'GET') {
+    res.setHeader('Cross-Origin-Resource-Policy', AVATAR_CORP)
     for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) {
       const p = join(PROJECT_ROOT, 'store', `owner-avatar${ext}`)
-      // no-cache: written on disk by whoever draws it, never through an upload
-      // route, so nothing can bust a max-age. See /api/marveen/avatar above.
       if (existsSync(p)) { serveFile(req, res, p); return true }
     }
     res.writeHead(404); res.end()

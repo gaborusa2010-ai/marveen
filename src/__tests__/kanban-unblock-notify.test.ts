@@ -58,9 +58,10 @@ async function call(method: string, path: string, body: unknown): Promise<number
 }
 
 // The main agent closes: since #663 a sub-agent's done is refused (review_required), and the
-// card reaches done when the main agent accepts the review.
+// card reaches done when the main agent accepts the review. Since upstream #2026 an agent
+// closes to done only with evidence (without it the card lands in testing), so a done move carries one.
 const move = (id: string, status: string, actor = 'orin') =>
-  call('POST', `/api/kanban/${id}/move`, { status, sort_order: 0, actor })
+  call('POST', `/api/kanban/${id}/move`, { status, sort_order: 0, actor, ...(status === 'done' ? { evidence: 'test' } : {}) })
 const put = (id: string, fields: Record<string, unknown>) => call('PUT', `/api/kanban/${id}`, fields)
 
 const unblockMessages = () =>
