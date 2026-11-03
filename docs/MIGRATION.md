@@ -202,6 +202,8 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 
 ---
 
+**How long it takes (measured once, 2026-11-02 drill, #750):** owner go-ahead 05:21 GMT (tg 10365) to the F: copy booted at 06:08 (VM uptime), about 47 minutes for stop + fresh full backup + restore + boot, with the 7.5 GB archive. Derived from those two timestamps, not stopwatch-timed; a fresh machine adds the npm ci + build + re-login steps (#719).
+
 ## 4. Cutover (the irreversible step — do last)
 
 1. On the OLD machine: stop everything that polls a bot token, in this order:
