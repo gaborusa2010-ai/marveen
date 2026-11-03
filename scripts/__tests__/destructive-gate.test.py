@@ -1437,6 +1437,68 @@ check("bash -c 'bash' <<'A' -> bash (a regi alak)", _consumer("bash -c 'bash' <<
 check("timeout 5 bash -s 'a;python3' <<'A' -> bash", _consumer("timeout 5 bash -s 'a;python3' <<'A'\nx\nA") == ["bash"])
 check("{ echo x; bash; } <<'A' -> } (a zaro marad)", _consumer("{ echo x; bash; } <<'A'\nx\nA") == ["}"])
 
+# --- 25. #777 review 14: szigoru $NAME kivetel, csoport/cso-tag/-c program erős fogyasztoja,
+# logikai sor az idezett vagasban, ${...} egy szo, gdb -ex ALLOWLIST, --args program --------------
+# Marveen review 14 (komment 3762), 5da38445-on mind ALLOW volt. Osztaly-szabalyok: a $NAME csak
+# akkor kivetel, ha MINDEN elofordulasa olvasas, literalis `NAME=szo` vagy `for NAME in szo..`
+# utasitas-elejen; a gdb -ex erteke csak olvaso parancs lehet (bt, info, print, list, ...).
+print()
+print("#777 review 14, MUST-BLOCK:")
+for label, cmd in [
+    ("G=cat; read G <<< gdb; $G -q <<'A'", "G=cat; read G <<< gdb; $G -q <<'A'\nbt\nA"),
+    ("G=g; G+=db; $G -q <<'A'", "G=g; G+=db; $G -q <<'A'\nbt\nA"),
+    ("G=cat; eval 'G=gdb'; $G -q <<'A'", "G=cat; eval 'G=gdb'; $G -q <<'A'\nbt\nA"),
+    ("G=cat; printf -v G %s gdb; $G -q <<'A'", "G=cat; printf -v G %s gdb; $G -q <<'A'\nbt\nA"),
+    ("H=gdb; declare -n G=H; $G -q <<'A'", "H=gdb; declare -n G=H; $G -q <<'A'\nbt\nA"),
+    ("G=cat; for G in gdb; do $G -q <<'A'", "G=cat; for G in gdb; do $G -q <<'A'\nbt\nA\ndone"),
+    ("G=cat; G[0]=gdb; $G -q <<'A'", "G=cat; G[0]=gdb; $G -q <<'A'\nbt\nA"),
+    ("G=cat; mapfile -t G <<< gdb; $G -q <<'A'", "G=cat; mapfile -t G <<< gdb; $G -q <<'A'\nbt\nA"),
+    ("G=cat; : ${G:=gdb}; $G -q <<'A'", "G=cat; : ${G:=gdb}; $G -q <<'A'\nbt\nA"),
+    ("G=cat; select G in gdb; do break; done; $G -q <<'A'", "G=cat; select G in gdb; do break; done; $G -q <<'A'\nbt\nA"),
+    ("{ G=gdb; $G -q; } <<'A'", "{ G=gdb; $G -q; } <<'A'\nbt\nA"),
+    ("{ $(echo gdb) -q; } <<'A'", "{ $(echo gdb) -q; } <<'A'\nbt\nA"),
+    ("bash -c '$0 -q' gdb <<'A'", "bash -c '$0 -q' gdb <<'A'\nbt\nA"),
+    ("bash -c '\"$@\"' _ gdb -q <<'A'", "bash -c '\"$@\"' _ gdb -q <<'A'\nbt\nA"),
+    ("su -c 'gdb -q' <<'A'", "su -c 'gdb -q' <<'A'\nbt\nA"),
+    ("cat <<'A' | if true; then gdb -q; fi", "cat <<'A' | if true; then gdb -q; fi\nbt\nA"),
+    ("X=${Y:-a<ujsor>b} gdb -q <<'A'", "X=${Y:-a\nb} gdb -q <<'A'\nbt\nA"),
+    ("X='a<ujsor>b' gdb -q <<'A'", "X='a\nb' gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'with confirm off -- shell id'", "gdb -batch -ex 'with confirm off -- shell id' ./p"),
+    ("gdb -batch -ex 'alias s=shell' -ex 's id'", "gdb -batch -ex 'alias s=shell' -ex 's id' ./p"),
+    ("gdb -batch -ex 'target remote | id'", "gdb -batch -ex 'target remote | id' ./p"),
+    ("gdb -batch -ex 'print $_shell(\"id\")'", "gdb -batch -ex 'print $_shell(\"id\")' ./p"),
+    ("gdb -batch -ex 'set exec-wrapper sh -c id' -ex run", "gdb -batch -ex 'set exec-wrapper sh -c id' -ex run ./p"),
+    ("gdb -batch -ex 'frame apply all -q shell id'", "gdb -batch -ex 'frame apply all -q shell id' ./p"),
+    ("gdb -batch -ex 'echo hi<ujsor>shell id'", "gdb -batch -ex 'echo hi\nshell id' ./p"),
+    ("gdb -batch -ex 'SHELL id' (nagybetu)", "gdb -batch -ex 'SHELL id' ./p"),
+    ("(gdb -batch -ex 'shell id')", "(gdb -batch -ex 'shell id')"),
+    ("gdb -batch -ex run --args sh -c 'rm -rf /tmp/x'", "gdb -batch -ex run --args sh -c 'rm -rf /tmp/x'"),
+]:
+    check(label, blocks(cmd))
+for label, cmd in [
+    ("cat <<'A' | if true; then bash; fi", "cat <<'A' | if true; then bash; fi"),
+    ("cat <<'A' | for i in 1; do bash; done", "cat <<'A' | for i in 1; do bash; done"),
+    ("cat <<'A' | case x in x) bash;; esac", "cat <<'A' | case x in x) bash;; esac"),
+    ("X=\"a<ujsor>b\" bash <<'A'", "X=\"a\nb\" bash <<'A'"),
+    ("X=$(echo a<ujsor>echo b) bash <<'A'", "X=$(echo a\necho b) bash <<'A'"),
+    ("X=${Y:-a<ujsor>b} bash <<'A'", "X=${Y:-a\nb} bash <<'A'"),
+    ("X=${Y:-a b} bash <<'A' (a ${...} egy szo)", "X=${Y:-a b} bash <<'A'"),
+]:
+    check(label + " / RM / A", blocks(cmd + "\n" + RMH + "\nA"))
+print("negativ kontroll (review 14):")
+for label, cmd in [
+    ("G=cat; $G -q <<'A' (literalis, nem-gdb)", "G=cat; $G -q <<'A'\nbt\nA"),
+    ("G=cat; ${G} -q <<'A'", "G=cat; ${G} -q <<'A'\nbt\nA"),
+    ("for f in a b; do $f --version; done <<< x", "for f in a b; do $f --version; done <<< x"),
+    ("gdb -batch -ex 'x/10i $pc' ./p", "gdb -batch -ex 'x/10i $pc' ./p"),
+    ("gdb -batch -ex 'set pagination off' -ex 'info registers' ./p", "gdb -batch -ex 'set pagination off' -ex 'info registers' ./p"),
+    ("gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p", "gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p"),
+    ("gdb -batch -ex run --args ./prog -v", "gdb -batch -ex run --args ./prog -v"),
+    ("cat <<'A' | while read l; do echo \"$l\"; done / RM (adat)", "cat <<'A' | while read l; do echo \"$l\"; done\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

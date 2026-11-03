@@ -56,7 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, gdbExRuns, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -329,6 +329,7 @@ function nestedPrograms(command) {
     }
   }
   out.push(...shellCPrograms(command))
+  out.push(...gdbArgsPrograms(command))   // `gdb -ex run --args PROG` runs PROG (#777 review 14)
   return out
 }
 

@@ -3308,7 +3308,7 @@
    "expect": [
     true,
     true,
-    false
+    true
    ],
    "bash_runs": true
   },
@@ -3705,9 +3705,10 @@
    "name": "777_bash_c_bash_eof_echo_a_eof_x",
    "cmd": "bash -c 'bash <<EOF\necho a\nEOF' <<< 'X'",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": false
+   "bash_runs": false,
+   "bash_note": "the inner bash reads its own unquoted heredoc, not X; the gate takes only a quoted-delimiter heredoc as own stdin and now reads the whole multi-line -c program (#777 review 14), so it over-blocks (accepted)"
   },
   {
    "name": "777_bash_c_echo_a_bash_x",
@@ -4909,6 +4910,102 @@
    ],
    "bash_runs": null,
    "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r14_cat_a_if_true_then_bash_fi",
+   "cmd": "cat <<'A' | if true; then bash; fi\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_for_i_in_1_do_bash_done",
+   "cmd": "cat <<'A' | for i in 1; do bash; done\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_case_x_in_x_bash_esac",
+   "cmd": "cat <<'A' | case x in x) bash;; esac\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_dquote_newline_bash",
+   "cmd": "V=\"a\nb\" bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_squote_newline_bash",
+   "cmd": "V='a\nb' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_subst_newline_bash",
+   "cmd": "V=$(echo a\necho b) bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_param_newline_bash",
+   "cmd": "V=${Y:-a\nb} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_param_space_bash",
+   "cmd": "V=${Y:-a b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_g_cat_g_x_g_bash_g_a",
+   "cmd": "G=cat; G+=x; G=bash; $G <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_bash_c_0_bash_a",
+   "cmd": "bash -c '$0' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_while_read_l_do_echo_l_done",
+   "cmd": "cat <<'A' | while read l; do echo \"$l\"; done\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r14_param_space_cat",
+   "cmd": "V=${Y:-a b} cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }

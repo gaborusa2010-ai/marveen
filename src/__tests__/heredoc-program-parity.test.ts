@@ -53,7 +53,8 @@ describe('heredoc-program twin: JS reads every case like the Python side', () =>
     expect(consumers("python3 - <<'PY'\nprint(1)\nPY")).toEqual(['python3'])
     expect(consumers('cat <<X | node -\n1\nX')).toEqual(['node'])
     expect(consumers('eval "$(cat <<EOF\nls\nEOF\n)"')).toEqual(['eval'])
-    expect(consumers('while read l; do $l; done <<EOF\nls\nEOF')).toEqual(['done'])
+    // a dynamic word in the body is the consumer, not the closer (#777 review 14)
+    expect(consumers('while read l; do $l; done <<EOF\nls\nEOF')).toEqual(['$l'])
     // #777 review 6: a function's consumer is its BODY's consumer; the name cannot say code or shell
     expect(consumers('f(){ sh; }; f <<SH\nls\nSH')).toEqual(['sh'])
     expect(consumers("python3(){ bash; }; python3 <<'A'\nls\nA")).toEqual(['bash'])
