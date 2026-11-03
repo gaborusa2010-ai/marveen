@@ -4,15 +4,26 @@
 //   POST /api/fleet/freeze     { reason, mode?: 'freeze' | 'stop' } -> switch it on
 //   POST /api/fleet/unfreeze   -> lift it
 //
-// Switching ON is open to every dashboard credential, an agent's token included:
-// an agent that sees something going wrong may pull the brake itself, and a
-// brake pulled by mistake costs a minute of the owner's time. Lifting it is the
+// Switching ON (local divergence, #728 review finding 3): upstream opens it to
+// every dashboard credential, an agent's token included. Here the hook sits on
+// the MAIN agent too (matcher `*`), so one sub-agent's freeze would silence
+// marveen, Telegram replies included, until the owner logs in. So ON takes the
+// owner (mayIssueCredentials, below), the main agent (token + X-Agent-Id =
+// MAIN_AGENT_ID), or a device key (minted by the owner, never an agent's); a
+// token that names a sub-agent gets 403, and so does a token with no claim once
+// a dashboard login exists. LIMIT: X-Agent-Id is self-asserted on the one shared
+// token (auth-gate.ts), so this stops an agent that tells the truth about its
+// name -- the accident case -- not one that lies. The owner's /stop command calls
+// pullFleetBrake directly and is unaffected.
+//
+// Lifting it is the
 // owner's: the SAME predicate that guards issuing credentials (mayIssueCredentials,
 // routes/auth.ts, DEVKEYMINT1022), so an agent that went astray, or text that
 // talked one into it, cannot unfreeze itself with the shared token. Before the
 // first dashboard login exists the token is the only owner credential there is,
 // and that predicate lets it through; the CLI-free way out is still deleting
 // store/fleet-freeze.json on the machine.
+import type http from 'node:http'
 import { MAIN_AGENT_ID } from '../../config.js'
 import { logConfigChange } from '../../db.js'
 import { logger } from '../../logger.js'
@@ -30,6 +41,22 @@ import type { RouteContext } from './types.js'
 const BODY_MAX_BYTES = 4 * 1024
 // A federation peer is somebody else's install: it never pulls our brake.
 const FREEZE_KINDS = ['token', 'session', 'device'] as const
+
+export const FREEZE_OWNER_OR_MAIN_REQUIRED = {
+  error: `Switching the fleet freeze on needs the owner (dashboard login) or the main agent (${MAIN_AGENT_ID}). A sub-agent cannot freeze the fleet: tell ${MAIN_AGENT_ID} what is going wrong instead.`,
+  code: 'freeze_owner_or_main_required',
+}
+
+/** #728 review finding 3: who may switch the freeze ON (see the header). */
+export function mayPullBrake(auth: RouteContext['auth'], req?: http.IncomingMessage): boolean {
+  if (!auth) return false
+  if (auth.kind === 'session' || auth.kind === 'device') return true
+  if (auth.kind !== 'token') return false
+  const claim = auth.agent?.trim().toLowerCase()
+  const main = MAIN_AGENT_ID.toLowerCase()
+  if (claim && claim !== main) return false // a sub-agent, even before the first login
+  return claim === main || mayIssueCredentials(auth, req)
+}
 
 function actorOf(auth: RouteContext['auth']): string {
   if (!auth) return '?'
@@ -102,6 +129,10 @@ export async function tryHandleFleetFreeze(ctx: RouteContext): Promise<boolean> 
   if (path === '/api/fleet/freeze' && method === 'POST') {
     if (!auth || !(FREEZE_KINDS as readonly string[]).includes(auth.kind)) {
       json(res, { error: 'Forbidden for this credential type' }, 403)
+      return true
+    }
+    if (!mayPullBrake(auth, req)) {
+      json(res, FREEZE_OWNER_OR_MAIN_REQUIRED, 403)
       return true
     }
     let body: Record<string, unknown>

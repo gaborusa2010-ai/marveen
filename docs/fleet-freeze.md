@@ -7,7 +7,7 @@ Egy mozdulattal megállítja az egész flottát, ha valami elszabadult. Ilyen le
 - **Fagyasztás:** egyik ügynök sem futtathat eszközt: nem ír fájlt, nem futtat parancsot, nem küld levelet, nem válaszol a csatornán. A sessionök és a kontextusuk megmaradnak. A dashboard háttér-ciklusai (üzenet-kézbesítés, ütemező, auto-restart, context-guard és a többi) állnak. A sorban álló üzenetek a feloldás után mennek ki.
 - **Leállítás:** a fagyasztáson túl az al-ügynökök sessionjeit is leállítja, és megjegyzi, melyeket. Feloldáskor pontosan ezek indulnak újra. A fő ügynök csak fagyasztva van, nem áll le.
 
-**Ki nyomhatja meg:** bárki, akinek dashboard-hozzáférése van, egy ügynök is (önfék). Egy tévedésből megnyomott fék a gazdának egy percébe kerül.
+**Ki nyomhatja meg:** a gazda (bejelentkezve, eszközkulccsal vagy a `/stop` paranccsal) és a fő ügynök (token + `X-Agent-Id: marveen`). Al-ügynök tokenje 403-at kap, és bejelentkezés létezése után a fejléc nélküli token is (helyi eltérés az upstreamtől, #728: a hook a fő ügynökön is ül, így egy al-ügynök fékje a fő ügynököt is elnémítaná). Az `X-Agent-Id` önbevallás, tehát ez a tévedést fogja meg, nem a hazudó ügynököt.
 
 **Ki oldhatja fel:** csak a gazda, a dashboard-jelszóval bejelentkezve (böngészőben, a Bridge-ben is; egy eszközkulcs, például a Bridge párosító kulcsa, nem elég). Ugyanez a szabály védi a hitelesítő adatok kiadását is (`mayIssueCredentials`). A közös tokennel nem lehet feloldani, így egy eltévedt vagy rávett ügynök nem oldhatja fel magát. Egyetlen kivétel van: amíg nincs dashboard-felhasználó (első telepítés), a token az egyetlen gazda-hitelesítés.
 

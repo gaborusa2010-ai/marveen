@@ -1,6 +1,7 @@
-// KILLSWITCH1022: the fleet freeze ("piros gomb"). Switching it on is open to any
-// dashboard credential (an agent may pull the brake); lifting it takes the owner,
-// through the SAME predicate as issuing credentials (mayIssueCredentials, #2163).
+// KILLSWITCH1022: the fleet freeze ("piros gomb"). Switching it on takes the owner,
+// the main agent or a device key (local divergence, #728 review finding 3: upstream
+// lets any agent's token pull it); lifting it takes the owner, through the SAME
+// predicate as issuing credentials (mayIssueCredentials, #2163).
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import type http from 'node:http'
 import { Readable } from 'node:stream'
@@ -37,6 +38,7 @@ const { SESSION_COOKIE_NAME } = await import('../web/auth-gate.js')
 type Ctx = import('../web/routes/types.js').RouteContext
 
 const TOKEN: Ctx['auth'] = { kind: 'token', agent: 'iris' }
+const MAIN: Ctx['auth'] = { kind: 'token', agent: 'marveen' }
 const SESSION: Ctx['auth'] = { kind: 'session', user: 'owner' }
 
 async function call(method: string, path: string, auth: Ctx['auth'], body?: unknown, headers: Record<string, string> = {}, handler = tryHandleFleetFreeze) {
@@ -61,19 +63,19 @@ beforeEach(() => {
 })
 
 describe('switching it on', () => {
-  it('any agent may pull the brake with the token; the state names who and why, and the owner is told', async () => {
-    const r = await freeze(TOKEN, { reason: 'elszabadult levélküldés' })
+  it('the main agent may pull the brake with the token; the state names who and why, and the owner is told', async () => {
+    const r = await freeze(MAIN, { reason: 'elszabadult levélküldés' })
     expect(r.status).toBe(200)
     expect(isFleetFrozen()).toBe(true)
-    expect(readFleetFreeze()).toMatchObject({ mode: 'freeze', reason: 'elszabadult levélküldés', by: 'token:iris' })
+    expect(readFleetFreeze()).toMatchObject({ mode: 'freeze', reason: 'elszabadult levélküldés', by: 'token:marveen' })
     expect(notifySpy).toHaveBeenCalledTimes(1)
     expect((await call('GET', '/api/fleet/freeze', TOKEN)).json).toMatchObject({ frozen: true, state: { mode: 'freeze' } })
   })
 
   it('a reason is required, and the mode is freeze or stop only', async () => {
-    expect((await freeze(TOKEN, {})).status).toBe(400)
-    expect((await freeze(TOKEN, { reason: 'x'.repeat(501) })).status).toBe(400)
-    expect((await freeze(TOKEN, { reason: 'x', mode: 'nuke' })).status).toBe(400)
+    expect((await freeze(MAIN, {})).status).toBe(400)
+    expect((await freeze(MAIN, { reason: 'x'.repeat(501) })).status).toBe(400)
+    expect((await freeze(MAIN, { reason: 'x', mode: 'nuke' })).status).toBe(400)
     expect(isFleetFrozen()).toBe(false)
   })
 
@@ -84,7 +86,7 @@ describe('switching it on', () => {
 
   it('freeze keeps every session; stop stops the running sub-agents, never the main agent', async () => {
     running.add('samu'); running.add('zara'); running.add('marveen')
-    await freeze(TOKEN)
+    await freeze(MAIN)
     expect(stopSpy).not.toHaveBeenCalled()
     const r = await freeze(SESSION, { reason: 'mindent le', mode: 'stop' })
     expect(r.json.state.mode).toBe('stop')
@@ -93,15 +95,63 @@ describe('switching it on', () => {
     expect(readFleetFreeze()!.stoppedAgents!.sort()).toEqual(['samu', 'zara'])
     // the first reason stays; a later 'freeze' never downgrades a stop
     expect(readFleetFreeze()!.reason).toBe('teszt')
-    await freeze(TOKEN, { reason: 'megint', mode: 'freeze' })
+    await freeze(MAIN, { reason: 'megint', mode: 'freeze' })
     expect(readFleetFreeze()!.mode).toBe('stop')
+  })
+})
+
+// #728 review finding 3: the hook also sits on the main agent (matcher `*`), so a
+// sub-agent's freeze would silence marveen. ON: owner, main agent, device key.
+describe('switching it on: the owner or the main agent only (#728)', () => {
+  it('a sub-agent token is refused with 403, before and after the first login, and nothing is frozen', async () => {
+    const before = await freeze(TOKEN)
+    expect(before.status).toBe(403)
+    expect(before.json.code).toBe('freeze_owner_or_main_required')
+    expect((await freeze({ kind: 'token', agent: 'Samu' })).status).toBe(403)
+    expect((await addOwner()).status).toBe(201)
+    expect((await freeze(TOKEN, { reason: 'x', mode: 'stop' })).status).toBe(403)
+    expect(isFleetFrozen()).toBe(false)
+    expect(notifySpy).not.toHaveBeenCalled()
+  })
+
+  it('the main agent token may pull it, also once a login exists', async () => {
+    expect((await addOwner()).status).toBe(201)
+    const r = await freeze(MAIN)
+    expect(r.status).toBe(200)
+    expect(readFleetFreeze()).toMatchObject({ by: 'token:marveen' })
+  })
+
+  it('the owner session may pull it', async () => {
+    expect((await addOwner()).status).toBe(201)
+    expect((await freeze(SESSION)).status).toBe(200)
+    expect(readFleetFreeze()).toMatchObject({ by: 'session:owner' })
+  })
+
+  it('a token with no agent claim: the owner before the first login, refused after it', async () => {
+    expect((await addOwner()).status).toBe(201)
+    expect((await freeze({ kind: 'token' })).status).toBe(403)
+    expect(isFleetFrozen()).toBe(false)
+    getDb().exec('DELETE FROM dashboard_users')
+    expect((await freeze({ kind: 'token' })).status).toBe(200)
+  })
+
+  it('a token with no claim but the owner session cookie counts as the owner', async () => {
+    expect((await addOwner()).status).toBe(201)
+    const owner = getDb().prepare("SELECT id FROM dashboard_users WHERE username = 'owner'").get() as { id: number }
+    const cookieValue = createSession({ userId: owner.id, username: 'owner' })
+    expect((await call('POST', '/api/fleet/freeze', { kind: 'token' }, { reason: 'x' }, { cookie: `${SESSION_COOKIE_NAME}=${cookieValue}` })).status).toBe(200)
+  })
+
+  it('a device key (owner-minted) may still pull it', async () => {
+    expect((await addOwner()).status).toBe(201)
+    expect((await freeze({ kind: 'device', scope: 'full', device: 'phone' })).status).toBe(200)
   })
 })
 
 describe('lifting it: the owner only, the #2163 predicate', () => {
   it('once a login exists the token is refused, and the fleet stays frozen', async () => {
     expect((await addOwner()).status).toBe(201)
-    await freeze(TOKEN)
+    await freeze(MAIN)
     const r = await unfreeze(TOKEN)
     expect(r.status).toBe(403)
     expect(r.json.code).toBe('owner_session_required')
@@ -110,7 +160,7 @@ describe('lifting it: the owner only, the #2163 predicate', () => {
 
   it('a limited (operator) device key and a full device key are refused too', async () => {
     expect((await addOwner()).status).toBe(201)
-    await freeze(TOKEN)
+    await freeze(MAIN)
     expect((await unfreeze({ kind: 'device', scope: 'full', device: 'phone' })).status).toBe(403)
     expect((await unfreeze({ kind: 'device', scope: 'operator', device: 'op' })).status).toBe(403)
     expect(isFleetFrozen()).toBe(true)
@@ -119,7 +169,7 @@ describe('lifting it: the owner only, the #2163 predicate', () => {
   it('the owner session lifts it, restarts exactly the stopped agents (a channel agent fresh) and tells the owner', async () => {
     expect((await addOwner()).status).toBe(201)
     running.add('samu'); running.add('zara')
-    await freeze(TOKEN, { reason: 'x', mode: 'stop' })
+    await freeze(MAIN, { reason: 'x', mode: 'stop' })
     notifySpy.mockClear()
     const r = await unfreeze(SESSION)
     expect(r.status).toBe(200)
@@ -132,7 +182,7 @@ describe('lifting it: the owner only, the #2163 predicate', () => {
 
   it('the token with the owner\'s live session cookie counts as the owner (the browser sends both)', async () => {
     expect((await addOwner()).status).toBe(201)
-    await freeze(TOKEN)
+    await freeze(MAIN)
     const owner = getDb().prepare("SELECT id FROM dashboard_users WHERE username = 'owner'").get() as { id: number }
     const cookieValue = createSession({ userId: owner.id, username: 'owner' })
     expect((await unfreeze(TOKEN, { cookie: `${SESSION_COOKIE_NAME}=${cookieValue}` })).status).toBe(200)
@@ -140,7 +190,7 @@ describe('lifting it: the owner only, the #2163 predicate', () => {
   })
 
   it('before the first login exists the token is the one owner credential there is', async () => {
-    await freeze(TOKEN)
+    await freeze(MAIN)
     expect((await unfreeze(TOKEN)).status).toBe(200)
     expect(isFleetFrozen()).toBe(false)
   })
@@ -167,7 +217,7 @@ describe("the owner's phone: /stop and /resume", () => {
   })
 
   it('/resume never lifts it: it points to the dashboard login', async () => {
-    await freeze(TOKEN)
+    await freeze(MAIN)
     const r = await cmd('/resume')
     expect(isFleetFrozen()).toBe(true)
     expect(r.join(' ')).toMatch(/dashboard/)
@@ -179,7 +229,7 @@ describe('the loops', () => {
     const tick = vi.fn(() => 'ran')
     const wrapped = whileNotFrozen('test-loop', tick)
     expect(wrapped()).toBe('ran')
-    await freeze(TOKEN)
+    await freeze(MAIN)
     expect(wrapped()).toBeUndefined()
     expect(frozenSkip('test-loop-2')).toBe(true)
     rmSync(FLEET_FREEZE_PATH)
@@ -228,7 +278,7 @@ describe('the loops', () => {
     try {
       const body = vi.fn()
       const t = setInterval(whileNotFrozen('fake-loop', body), 1000)
-      await freeze(TOKEN)
+      await freeze(MAIN)
       vi.advanceTimersByTime(3000)
       expect(body).not.toHaveBeenCalled()
       rmSync(FLEET_FREEZE_PATH)
@@ -244,7 +294,7 @@ describe("the dashboard's own Claude calls and the worker session", () => {
     const runViaWorker = vi.fn(async () => ({ text: 'ok' }))
     vi.doMock('../web/agent-worker.js', async (orig) => ({ ...(await orig<typeof import('../web/agent-worker.js')>()), runViaWorker }))
     const { runAgent } = await import('../agent.js')
-    await freeze(TOKEN)
+    await freeze(MAIN)
     expect(await runAgent('napi naplo', undefined, undefined, true)).toEqual({ text: null, error: 'fleet frozen (KILLSWITCH1022)' })
     expect(runViaWorker).not.toHaveBeenCalled()
     rmSync(FLEET_FREEZE_PATH)
@@ -275,7 +325,7 @@ describe("the dashboard's own Claude calls and the worker session", () => {
 
 describe('agents on another machine', () => {
   it('are named as not frozen in the answer, the status and the owner notice', async () => {
-    const r = await freeze(TOKEN)
+    const r = await freeze(MAIN)
     expect(r.json.notFrozen).toEqual(['kint'])
     expect((await call('GET', '/api/fleet/freeze', TOKEN)).json.notFrozen).toEqual(['kint'])
     expect(String(notifySpy.mock.calls[0]![0])).toMatch(/NEM fagyasztva.*kint/)
