@@ -935,6 +935,45 @@ check("echo `echo hi` 'bash <<< RM': idezett szoveg", not blocks("echo `echo hi`
 check("echo `bash <<< \\`echo x\\``: dinamikus szo, nincs RM", not blocks("echo `bash <<< \\`echo x\\``"))
 
 
+# --- 16. #777 review 5: a fogyaszto SZAVA dont, nem a nyito soron talalt nev -------------------
+# A _code_opener az ertelmezo-nevet (python/node/ruby/perl/php) BARHOL a nyito soron (es a
+# folytatosoron) kereste, es ha talalt, nem ment le a torzsbe itt-stringert: `source /dev/stdin
+# ruby <<A` fogyasztoja a `source`, a ruby csak egy operandus, a torzs fut. Most a
+# _heredoc_runs_body a FOGYASZTO SZOT adja vissza (mint a JS heredocRunsBody), es a
+# _code_consumer azon dont: INTERPRETERS-ben van es nem shell. Marveen merte (artalmatlan
+# helyettesitovel, eldobhato HOME-mal): mind a 8 alak futtatja a szot.
+print()
+print("#777 review 5, MUST-BLOCK (ertelmezo-nev a soron, de a fogyaszto shell/eval/source):")
+check("source /dev/stdin ruby <<'A' / bash <<< 'RM' / A", blocks("source /dev/stdin ruby <<'A'\nbash <<< '" + RMH + "'\nA"))
+check(". /dev/stdin perl <<'A' / bash <<< 'RM' / A", blocks(". /dev/stdin perl <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("eval \"$(cat <<'A' # node / bash <<< 'RM' / A / )\"", blocks("eval \"$(cat <<'A' # node\nbash <<< '" + RMH + "'\nA\n)\""))
+check("$SHELL <<'A'; : python3 / bash <<< 'RM' / A", blocks("$SHELL <<'A'; : python3\nbash <<< '" + RMH + "'\nA"))
+check("f(){ eval \"$(cat)\"; }; f php <<'A' / bash <<< 'RM' / A", blocks("f(){ eval \"$(cat)\"; }; f php <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("while read l; do eval \"$l\"; done <<'A' # node / bash <<< 'RM' / A", blocks("while read l; do eval \"$l\"; done <<'A' # node\nbash <<< '" + RMH + "'\nA"))
+check("cat <<'A' | source /dev/stdin node / bash <<< 'RM' / A", blocks("cat <<'A' | source /dev/stdin node\nbash <<< '" + RMH + "'\nA"))
+check("node -v; \\ (ujsor) source /dev/stdin <<'A' / bash <<< 'RM' / A", blocks("node -v; \\\nsource /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (kod-ertelmezo fogyaszto: a torzs nem bash-szoveg, a szo idezojelben adat):")
+check("ruby - <<'A' / puts \"bash <<< 'RM'\" / A", not blocks("ruby - <<'A'\nputs \"bash <<< '" + RMH + "'\"\nA"))
+check("cat <<'A' | node - / console.log(\"bash <<< 'RM'\") / A", not blocks("cat <<'A' | node -\nconsole.log(\"bash <<< '" + RMH + "'\")\nA"))
+check("f(){ python3 -; }; f <<'A' / x = \"bash <<< 'RM'\" / A: a fuggveny a fogyaszto, lemegyunk, de a szo idezett",
+      not blocks("f(){ python3 -; }; f <<'A'\nx = \"bash <<< '" + RMH + "'\"\nA"))
+print("a fogyaszto szo (a _heredoc_runs_body visszaadja, a JS iker alakja):")
+
+
+def _consumer(cmd):
+    recs, _certain = gate._heredoc_scan().find_all(cmd)
+    return [os.path.basename(gate._heredoc_runs_body(cmd, h) or '') for h in recs]
+
+
+check("source /dev/stdin ruby <<'A' -> source", _consumer("source /dev/stdin ruby <<'A'\nx\nA") == ["source"])
+check("python3 - <<'PY' -> python3", _consumer("python3 - <<'PY'\nx\nPY") == ["python3"])
+check("cat <<'A' > f -> '' (adat)", _consumer("cat <<'A' > f\nx\nA") == [""])
+check("f(){ eval \"$(cat)\"; }; f php <<'A' -> f", _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["f"])
+check("while read l; do eval \"$l\"; done <<'A' -> done", _consumer("while read l; do eval \"$l\"; done <<'A'\nx\nA") == ["done"])
+check("cat <<'A' | node - -> node", _consumer("cat <<'A' | node -\nx\nA") == ["node"])
+check("bash <<< 'x' -> bash", _consumer("bash <<< 'x'") == ["bash"])
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")
