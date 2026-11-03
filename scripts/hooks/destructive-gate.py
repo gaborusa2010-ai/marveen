@@ -363,6 +363,14 @@ _STDIN_PATH_RE = re.compile(r'^/(?:dev/stdin|(?:dev|proc/self)/fd/0+)$')
 # csohatar (#775, a #773 review maradeka).
 _REDIR_OP_RE = re.compile(r'^([0-9]*[<>]+&?|[0-9]*>\||&>>?)$')
 _REDIR_GLUED_RE = re.compile(r'^([0-9]*[<>]|&>)')
+# Egy shell-kapcsolocsoport (`-xo`, `+O`, `-xoo`): MINDEN benne allo o/O egy ertekszot visz
+# (`bash -xo pipefail`, `bash -c -xoo pipefail errexit "$l"`, merve valodi bash-sal, #775 review).
+_OPT_CLUSTER_RE = re.compile(r'^[-+][A-Za-z]+$')
+
+
+def _opt_values(word):
+    """Hany ertekszot visz egy shell-kapcsolocsoport (az o/O szama benne), 0 ha nem az."""
+    return word.count('o') + word.count('O') if _OPT_CLUSTER_RE.match(word) else 0
 
 
 def _after_stdin_wrapper(words, k, spec):
@@ -457,7 +465,9 @@ def _runs_words(words, k, depth, loose=False):
             # `--szo` hosszu opciot a -c utan a bash elutasit (`bash -c --norc "$l"`: nem
             # fut semmi), ez adat. A python/perl/node a -c utani ELSO szot futtatja
             # (`python3 -c -- "$l"`: a program a `--`), ott csak atiranyitas lephet kozbe.
-            m = j + 1
+            # Az o/O a -c csoportjaban is erteket visz (`bash -co pipefail "$l"`, `-oc`, `-cO`):
+            # a program az ertekszo(k) utan all.
+            m = j + 1 + (_opt_values(x) if shell else 0)
             ended = not shell      # az opciok vege: mar csak atiranyitas lephet kozbe
             while m < len(words) and not words[m][1]:
                 y = words[m][0]
@@ -470,8 +480,8 @@ def _runs_words(words, k, depth, loose=False):
                 elif y in ('-', '--'):
                     m += 1
                     ended = True   # `bash -c -- 2>/dev/null "$l"`: a program az atiranyitas utan
-                elif re.match(r'^[-+][oO]$', y):
-                    m += 2
+                elif _opt_values(y):
+                    m += 1 + _opt_values(y)   # `-o pipefail`, `-xo pipefail`, `-xoo pipefail errexit`
                 elif y.startswith('--'):
                     return False
                 elif y.startswith(('-', '+')):
@@ -479,8 +489,8 @@ def _runs_words(words, k, depth, loose=False):
                 else:
                     break
             return bool(loose and m < len(words) and words[m][1])
-        if shell and re.match(r'^[-+][oO]$', x):
-            j += 2                 # `-o pipefail`, `+O extglob`: a kapcsolo erteket visz
+        if shell and _opt_values(x):
+            j += 1 + _opt_values(x)   # `-o pipefail`, `+O extglob`, `-xo pipefail`: ertekszo(k) a csoport utan
             continue
         if x.startswith('-') or (shell and x.startswith('+')):
             j += 1

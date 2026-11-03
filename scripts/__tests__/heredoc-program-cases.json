@@ -1614,6 +1614,206 @@
    "note": "the substitution is closed before <<EOF: the heredoc is the outer bash -c stdin, the program is $CMD (data at top level)"
   },
   {
+   "name": "775r1_rl_bash_c_xo",
+   "cmd": "while read l; do bash -c -xo pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_ox",
+   "cmd": "while read l; do bash -c -ox pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_xO",
+   "cmd": "while read l; do bash -c -xO extglob \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_xoo",
+   "cmd": "while read l; do bash -c -xoo pipefail errexit \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_xo_dd",
+   "cmd": "while read l; do bash -c -xo pipefail -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_plusxo",
+   "cmd": "while read l; do bash -c +xo pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_co",
+   "cmd": "while read l; do bash -co pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_oc",
+   "cmd": "while read l; do bash -oc pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_cO",
+   "cmd": "while read l; do bash -cO extglob \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_xoc",
+   "cmd": "while read l; do bash -xoc pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_coo",
+   "cmd": "while read l; do bash -coo pipefail errexit \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_sh_co",
+   "cmd": "while read l; do sh -co pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_xo_c",
+   "cmd": "while read l; do bash -xo pipefail -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_xoo_c",
+   "cmd": "while read l; do bash -xoo pipefail errexit -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_bash_xo",
+   "cmd": "bash -xo pipefail <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_bash_ox",
+   "cmd": "bash -ox pipefail <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_bash_xO",
+   "cmd": "bash -xO extglob <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_bash_xoo",
+   "cmd": "bash -xoo pipefail errexit <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_bash_plusxo",
+   "cmd": "bash +xo pipefail <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_top_sh_xo",
+   "cmd": "sh -xo pipefail <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r1_rl_bash_c_xo_static_data",
+   "cmd": "while read l; do bash -c -xo pipefail 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r1_rl_bash_co_static_data",
+   "cmd": "while read l; do bash -co pipefail 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r1_top_bash_xo_file_data",
+   "cmd": "bash -xo pipefail /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r1_top_bash_xo_dyn_c_data",
+   "cmd": "bash -xo pipefail -c \"$CMD\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r1_rl_python_xo_data",
+   "cmd": "while read l; do python3 -xo pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
    "name": "775_herestring_not_heredoc",
    "cmd": "bash <<< 'X'",
    "expect": [],

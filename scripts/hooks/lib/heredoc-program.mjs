@@ -108,6 +108,14 @@ const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'docker', 'po
 const STDIN_PATH_RE = /^\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)$/
 const REDIR_OP_RE = /^([0-9]*[<>]+&?|[0-9]*>\||&>>?)$/   // a bare operator: the next word is its target (`>|` too, #775)
 const REDIR_GLUED_RE = /^([0-9]*[<>]|&>)/             // `2>&1`, `>log`: no operand
+// A shell option cluster (`-xo`, `+O`, `-xoo`): EVERY o/O in it takes one value word
+// (`bash -xo pipefail`, `bash -c -xoo pipefail errexit "$l"`, measured with real bash, #775 review).
+const OPT_CLUSTER_RE = /^[-+][A-Za-z]+$/
+
+/** How many value words a shell option cluster takes (its o/O count), 0 when it is not one. */
+function optValues(word) {
+  return OPT_CLUSTER_RE.test(word) ? (word.match(/[oO]/g) ?? []).length : 0
+}
 
 // The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`);
 // neither is the `|` of `>|` (`bash >| log <<SH`, #775).
@@ -239,7 +247,9 @@ function runsWords(words, k, depth, loose) {
       // (`bash -c --norc "$l"`: nothing runs): data. python/perl/node run the FIRST word
       // after -c (`python3 -c -- "$l"`: the program is `--`), only a redirect may intervene.
       // Dynamic in a reading body: the body.
-      let m = j + 1
+      // an o/O inside the -c cluster takes a value too (`bash -co pipefail "$l"`, `-oc`, `-cO`):
+      // the program follows the value word(s).
+      let m = j + 1 + (shell ? optValues(x) : 0)
       let ended = !shell          // options over: only a redirect may still intervene
       while (m < words.length && !words[m][1]) {
         const y = words[m][0]
@@ -247,14 +257,14 @@ function runsWords(words, k, depth, loose) {
         else if (REDIR_GLUED_RE.test(y)) m += 1
         else if (ended) break
         else if (y === '-' || y === '--') { m += 1; ended = true }   // `bash -c -- 2>/dev/null "$l"`
-        else if (/^[-+][oO]$/.test(y)) m += 2
+        else if (optValues(y)) m += 1 + optValues(y)   // `-o pipefail`, `-xo pipefail`, `-xoo pipefail errexit`
         else if (y.startsWith('--')) return ''
         else if (y.startsWith('-') || y.startsWith('+')) m += 1
         else break
       }
       return loose && words[m]?.[1] ? base : ''
     }
-    if (shell && /^[-+][oO]$/.test(x)) { j++; continue }  // `-o pipefail` takes a value
+    if (shell && optValues(x)) { j += optValues(x); continue }  // `-o pipefail`, `-xo pipefail`: value word(s) follow
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
     return ''                         // a program FILE: the body is its input
   }
