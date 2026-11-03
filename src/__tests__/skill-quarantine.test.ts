@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { execFileSync } from 'node:child_process'
+import { zipDir } from './helpers/zip-dir.js'
 import type { RouteContext } from '../web/routes/types.js'
 
 const tmpRoot = mkdtempSync(join(tmpdir(), 'skill-quarantine-'))
@@ -86,7 +86,7 @@ function zipOf(build: (dir: string) => void): Buffer {
   const src = mkdtempSync(join(tmpRoot, 'zipsrc-'))
   build(src)
   const zip = join(src, '..', `${src.split('/').pop()}.zip`)
-  execFileSync('zip', ['-q', '-r', '-y', zip, '.'], { cwd: src })
+  zipDir(src, zip)
   return readFileSync(zip)
 }
 

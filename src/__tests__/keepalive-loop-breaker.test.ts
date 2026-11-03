@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
@@ -191,26 +191,40 @@ describe('the call site (checkMainKeepaliveStaleness) is bound to the producer s
 describe('scripts/channel-keepalive-probe.sh: a run stamp on every run, a produced stamp only when it produced', () => {
   // The real script, copied into a throwaway install (it derives its store from its
   // own location), with PATH stubs; nothing here reaches this machine's tmux or launchd.
-  function install(tmux: string | null): { dir: string; run: (env?: Record<string, string>) => number } {
+  //
+  // "tmux missing" must really have no tmux: with /usr/bin:/bin on PATH a host
+  // tmux (/usr/bin/tmux on a dev box) was found by `command -v tmux`, and the run
+  // probed the host's live channels session instead. So that case gets a PATH of
+  // only the tools the probe runs before its tmux check, symlinked into sys/.
+  const PRE_TMUX_TOOLS = ['dirname', 'date', 'sleep', 'pkill', 'grep', 'head', 'cut']
+  function install(tmux: string | null): { dir: string; path: string; run: (env?: Record<string, string>) => number } {
     const dir = mkdtempSync(join(tmpdir(), 'ka-probe-'))
     mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'store')); mkdirSync(join(dir, 'bin'))
     copyFileSync(join(__dirname, '..', '..', 'scripts', 'channel-keepalive-probe.sh'), join(dir, 'scripts', 'channel-keepalive-probe.sh'))
+    let path = `${join(dir, 'bin')}:/usr/bin:/bin`
     if (tmux !== null) {
       writeFileSync(join(dir, 'bin', 'tmux'), `#!/bin/sh\n${tmux}\n`)
       chmodSync(join(dir, 'bin', 'tmux'), 0o755)
+    } else {
+      mkdirSync(join(dir, 'sys'))
+      for (const tool of PRE_TMUX_TOOLS) {
+        const real = ['/usr/bin', '/bin'].map((d) => join(d, tool)).find((p) => existsSync(p))
+        if (real) symlinkSync(real, join(dir, 'sys', tool))
+      }
+      path = `${join(dir, 'bin')}:${join(dir, 'sys')}`
     }
     const run = (env: Record<string, string> = {}) => {
       try {
         execFileSync('/bin/bash', [join(dir, 'scripts', 'channel-keepalive-probe.sh')], {
           // stdio ignored: a hung stub child would otherwise hold the pipe open past the probe's own kill.
-          env: { PATH: `${join(dir, 'bin')}:/usr/bin:/bin`, HOME: dir, PROBE_TIMEOUT_S: '20', ...env }, stdio: 'ignore',
+          env: { PATH: path, HOME: dir, PROBE_TIMEOUT_S: '20', ...env }, stdio: 'ignore',
         })
         return 0
       } catch (e) {
         return (e as { status?: number }).status ?? -1
       }
     }
-    return { dir, run }
+    return { dir, path, run }
   }
   const stamp = (dir: string, name: string) => join(dir, 'store', name)
 
@@ -218,8 +232,12 @@ describe('scripts/channel-keepalive-probe.sh: a run stamp on every run, a produc
     ['tmux missing', null],
     ['the session absent', '[ "$1" = has-session ] && exit 1; exit 1'],
   ] as const)('%s: the probe exits early with the run stamp only -- not produced, no keepalive', (_n, tmux) => {
-    const { dir, run } = install(tmux)
+    const { dir, path, run } = install(tmux)
     try {
+      if (tmux === null) {
+        // Precondition, or the case tests nothing: no tmux anywhere on the probe's PATH.
+        expect(path.split(':').filter((d) => existsSync(join(d, 'tmux')))).toEqual([])
+      }
       expect(run()).toBe(0)
       expect(readFileSync(stamp(dir, '.channel-keepalive-probe'), 'utf-8').trim()).toMatch(/^\d{10}$/)
       expect(existsSync(stamp(dir, '.channel-keepalive-produced'))).toBe(false)

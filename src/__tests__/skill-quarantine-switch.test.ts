@@ -7,7 +7,7 @@ import { Readable } from 'node:stream'
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { zipDir } from './helpers/zip-dir.js'
 
 const tmpHome = mkdtempSync(join(tmpdir(), 'skill-switch-home-'))
 const tmpRoot = mkdtempSync(join(tmpdir(), 'skill-switch-root-'))
@@ -161,7 +161,7 @@ describe('OFF: live at once, on the approval path, audited', () => {
     writeFileSync(join(src, 'zz-elf', 'SKILL.md'), MD('zz-elf'))
     writeFileSync(join(src, 'zz-elf', 'tool'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]))
     const zip = `${src}.zip`
-    execFileSync('zip', ['-q', '-r', '-y', zip, '.'], { cwd: src })
+    zipDir(src, zip)
     const boundary = 'zzBoundary42'
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="s.zip"\r\nContent-Type: application/zip\r\n\r\n`, 'binary'),
