@@ -374,6 +374,28 @@ with tempfile.TemporaryDirectory() as td:
           open(os.path.join(work, 'a\nb')).read() == 'mine\n'
           and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2)
 
+# --- 17-18. the dirty-file (CLASH) check itself fails: no merge (#778) ----------
+# Both git diffs ran inside <(...), where pipefail does not look: a failure left
+# CLASH empty ("nothing dirty collides") and the merge ran. A clean divergence,
+# so before the fix the merge went through.
+for label, args in (('dirty list', 4), ('merge-tree list', 5)):
+    with tempfile.TemporaryDirectory() as td:
+        work = repo(td, 'h')
+        env = shim_git(td, 'if [ "$1" = diff ] && [ "$2" = --name-only ] && [ "$3" = --no-renames ] && [ "$#" -eq %d ]; '
+                           'then echo "fatal: simulated diff" >&2; exit 128; fi' % args)
+        p = run(work, env)
+        st = state(work)
+        check('%s check error: exit 0' % label, p.returncode == 0, p.stderr)
+        check('%s check error: state error with the git message' % label,
+              st['result'] == 'error' and 'simulated diff' in st['detail'], st)
+        check('%s check error: no merge run' % label,
+              len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2
+              and open(os.path.join(work, 'h')).read() == 'base\n', st)
+        check('%s check error: one notification naming the error' % label,
+              notes(work) == 1 and 'simulated diff' in open(os.path.join(work, 'store', 'notify.log')).read(), notes(work))
+        run(work, env)
+        check('%s check error repeat: quiet' % label, notes(work) == 1 and state(work)['result'] == 'error', notes(work))
+
 print()
 if FAILS:
     print('%d FAILED: %s' % (len(FAILS), FAILS), file=sys.stderr)

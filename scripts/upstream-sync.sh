@@ -177,9 +177,25 @@ MT_TREE="$(printf '%s\n' "$MT_OUT" | head -n 1)"
 # listed only b, a locally modified a slipped through, and the real merge then
 # refused (rewriting a on the way) every 15 minutes (#726). --no-renames on both
 # sides lists a rename as delete + add, so the old name is checked too.
-CLASH="$(comm -12 \
-  <(git diff --name-only --no-renames HEAD "$MT_TREE" | sort) \
-  <(git diff --name-only --no-renames HEAD | sort))"
+# Each list is read on its own with its exit code: a git diff dying inside a
+# <(...) is invisible to pipefail, CLASH came back empty and the merge ran (#778).
+clash_check_failed() {
+  REASON="$(sed '/^$/d' "$MT_ERRF" | tail -n 3 | tr '\n' ' ')"
+  NEWSTATE="modositas-ellenorzes hiba (rc=$1): ${REASON:-ismeretlen}"
+  if [ "$PREV_RESULT" != "error" ] || [ "$PREV_DETAIL" != "$NEWSTATE" ]; then
+    notify "[UPSTREAM-SYNC] A helyi modositasok ellenorzese (git diff) hibaval allt meg, ezert nem fesultem ossze semmit. A hiba: ${REASON:-ismeretlen}"
+  fi
+  state error "$NEWSTATE"
+  echo "$TS DIRTY CHECK FAILED rc=$1: ${REASON:-unknown}" >&2
+  exit 0
+}
+MERGE_CHANGES="$(git diff --name-only --no-renames HEAD "$MT_TREE" 2>"$MT_ERRF" | sort)"
+DIFF_RC=$?
+[ "$DIFF_RC" -eq 0 ] || clash_check_failed "$DIFF_RC"
+DIRTY="$(git diff --name-only --no-renames HEAD 2>"$MT_ERRF" | sort)"
+DIFF_RC=$?
+[ "$DIFF_RC" -eq 0 ] || clash_check_failed "$DIFF_RC"
+CLASH="$(comm -12 <(printf '%s\n' "$MERGE_CHANGES") <(printf '%s\n' "$DIRTY") | sed '/^$/d')"
 
 # blocked_report <state detail> <journal word> <notify text> -- state + notify for a
 # merge the working tree blocks; quiet when the same cause repeats (same rule as
