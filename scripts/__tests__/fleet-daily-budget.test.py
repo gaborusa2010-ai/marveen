@@ -145,8 +145,9 @@ def main():
         check("nem kuldott ujra", not g.sent, f"{len(g.sent)}")
 
         print("5. a mar leallitott agenst nem allitja le megegyszer")
-        allapot = {"day": __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
-                   "bands": [85], "stopped": ["forgacs"]}
+        # the state's day key is the 06:00-anchored window day, not the calendar date:
+        # a calendar key made this case fail every night 00:00-06:00 (#781)
+        allapot = {"day": mod.window_day(6), "bands": [85], "stopped": ["forgacs"]}
         rc, g = run(dict(MIND, marveen=280_000_000, forgacs=110_000_000, cody=90_000_000),
                     ["--notify", "--budget", "520000000"], allapot)
         check("forgacs nincs ujra leallitva", "forgacs" not in g.stopped, f"{g.stopped}")
