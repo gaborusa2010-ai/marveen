@@ -117,6 +117,16 @@ function optValues(word) {
   return OPT_CLUSTER_RE.test(word) ? (word.match(/[oO]/g) ?? []).length : 0
 }
 
+// bash's GNU long options, with one OR two dashes (`bash -norc`, `bash --rcfile F`): bash reads
+// them only at the START of its argument list, not after the first short option (`bash -x
+// --norc`: invalid option; `bash -x -norc`: the n,o,r,c cluster). None is a -c cluster and no
+// o in them takes a value; rcfile/init-file take one value word (`--rcfile=F` is invalid).
+// Some never run the body (help, version, dump-*, pretty-print, wordexp, protected,
+// rpm-requires). Measured with real bash, 61 forms (#775 round-2 review).
+const BASH_LONG_OPT_RE = /^--?(debug|debugger|dump-po-strings|dump-strings|help|init-file|login|noediting|noprofile|norc|posix|pretty-print|protected|rcfile|restricted|verbose|version|wordexp|rpm-requires)$/
+const BASH_LONG_OPT_VALUE = new Set(['rcfile', 'init-file'])
+const BASH_LONG_OPT_NO_RUN = new Set(['help', 'version', 'dump-po-strings', 'dump-strings', 'pretty-print', 'protected', 'wordexp', 'rpm-requires'])
+
 // The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`);
 // neither is the `|` of `>|` (`bash >| log <<SH`, #775).
 const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(/
@@ -234,11 +244,22 @@ function runsWords(words, k, depth, loose) {
   }
   const shell = SHELLS.has(base)
   const flags = STDIN_SCRIPT_FLAGS[base] ?? []
+  let longOpts = base === 'bash'    // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
   for (let j = k + 1; j < words.length; j++) {
     const [x, xdyn] = words[j]
     if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x)) return base
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
+    if (longOpts) {
+      const lm = BASH_LONG_OPT_RE.exec(x)
+      if (lm) {
+        if (BASH_LONG_OPT_NO_RUN.has(lm[1])) return ''   // `bash --version <<EOF`: the body is never read
+        if (BASH_LONG_OPT_VALUE.has(lm[1])) j++          // `--rcfile F`, `-init-file F`
+        continue
+      }
+      longOpts = false
+    }
+    if (base === 'bash' && x.startsWith('--') && x.length > 2) return ''   // `bash --rcfile=F`, `bash -x --norc`: invalid option, nothing runs
     if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) {
       // the program follows the flag. A shell still reads options after -c (`bash -c -x
       // "$l"`, `-o pipefail`, `+x`), a `-` or `--` ends them (`bash -c - "$l"`), and a

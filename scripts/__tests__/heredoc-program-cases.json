@@ -1819,6 +1819,484 @@
    "expect": [],
    "bash_runs": null,
    "note": "a here-string is not a heredoc: no scan result, and all 3 live gates allowed the payload (measured 2026-11-03); its own card"
+  },
+  {
+   "name": "775r2_top_bash_rcfile",
+   "cmd": "bash --rcfile /dev/null <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_init_file",
+   "cmd": "bash --init-file /dev/null <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_rcfile_c",
+   "cmd": "while read l; do bash --rcfile /dev/null -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_rcfile_x",
+   "cmd": "bash --rcfile x <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_norc1",
+   "cmd": "bash -norc <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_rcfile1",
+   "cmd": "bash -rcfile /dev/null <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_norc_noprof1",
+   "cmd": "bash -norc -noprofile <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_initfile1",
+   "cmd": "bash -init-file /dev/null <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_norc_c",
+   "cmd": "while read l; do bash -norc -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_rcfile1_c",
+   "cmd": "while read l; do bash -rcfile /dev/null -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_posix1",
+   "cmd": "bash -posix <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_posix2",
+   "cmd": "bash --posix <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_login1",
+   "cmd": "bash -login <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_noediting2",
+   "cmd": "bash --noediting <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_verbose1",
+   "cmd": "bash -verbose <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_restricted2",
+   "cmd": "bash --restricted <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_norc_xo",
+   "cmd": "bash --norc -xo pipefail <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_posix_file_data",
+   "cmd": "bash -posix /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_login_file_data",
+   "cmd": "bash -login /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_rcfile_file_data",
+   "cmd": "bash --rcfile /dev/null /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_norc_file_data",
+   "cmd": "bash -norc /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_rl_bash_rcfile_c_static_data",
+   "cmd": "while read l; do bash --rcfile /dev/null -c 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_help_probe",
+   "cmd": "bash --help <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_version_probe",
+   "cmd": "bash --version <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_dump_strings_probe",
+   "cmd": "bash --dump-strings <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_rcfile_eq_probe",
+   "cmd": "bash --rcfile=/dev/null <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "--rcfile=F is not a bash form: invalid option, nothing runs"
+  },
+  {
+   "name": "775r2_rl_bash_c_norc1_probe",
+   "cmd": "while read l; do bash -c -norc \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_rl_bash_c_dd_rcfile_probe",
+   "cmd": "while read l; do bash -c --rcfile /dev/null \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_sh_norc_probe",
+   "cmd": "sh -norc <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "dash: nothing ran; the gate reads -norc as a -c cluster with no program"
+  },
+  {
+   "name": "775r2_top_bash_o_posix_probe",
+   "cmd": "bash -o posix <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_x_norc1_probe",
+   "cmd": "bash -x -norc <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "after -x, -norc is the n,o,r,c cluster: -c without a program, bash exits"
+  },
+  {
+   "name": "775r2_top_bash_x_norc2_probe",
+   "cmd": "bash -x --norc <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_x_posix1_probe",
+   "cmd": "bash -x -posix <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "note": "after a short option -posix is the p,o,s,i,x cluster (o takes no word here, s reads stdin): bash ran it"
+  },
+  {
+   "name": "775r2_top_bash_x_rcfile2_probe",
+   "cmd": "bash -x --rcfile /dev/null <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "a --long option after a short one: bash rejects it (--: invalid option)"
+  },
+  {
+   "name": "775r2_top_bash_restricted1_probe",
+   "cmd": "bash -restricted <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_debugger1_probe",
+   "cmd": "bash -debugger <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_debug2_probe",
+   "cmd": "bash --debug <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_noprofile1_probe",
+   "cmd": "bash -noprofile <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_pretty_probe",
+   "cmd": "bash --pretty-print <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_version1_probe",
+   "cmd": "bash -version <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_help1_probe",
+   "cmd": "bash -help <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_wordexp_probe",
+   "cmd": "bash --wordexp <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_protected_probe",
+   "cmd": "bash --protected <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_rpm_probe",
+   "cmd": "bash --rpm-requires <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_dumppo_probe",
+   "cmd": "bash --dump-po-strings <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_initfile_eq_probe",
+   "cmd": "bash --init-file=/dev/null <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_login_dd_probe",
+   "cmd": "bash -login -- <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_top_bash_posix_c_rl",
+   "cmd": "while read l; do bash --posix -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_login1_c",
+   "cmd": "while read l; do bash -login -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_noprofile1_c",
+   "cmd": "while read l; do bash -noprofile -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_restricted1_c_probe",
+   "cmd": "while read l; do bash -restricted -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_init1_c",
+   "cmd": "while read l; do bash -init-file /dev/null -c \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775r2_rl_bash_c_posix1_probe",
+   "cmd": "while read l; do bash -c -posix \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_rl_bash_c_login1_probe",
+   "cmd": "while read l; do bash -c -login \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_rl_bash_rcfile_c_dyn_body",
+   "cmd": "while read l; do bash --rcfile \"$l\" -c \"echo static\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_sh_posix_probe",
+   "cmd": "sh -posix <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "note": "dash: the body ran (measured); the sh path uses the cluster rule, no long-option table"
+  },
+  {
+   "name": "775r2_top_dash_norc_probe",
+   "cmd": "dash -norc <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_norc_file2_data",
+   "cmd": "bash --norc --noprofile /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775r2_top_bash_init_file_data",
+   "cmd": "bash --init-file /dev/null /tmp/s775.sh <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }

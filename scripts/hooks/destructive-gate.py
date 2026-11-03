@@ -373,6 +373,20 @@ def _opt_values(word):
     return word.count('o') + word.count('O') if _OPT_CLUSTER_RE.match(word) else 0
 
 
+# A bash GNU hosszu opcioi, egy VAGY ket kotojellel (`bash -norc`, `bash --rcfile F`): a bash
+# csak az argumentumlista ELEJEN olvassa oket, az elso rovid kapcsolo utan mar nem (`bash -x
+# --norc`: invalid option; `bash -x -norc`: n,o,r,c csoport). Egyik sem -c csoport es egyik
+# o-ja sem visz erteket; a rcfile/init-file egy ertekszot visz (`--rcfile=F` ervenytelen).
+# Nehany nem futtatja a torzset (help, version, dump-*, pretty-print, wordexp, protected,
+# rpm-requires). Merve valodi bash-sal, 61 alak (#775 2. kor review).
+_BASH_LONG_OPT_RE = re.compile(r'^--?(debug|debugger|dump-po-strings|dump-strings|help|init-file|login'
+                               r'|noediting|noprofile|norc|posix|pretty-print|protected|rcfile|restricted'
+                               r'|verbose|version|wordexp|rpm-requires)$')
+_BASH_LONG_OPT_VALUE = ('rcfile', 'init-file')
+_BASH_LONG_OPT_NO_RUN = ('help', 'version', 'dump-po-strings', 'dump-strings', 'pretty-print', 'protected',
+                         'wordexp', 'rpm-requires')
+
+
 def _after_stdin_wrapper(words, k, spec):
     """A burkolo altal futtatott parancs indexe a kapcsoloi es operandusai utan; None, ha nincs."""
     values, skip = spec
@@ -445,6 +459,7 @@ def _runs_words(words, k, depth, loose=False):
         return False
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
+    long_opts = base == 'bash'     # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
@@ -456,6 +471,16 @@ def _runs_words(words, k, depth, loose=False):
         if _REDIR_GLUED_RE.match(x):
             j += 1                 # osszeirt atiranyitas (2>&1, >log): nem operandus
             continue
+        if long_opts:
+            lm = _BASH_LONG_OPT_RE.match(x)
+            if lm:
+                if lm.group(1) in _BASH_LONG_OPT_NO_RUN:
+                    return False   # `bash --version <<EOF`: a torzs olvasatlan marad
+                j += 1 + (lm.group(1) in _BASH_LONG_OPT_VALUE)   # `--rcfile F`, `-init-file F`
+                continue
+            long_opts = False
+        if base == 'bash' and x.startswith('--') and len(x) > 2:
+            return False           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
         if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
             # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m); olvaso torzsben
             # dinamikus programszo = a torzs egy sora. A shell a -c utan meg olvas opciot
