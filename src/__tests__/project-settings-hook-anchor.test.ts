@@ -125,6 +125,12 @@ const EXPECTED: Record<string, string[]> = {
     // owner waits for a decision-log lookup; Bash carries the tg-valasztas.py question.
     'dontes-lookup-gate.py @ Bash',
     'dontes-lookup-gate.py @ mcp__plugin_telegram_telegram__reply|mcp__plugin_telegram_telegram__edit_message',
+    // APPROVALDBGATE1030: security tables, the database file, the install's gate wiring
+    'db-write-gate.mjs @ Bash|Write|Edit|MultiEdit|NotebookEdit',
+    // Refuses a Bash command whose own text the shell would re-scan (a backtick
+    // in double quotes, $( ) in an inline interpreter payload, ...). Fail-open on
+    // any internal error, so it cannot wedge a session.
+    'shell-rescan-guard.py @ Bash',
   ],
   // Local additions on this install: ledger-midturn-capture.py backfills mid-turn
   // inbound rows into the conversation ledger (MIDTURN901); require-checked.py

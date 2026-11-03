@@ -48,6 +48,7 @@ import {
   initDatabase, createKanbanCard, getKanbanCard, getKanbanCardEvents, moveKanbanCard,
 } from '../db.js'
 import { tryHandleKanban, recordKanbanCardRead, resetKanbanCardReads, kanbanMoveInstructions } from '../web/routes/kanban.js'
+import { recipeLine, runRecipeLine } from './helpers/kanban-recipe.js'
 
 interface MoveResult { status: number; body: Record<string, unknown> }
 
@@ -169,18 +170,18 @@ describe('moveKanbanCard expectedStatus (db layer)', () => {
 // route. Locally (#663) only the main agent's recipe closes with done; a sub-agent's
 // recipe hands it the testing move, which carries the same guard (last test below).
 describe('dispatch recipe sends expected_status on the close', () => {
-  const donePayload = (): Record<string, unknown> => {
-    const out = kanbanMoveInstructions('t-1', 'orin')
-    const line = out.split('\n').find((l) => l.includes(`-d '{"status":"done"`))
-    expect(line).toBeDefined()
-    return JSON.parse(line!.slice(line!.indexOf("'") + 1, line!.lastIndexOf("'"))) as Record<string, unknown>
+  // The recipe's done line is run for real (scripts/marveen-api.sh against a capture server), and the body it sent is
+  // what goes to the real route here.
+  const donePayload = async (): Promise<Record<string, unknown>> => {
+    const out = kanbanMoveInstructions('t-1', 'orin') // #663: only the main agent's recipe closes with done
+    return (await runRecipeLine(recipeLine(out, 'kanban-move', 't-1', 'done'), { 'kanban-t-1-bizonyitek.txt': 'tests 3/3' })).body!
   }
 
   it('a late close does not move a card that has moved on (409, unchanged)', async () => {
     createKanbanCard({ id: 't-1', title: 'Moved on', assignee: 'dex' })
     moveKanbanCard('t-1', 'testing', 0, 'orin')
 
-    const r = await move('t-1', donePayload())
+    const r = await move('t-1', await donePayload())
 
     expect(r.status).toBe(409)
     expect(r.body).toMatchObject({ error: 'status_conflict', current_status: 'testing' })
@@ -191,7 +192,7 @@ describe('dispatch recipe sends expected_status on the close', () => {
     createKanbanCard({ id: 't-1', title: 'Still mine', assignee: 'dex' })
     moveKanbanCard('t-1', 'in_progress', 0, 'dex')
 
-    const r = await move('t-1', donePayload())
+    const r = await move('t-1', await donePayload())
 
     expect(r.status).toBe(200)
     expect(getKanbanCard('t-1')?.status).toBe('done')
@@ -201,9 +202,7 @@ describe('dispatch recipe sends expected_status on the close', () => {
     createKanbanCard({ id: 't-1', title: 'Closed meanwhile', assignee: 'dex' })
     moveKanbanCard('t-1', 'done', 0, 'orin')
     const out = kanbanMoveInstructions('t-1', 'dex')
-    const line = out.split('\n').find((l) => l.includes(`-d '{"status":"testing"`))
-    expect(line).toBeDefined()
-    const payload = JSON.parse(line!.slice(line!.indexOf("'") + 1, line!.lastIndexOf("'"))) as Record<string, unknown>
+    const payload = (await runRecipeLine(recipeLine(out, 'kanban-move', 't-1', 'testing'))).body!
     expect(payload).toMatchObject({ status: 'testing', actor: 'dex', expected_status: 'in_progress' })
 
     const r = await move('t-1', payload)
@@ -217,6 +216,6 @@ describe('dispatch recipe sends expected_status on the close', () => {
     const out = kanbanMoveInstructions('t-1', 'dex')
     expect(out).toContain('HTTP 409')
     expect(out).toContain('status_conflict')
-    expect(out).toMatch(/waiting.*"expected_status":"in_progress"/)
+    expect(out).toMatch(/kanban-move t-1 waiting --actor dex --expected-status in_progress/)
   })
 })

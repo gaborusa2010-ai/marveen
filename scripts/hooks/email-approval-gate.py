@@ -386,6 +386,26 @@ def _load_is_send_invocation():
              "eszkozokon fut.")
 
 
+def _load_script_run_sends():
+    """Import script_run_sends from outgoing-copy-gate.py, built like
+    _load_is_send_invocation (MAILGATESCRIPT1027): a mail send done by a script FILE
+    is not visible in the command text, so the file is read too. Without the
+    module no Bash call can be told apart from such a send, so a load failure is a
+    deny that names the file."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "outgoing_copy_gate", os.path.join(_HERE, "outgoing-copy-gate.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.script_run_sends
+    except Exception as exc:  # noqa: BLE001 -- SyntaxError, missing file, anything: fail-closed
+        deny("A kapu fuggosege (scripts/hooks/outgoing-copy-gate.py) nem toltheto be "
+             f"({exc!r}) -- fail-closed: nem dontheto el, hogy egy Bash-hivas scriptfajlbol "
+             "levelet kuld-e, ezert minden Bash-hivas tiltva, amig a modul nem javul. A javitas "
+             "fajl-szerkeszto eszkozzel mehet: ez a kapu csak a Bash- es a levelezo "
+             "eszkozokon fut.")
+
+
 def read_email_level():
     """Return (level, note). Missing category / unreadable config -> level 2:
     fail-closed but recoverable through an approval, instead of a hard lockout
@@ -1219,7 +1239,10 @@ def main():
         cmd = str(tool_input.get("command") or "")
         cwd = payload.get("cwd")
         cwd = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else None
-        if not _load_is_send_invocation()(cmd, cwd=cwd):
+        # Both script-file readers: ours (#718, inside is_send_invocation) and
+        # upstream's script_run_sends (MAILGATESCRIPT1027). Either one is a send.
+        if not (_load_is_send_invocation()(cmd, cwd=cwd)
+                or _load_script_run_sends()(cmd, payload.get("cwd"))):
             sys.exit(0)
         if ledger_enabled():
             ledger_gate("bash", tool_input, cmd)
