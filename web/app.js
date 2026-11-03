@@ -13310,6 +13310,8 @@ let globalSkills = []
 let localAgentSkills = []
 let codexSkills = []
 let subagentDefs = []
+// skill_name -> { total_count, last_used_at } from /api/skill-usage/stats
+let skillUsageByName = {}
 let skillsViewAgent = ''
 let skillsActiveFilter = 'all'
 let skillsSearchQuery = ''
@@ -13366,16 +13368,19 @@ async function loadGlobalSkills() {
     // Codex and sub-agent lists are extras: if either fails, the page still
     // shows the Claude skills.
     const optional = url => fetch(url).then(r => (r.ok ? r.json() : [])).catch(() => [])
-    const [globalRes, localRes, codexList, subagentList] = await Promise.all([
+    const [globalRes, localRes, codexList, subagentList, usageList] = await Promise.all([
       fetch('/api/skills'),
       fetch('/api/skills/local'),
       optional('/api/skills/codex'),
       optional('/api/skills/subagents'),
+      optional('/api/skill-usage/stats'),
     ])
     globalSkills = await globalRes.json()
     localAgentSkills = localRes.ok ? await localRes.json() : []
     codexSkills = Array.isArray(codexList) ? codexList : []
     subagentDefs = Array.isArray(subagentList) ? subagentList : []
+    skillUsageByName = {}
+    if (Array.isArray(usageList)) for (const u of usageList) skillUsageByName[u.skill_name] = u
     renderSkillsAgentSelect()
     renderGlobalSkills()
     loadPendingSkills()
@@ -13799,6 +13804,15 @@ function renderGlobalSkillsGrid() {
     }
 
     const mtimeStr = skill.mtime ? formatMtime(skill.mtime) : ''
+    // Usage is logged by skill name only, so a same-named agent-local copy
+    // shows the shared count. Sub-agent and Codex entries are not logged.
+    let usageBadge = ''
+    if (!isStatic) {
+      const u = skillUsageByName[skill.name]
+      usageBadge = u
+        ? `<span class="skill-card-usage" title="${escapeHtml(t('skills.usage.title'))}">${escapeHtml(t('skills.usage.used', { n: u.total_count, date: formatMtime(u.last_used_at * 1000) }))}</span>`
+        : `<span class="skill-card-usage skill-card-usage--never" title="${escapeHtml(t('skills.usage.title'))}">${escapeHtml(t('skills.usage.never'))}</span>`
+    }
 
     const displayName = skill.label || skill.name
     card.innerHTML = `
@@ -13812,10 +13826,11 @@ function renderGlobalSkillsGrid() {
           <div class="skills-card-desc">${escapeHtml(skill.description || t('skills.no_description'))}</div>
         </div>
       </div>
-      ${(kwTags || agentBadges || mtimeStr) ? `
+      ${(kwTags || agentBadges || usageBadge || mtimeStr) ? `
       <div class="skills-card-footer">
         ${kwTags}
         ${agentBadges}
+        ${usageBadge}
         ${mtimeStr ? `<span class="skill-card-mtime" title="${t('skills.mtime.title')}">${escapeHtml(mtimeStr)}</span>` : ''}
       </div>` : ''}
     `

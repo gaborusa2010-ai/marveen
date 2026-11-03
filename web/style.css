@@ -6108,6 +6108,15 @@ a.oss-inv-name:hover { text-decoration: underline; }
   border: 1px solid var(--border);
 }
 
+.skill-card-usage {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.skill-card-usage--never {
+  font-style: italic;
+}
+
 .skill-card-mtime {
   font-size: 11px;
   color: var(--text-muted);
