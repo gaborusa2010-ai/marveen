@@ -23,8 +23,11 @@ EXIT CODES (the scheduler's command task maps 0/1 to 0; only 2+ is an alert):
   1  broken files exist (the verdict; the message carries it)
   2  the instrument failed. Counted PER SOURCE, because a glob skips an unreadable
      or missing directory silently: the home projects tree yields no memory file,
-     or agent config dirs exist but none of them yields one. A sweep that sees
-     nothing (or only half) must not look like a clean fleet.
+     or an agent's projects dir cannot be read (a dangling link, no permission),
+     or an agent memory dir lists .md files the glob did not return. A sweep that
+     sees nothing (or only half) must not look like a clean fleet. An agent dir
+     that is readable and simply EMPTY is not blind: a session restart creates
+     one with no memory in it yet (#757, 2026-11-03).
   3  the message to Marveen could not be delivered
 """
 import argparse
@@ -41,7 +44,7 @@ from memory_frontmatter_lib import tartalom_hiba  # noqa: E402
 
 
 def memory_files(home, repo):
-    """(sorted realpaths, per-source hit counts, whether agent config dirs exist)."""
+    """(sorted realpaths, per-source hit counts, agent paths the sweep is blind to)."""
     sources = {
         'home': os.path.join(home, '.claude', 'projects', '*', 'memory', '*.md'),
         'agents': os.path.join(repo, 'agents', '*', '.claude-config', 'projects', '*', 'memory', '*.md'),
@@ -52,8 +55,26 @@ def memory_files(home, repo):
         counts[name] = len(hits)
         for p in hits:
             seen.setdefault(os.path.realpath(p), p)
-    agent_configs = bool(glob.glob(os.path.join(repo, 'agents', '*', '.claude-config', 'projects')))
-    return sorted(seen), counts, agent_configs
+    return sorted(seen), counts, blind_agent_dirs(repo, counts['agents'])
+
+
+def blind_agent_dirs(repo, agent_hits):
+    """Agent paths the glob could not have seen into. Empty but readable is fine."""
+    blind = []
+    for proj in glob.glob(os.path.join(repo, 'agents', '*', '.claude-config', 'projects')):
+        if not (os.path.isdir(proj) and os.access(proj, os.R_OK | os.X_OK)):
+            blind.append(proj)
+            continue
+        if agent_hits:
+            continue
+        for mem in glob.glob(os.path.join(proj, '*', 'memory')):
+            try:
+                listed = [n for n in os.listdir(mem) if n.endswith('.md') and n != 'MEMORY.md']
+            except OSError:
+                listed = ['<unreadable>']
+            if listed:
+                blind.append(mem)
+    return blind
 
 
 def sweep(files):
@@ -76,12 +97,12 @@ def main():
     a = ap.parse_args()
 
     try:
-        files, counts, agent_configs = memory_files(a.home, a.repo)
+        files, counts, blind = memory_files(a.home, a.repo)
         if counts['home'] == 0:
             print(f'MUSZER-HIBA: a home projects-fajabol egyetlen memoriafajl sem jott ({counts}), ez vak meres, nem tiszta flotta')
             return 2
-        if agent_configs and counts['agents'] == 0:
-            print(f'MUSZER-HIBA: vannak agens config-konyvtarak, de egyikbol sem jott memoriafajl ({counts}), a meres felig vak')
+        if blind:
+            print(f'MUSZER-HIBA: agens-konyvtar, amibe a meres nem lat bele: {blind[:3]} ({counts}), a meres felig vak')
             return 2
         broken = sweep(files)
     except Exception as ex:
