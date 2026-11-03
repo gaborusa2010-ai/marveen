@@ -54,7 +54,13 @@ describe('heredoc-program twin: JS reads every case like the Python side', () =>
     expect(consumers('cat <<X | node -\n1\nX')).toEqual(['node'])
     expect(consumers('eval "$(cat <<EOF\nls\nEOF\n)"')).toEqual(['eval'])
     expect(consumers('while read l; do $l; done <<EOF\nls\nEOF')).toEqual(['done'])
-    expect(consumers('f(){ sh; }; f <<SH\nls\nSH')).toEqual(['f'])
+    // #777 review 6: a function's consumer is its BODY's consumer; the name cannot say code or shell
+    expect(consumers('f(){ sh; }; f <<SH\nls\nSH')).toEqual(['sh'])
+    expect(consumers("python3(){ bash; }; python3 <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("python3(){ bash; }; command python3 <<'A'\nls\nA")).toEqual(['python3'])
+    expect(consumers("xargs -a python3 sh <<'A'\nls\nA")).toEqual(['sh'])
+    expect(consumers("ssh python3 bash <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("ssh host python3 - <<'A'\nprint(1)\nA")).toEqual(['python3'])
     expect(consumers('cat > f <<EOF\nls\nEOF')).toEqual([])
   })
 

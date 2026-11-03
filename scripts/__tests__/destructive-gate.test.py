@@ -968,10 +968,60 @@ def _consumer(cmd):
 check("source /dev/stdin ruby <<'A' -> source", _consumer("source /dev/stdin ruby <<'A'\nx\nA") == ["source"])
 check("python3 - <<'PY' -> python3", _consumer("python3 - <<'PY'\nx\nPY") == ["python3"])
 check("cat <<'A' > f -> '' (adat)", _consumer("cat <<'A' > f\nx\nA") == [""])
-check("f(){ eval \"$(cat)\"; }; f php <<'A' -> f", _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["f"])
+check("f(){ eval \"$(cat)\"; }; f php <<'A' -> eval (review 6: a fuggveny TORZSENEK fogyasztoja)",
+      _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["eval"])
 check("while read l; do eval \"$l\"; done <<'A' -> done", _consumer("while read l; do eval \"$l\"; done <<'A'\nx\nA") == ["done"])
 check("cat <<'A' | node - -> node", _consumer("cat <<'A' | node -\nx\nA") == ["node"])
 check("bash <<< 'x' -> bash", _consumer("bash <<< 'x'") == ["bash"])
+
+# --- 17. #777 review 6: a fuggveny a nev elott, a torzs fogyasztoja a szo; opcio-ertek nem parancs ---
+# (1) `python3(){ bash; }; python3 <<A`: a fuggveny arnyekolja a PATH-ot, a torzset a bash olvassa.
+# A _cmd_runs_stdin a funcs ELOTT futott, 'python3'-at adott, a _code_consumer kodnak vette, a
+# torzs itt-stringje kimaradt. Most a fuggveny jon elobb, es a TORZSENEK a fogyasztoja a szo (bash),
+# mert a nev (python3, f) nem mondja meg, kod vagy shell olvassa-e. Kivetel: command/builtin/exec/
+# env/nohup elotag megkeruli a fuggvenyt (bash-sal merve, probe-sandbox: `python3(){ echo FN; };
+# command python3 <<<"print(7)"` 7-et ir; `time f` a fuggvenyt futtatja).
+# (2) `xargs -a python3 sh <<A`: az -a erteke volt az elso ertelmezo-nevu szo. Most a kapcsolok
+# ertekei kimaradnak, es a shell-szo nyer az ertelmezo-szo elott (ssh/docker host-nev is; az
+# unshare --map-user es a systemd-run --uid erteke a burkolo-tablaban).
+print()
+print("#777 review 6, MUST-BLOCK (fuggveny ertelmezo-nevvel, opcio-ertek ertelmezo-nevvel):")
+for label, cmd in [
+    ("python3(){ bash; }; python3 <<'A'", "python3(){ bash; }; python3 <<'A'"),
+    ("node(){ eval \"$(cat)\"; }; node <<'A'", "node(){ eval \"$(cat)\"; }; node <<'A'"),
+    ("python3(){ sh; } / python3 <<'A' (kulon soron)", "python3(){ sh; }\npython3 <<'A'"),
+    ("python3(){ bash; }; time python3 <<'A' (a time a fuggvenyt futtatja)", "python3(){ bash; }; time python3 <<'A'"),
+    ("xargs -a python3 sh <<'A'", "xargs -a python3 sh <<'A'"),
+    ("xargs -a /dev/null -E python3 sh <<'A'", "xargs -a /dev/null -E python3 sh <<'A'"),
+    ("parallel -a python3 sh <<'A'", "parallel -a python3 sh <<'A'"),
+    ("docker exec -i python3 bash <<'A'", "docker exec -i python3 bash <<'A'"),
+    ("ssh python3 bash <<'A'", "ssh python3 bash <<'A'"),
+    ("systemd-run --uid python3 bash <<'A'", "systemd-run --uid python3 bash <<'A'"),
+    ("unshare --map-user python3 bash <<'A'", "unshare --map-user python3 bash <<'A'"),
+    ("xargs -I{} sh -c {} <<'A' (valtozatlan)", "xargs -I{} sh -c {} <<'A'"),
+    ("f(){ bash; }; f <<'A' (valtozatlan)", "f(){ bash; }; f <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (a torzs kod, a szo idezojelben adat):")
+for label, cmd, body in [
+    ("python3(){ /usr/bin/python3 \"$@\"; }; python3 - <<'PY' (a torzs fogyasztoja python)",
+     "python3(){ /usr/bin/python3 \"$@\"; }; python3 - <<'PY'", "x = \"bash <<< 'RM'\""),
+    ("python3(){ bash; }; command python3 - <<'PY' (a command megkeruli a fuggvenyt)",
+     "python3(){ bash; }; command python3 - <<'PY'", "x = \"bash <<< 'RM'\""),
+    ("ssh host python3 - <<'PY'", "ssh host python3 - <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("docker exec -i c python3 - <<'PY'", "docker exec -i c python3 - <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("xargs python3 <<'PY'", "xargs python3 <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("xargs -n 1 python3 <<'PY' (a -n erteke kimarad, a python a program)", "xargs -n 1 python3 <<'PY'",
+     "print(\"bash <<< 'RM'\")"),
+]:
+    check(label, not blocks(cmd + "\n" + body.replace('RM', RMH) + "\nPY"))
+print("a fogyaszto szo (a fuggvenye a torzse fogyasztoja):")
+check("python3(){ bash; }; python3 <<'A' -> bash", _consumer("python3(){ bash; }; python3 <<'A'\nx\nA") == ["bash"])
+check("python3(){ bash; }; command python3 <<'A' -> python3", _consumer("python3(){ bash; }; command python3 <<'A'\nx\nA") == ["python3"])
+check("f(){ python3 -; }; f <<'A' -> python3", _consumer("f(){ python3 -; }; f <<'A'\nx\nA") == ["python3"])
+check("xargs -a python3 sh <<'A' -> sh", _consumer("xargs -a python3 sh <<'A'\nx\nA") == ["sh"])
+check("ssh python3 bash <<'A' -> bash", _consumer("ssh python3 bash <<'A'\nx\nA") == ["bash"])
+check("ssh host python3 - <<'A' -> python3", _consumer("ssh host python3 - <<'A'\nx\nA") == ["python3"])
 
 
 def _missing_module_exit():

@@ -401,10 +401,12 @@ _STDIN_WRAPPERS = {
     'unbuffer': ((), 0),
     'watch': (('-n', '-d', '--interval', '--differences'), 0),
     'caffeinate': (('-t', '-w'), 0),
-    'unshare': (('-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root'), 0),
+    'unshare': (('-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root', '--map-user', '--map-group',
+                 '--map-users', '--map-groups'), 0),
     'nsenter': (('-t', '--target', '-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-r', '--root'), 0),
     'systemd-run': (('-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine',
-                     '--slice', '--on-active', '--on-calendar'), 0),
+                     '--slice', '--on-active', '--on-calendar', '--uid', '--gid', '--nice',
+                     '--working-directory'), 0),
 }
 # `sudo -s <<EOF` / `sudo -i <<EOF` parancs nelkul: a felhasznalo shellje olvassa a torzset.
 _SHELL_FLAGS_OF = {'sudo': ('-s', '-i', '--shell', '--login'), 'doas': ('-s',)}
@@ -414,6 +416,38 @@ _ARGV_FEEDERS = ('xargs', 'parallel')
 # Tavoli es kontener-futtatok: a parancs az elso ertelmezo-szo mogottuk; a sajat
 # kapcsolo-alakjukat (host, image, -v, -p, ...) nem modellezzuk.
 _REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl')
+# Az xargs/parallel KULON szoban erteket vivo kapcsoloi: az ertek nem parancs (#777 review 6:
+# `xargs -a python3 sh <<A`, `parallel -a python3 sh <<A` torzset az sh olvassa). A `-i`
+# (xargs, elavult) az erteket csak osszeirva viszi, ezert nincs itt.
+_FEEDER_VALUE_FLAGS = (
+    '-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '-j', '-S', '-N',
+    '--max-args', '--max-procs', '--max-lines', '--max-chars', '--delimiter', '--replace',
+    '--arg-file', '--eof', '--process-slot-var', '--jobs', '--sshlogin', '--sshloginfile',
+    '--slf', '--colsep', '--joblog', '--results', '--tmpdir', '--wd', '--workdir',
+    '--block', '--retries', '--timeout', '--halt')
+
+
+def _after_feeder_options(words, k):
+    """Az xargs/parallel kapcsoloi utani elso szo indexe (len(words), ha nincs)."""
+    j = k + 1
+    while j < len(words):
+        x = words[j][0]
+        if x == '--':
+            return j + 1
+        if not x.startswith('-'):
+            return j
+        j += 2 if x in _FEEDER_VALUE_FLAGS else 1
+    return j
+
+
+def _program_word(words, j):
+    """A j-tol allo szavak kozul a burkolt PROGRAM indexe: az elso shell-szo, ha van, kulonben
+    az elso ertelmezo-szo; None, ha egyik sincs (#777 review 6: `ssh python3 bash <<A`,
+    `docker exec -i python3 bash <<A` -- a python3 host/kontener-nev, a torzset a bash olvassa;
+    `ssh host python3 - <<A` -- nincs shell-szo, a python3 a program)."""
+    idx = [i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS]
+    shells = [i for i in idx if os.path.basename(words[i][0]) in _SHELLS]
+    return shells[0] if shells else (idx[0] if idx else None)
 # Egy utvonal, ami MAGA a standard bemenet: `bash /dev/stdin <<EOF` a torzset futtatja.
 _STDIN_PATH_RE = re.compile(r'^/(?:dev/stdin|(?:dev|proc/self)/fd/0+)$')
 # Atiranyitas-operator KULON szoban (a kovetkezo szo a celja: `> log`, `2>&1`-nel nincs
@@ -523,13 +557,11 @@ def _runs_words(words, k, depth, loose=False):
                 return _runs_words(words, j, depth + 1, loose)
             return base if any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
         if base in _ARGV_FEEDERS:
-            return next((os.path.basename(x) for x, _ in words[k + 1:]
-                         if os.path.basename(x) in INTERPRETERS), '')
+            j = _program_word(words, _after_feeder_options(words, k))
+            return os.path.basename(words[j][0]) if j is not None else ''
         if base in _REMOTE_RUNNERS:
-            for j in range(k + 1, len(words)):
-                if os.path.basename(words[j][0]) in INTERPRETERS:
-                    return _runs_words(words, j, depth + 1, loose)
-            return ''
+            j = _program_word(words, k + 1)
+            return _runs_words(words, j, depth + 1, loose) if j is not None else ''
         return ''
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
@@ -727,13 +759,32 @@ def _any_runs_stdin(text, depth=0):
     Ketszer olvassuk: ahogy van (a helyettesites BELSEJEBEN allo `x=$(bash -c "$l")`
     is fut), es a lezart helyettesitesekkel egy-egy dinamikus szova vonva
     (`bash -c "$(echo "$l")"` programja a helyettesites, #775)."""
+    return bool(_first_consumer(text, depth))
+
+
+def _first_consumer(text, depth=0):
+    """Az osszetett szoveg elso stdin-t futtato egyszeru parancsanak FOGYASZTO SZAVA ('' ha
+    nincs; 'nested' a melysegkorlaton: amit nem tudunk vegigkovetni, azt nem engedjuk at).
+    A JS iker anyRunsStdin alakja (#777 review 6)."""
     if depth > _MAX_NEST:
-        return True                # amit nem tudunk vegigkovetni, azt nem engedjuk at
+        return 'nested'
     loose = bool(_READS_STDIN_RE.search(text))
     blanked = _sub_blanked(text)
-    return any(_runs_words(*_cmd_word(p), depth, loose)
-               for t in ((text, blanked) if blanked != text else (text,))
-               for p in _SIMPLE_SPLIT.split(t) if p.strip())
+    for t in ((text, blanked) if blanked != text else (text,)):
+        for p in _SIMPLE_SPLIT.split(t):
+            if p.strip():
+                c = _runs_words(*_cmd_word(p), depth, loose)
+                if c:
+                    return c
+    return ''
+
+
+def _function_bypassed(words, k):
+    """A k-adik szo elott allo atlatszo elotag (command, builtin, exec, env, nohup) a shell-
+    fuggvenyt megkeruli, a PATH-beli parancs fut (bash-sal merve, #777 review 6); a `time`
+    kulcsszo a fuggvenyt futtatja."""
+    return any(os.path.basename(x) in _TRANSPARENT and os.path.basename(x) != 'time'
+               for x, _d in words[:k])
 
 
 def _function_bodies(cmd):
@@ -775,13 +826,19 @@ def _simple_runs(seg, funcs, cmd=None, end=None):
     programkent futtatja-e: maga az ertelmezo, egy fuggveny, amelynek a torzseben
     ilyen all, vagy egy osszetett parancs (ciklus, if, { }) zaroja, amelynek a
     torzseben ilyen all. `cmd`/`end` csak a fejnel adott (a cso-tagnal a zaro nem
-    ertelmes). Visszaad: a FOGYASZTO szo (ertelmezo, fuggvenynev, zaro), vagy '' (#777 review 5)."""
+    ertelmes). Visszaad: a FOGYASZTO szo (ertelmezo, a fuggveny TORZSENEK fogyasztoja, zaro),
+    vagy '' (#777 review 5, 6)."""
+    words, k = _cmd_word(seg)
+    if k < len(words) and words[k][0] in funcs and not _function_bypassed(words, k):
+        # A fuggveny arnyekolja a PATH-ot (#777 review 6: `python3(){ bash; }; python3 <<A`
+        # torzset a bash olvassa), ezert a fuggveny ELOBB jon, es a TORZSENEK a fogyasztoja a
+        # szo: a nev (python3, f) nem mondja meg, kod vagy shell olvassa-e a torzset.
+        consumer = _first_consumer(funcs[words[k][0]])
+        if consumer:
+            return consumer
     consumer = _cmd_runs_stdin(seg)
     if consumer:
         return consumer
-    words, k = _cmd_word(seg)
-    if k < len(words) and words[k][0] in funcs and _any_runs_stdin(funcs[words[k][0]]):
-        return words[k][0]
     last = _last_operand(words)
     if cmd is not None and last in _CLOSERS:
         return last if _any_runs_stdin(_compound_text(cmd, end, last)) else ''
@@ -822,8 +879,10 @@ def _enclosing_runs(parts, funcs):
             base = os.path.basename(w)
             if dyn or base in ('source', '.', 'eval'):
                 return w
-            if base in funcs and _any_runs_stdin(funcs[base]):
-                return base
+            if w in funcs:
+                c = _first_consumer(funcs[w])
+                if c:
+                    return c
             flags = _STDIN_SCRIPT_FLAGS.get(base, ())
             if base in INTERPRETERS and (procsub or any(x in flags for x, _ in words[k + 1:])):
                 return base

@@ -91,9 +91,9 @@ const WRAPPERS = {
   unbuffer: { values: [], skip: 0 },
   watch: { values: ['-n', '-d', '--interval', '--differences'], skip: 0 },
   caffeinate: { values: ['-t', '-w'], skip: 0 },
-  unshare: { values: ['-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root'], skip: 0 },
+  unshare: { values: ['-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root', '--map-user', '--map-group', '--map-users', '--map-groups'], skip: 0 },
   nsenter: { values: ['-t', '--target', '-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-r', '--root'], skip: 0 },
-  'systemd-run': { values: ['-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine', '--slice', '--on-active', '--on-calendar'], skip: 0 },
+  'systemd-run': { values: ['-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine', '--slice', '--on-active', '--on-calendar', '--uid', '--gid', '--nice', '--working-directory'], skip: 0 },
 }
 // `sudo -s <<EOF` / `sudo -i <<EOF` with no command: the user's shell reads the body.
 const SHELL_FLAGS_OF = { sudo: ['-s', '-i', '--shell', '--login'], doas: ['-s'] }
@@ -103,6 +103,38 @@ const ARGV_FEEDERS = new Set(['xargs', 'parallel'])
 // Remote and container runners: the command is the first interpreter word behind
 // them, their own option shapes (host, image, -v, -p, ...) are not modelled.
 const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl'])
+// xargs/parallel options that take their value in a SEPARATE word: the value is not the
+// command (#777 review 6: `xargs -a python3 sh <<A`, `parallel -a python3 sh <<A` run sh).
+// xargs' deprecated `-i` carries its value glued only, so it is not here.
+const FEEDER_VALUE_FLAGS = new Set([
+  '-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '-j', '-S', '-N',
+  '--max-args', '--max-procs', '--max-lines', '--max-chars', '--delimiter', '--replace',
+  '--arg-file', '--eof', '--process-slot-var', '--jobs', '--sshlogin', '--sshloginfile',
+  '--slf', '--colsep', '--joblog', '--results', '--tmpdir', '--wd', '--workdir',
+  '--block', '--retries', '--timeout', '--halt'])
+
+/** The index of the first word after an xargs/parallel's options (words.length when none). */
+function afterFeederOptions(words, k) {
+  let j = k + 1
+  while (j < words.length) {
+    const x = words[j][0]
+    if (x === '--') return j + 1
+    if (!x.startsWith('-')) return j
+    j += FEEDER_VALUE_FLAGS.has(x) ? 2 : 1
+  }
+  return j
+}
+
+/** The wrapped PROGRAM among the words from `j` on: the first shell word when there is one,
+ *  else the first interpreter word; -1 when neither (#777 review 6: `ssh python3 bash <<A`,
+ *  `docker exec -i python3 bash <<A` name a host/container, bash reads the body;
+ *  `ssh host python3 - <<A` has no shell word, python3 is the program). */
+function programWord(words, j) {
+  const idx = []
+  for (let i = j; i < words.length; i++) if (INTERPRETERS.has(baseName(words[i][0]))) idx.push(i)
+  const shell = idx.find((i) => SHELLS.has(baseName(words[i][0])))
+  return shell ?? (idx.length ? idx[0] : -1)
+}
 
 // A path that IS the standard input: `bash /dev/stdin <<EOF` runs the body.
 const STDIN_PATH_RE = /^\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)$/
@@ -224,6 +256,13 @@ function afterTransparent(words, k, base) {
   return j
 }
 
+/** A transparent prefix before the command word (command, builtin, exec, env, nohup) bypasses
+ *  a shell function and runs the PATH command (measured with bash, #777 review 6); the `time`
+ *  keyword runs the function. */
+function functionBypassed(words, k) {
+  return words.slice(0, k).some(([x]) => TRANSPARENT.has(baseName(x)) && baseName(x) !== 'time')
+}
+
 /** The last word that is not a redirect: `} 2>&1` -> `}`, `done > log` -> `done` (#773). */
 function lastOperand(words) {
   let j = words.length - 1
@@ -291,11 +330,11 @@ function runsWords(words, k, depth, loose) {
       return words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
     }
     if (ARGV_FEEDERS.has(base)) {
-      const inner = words.slice(k + 1).find(([x]) => INTERPRETERS.has(baseName(x)))
-      return inner ? baseName(inner[0]) : ''
+      const j = programWord(words, afterFeederOptions(words, k))
+      return j >= 0 ? baseName(words[j][0]) : ''
     }
     if (REMOTE_RUNNERS.has(base)) {
-      const j = words.findIndex(([x], i) => i > k && INTERPRETERS.has(baseName(x)))
+      const j = programWord(words, k + 1)
       return j >= 0 ? runsWords(words, j, depth + 1, loose) : ''
     }
     return ''                         // an unknown command: its ARGUMENTS are not a program
@@ -494,10 +533,16 @@ function compoundText(cmd, end, closer) {
 /** The opener's head or one pipe member: the interpreter itself, a function whose body
  *  runs stdin, or (head only) the closer of a compound whose body runs stdin. */
 function simpleRuns(seg, funcs, cmd, end) {
+  const [words, k] = cmdWord(seg)
+  if (k < words.length && Object.hasOwn(funcs, words[k][0]) && !functionBypassed(words, k)) {
+    // The function shadows PATH (#777 review 6: `python3(){ bash; }; python3 <<A` is read by
+    // bash), so the function comes FIRST and its BODY's consumer is the word: the name
+    // (python3, f) does not say whether code or a shell reads the body.
+    const c = anyRunsStdin(funcs[words[k][0]])
+    if (c) return c
+  }
   const direct = runsStdinAsProgram(seg)
   if (direct) return direct
-  const [words, k] = cmdWord(seg)
-  if (k < words.length && Object.hasOwn(funcs, words[k][0]) && anyRunsStdin(funcs[words[k][0]])) return words[k][0]
   const last = lastOperand(words)
   if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) return anyRunsStdin(compoundText(cmd, end, last)) ? last : ''
   return ''
@@ -531,7 +576,10 @@ function enclosingRuns(parts, funcs) {
       const [w, dyn] = words[k]
       const base = baseName(w)
       if (dyn || base === 'source' || base === '.' || base === 'eval') return w
-      if (Object.hasOwn(funcs, base) && anyRunsStdin(funcs[base])) return base
+      if (Object.hasOwn(funcs, w)) {
+        const c = anyRunsStdin(funcs[w])
+        if (c) return c
+      }
       const flags = STDIN_SCRIPT_FLAGS[base] ?? []
       if (INTERPRETERS.has(base) && (procsub || words.slice(k + 1).some(([x]) => flags.includes(x)))) return base
       if (INTERPRETERS.has(base)) return ''       // `bash "$(cat <<EOF)"`: the output names a script FILE
