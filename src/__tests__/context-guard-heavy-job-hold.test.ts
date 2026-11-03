@@ -159,8 +159,10 @@ const mins = (fromSec: number, toSec: number) => Math.round((toSec - fromSec) / 
 
 /** Hard-threshold tier: restart decided on every idle sweep, deferred while busy. */
 function hardTier(cap: number): void {
-  writeFileSync(CONFIG, JSON.stringify({ boni: { enabled: true, limitTokens: 100_000, heavyJobDeferMaxMinutes: cap } }))
-  h.tokens = 99_000
+  // The pin equals the 200k window (no model is mocked): under a smaller pin
+  // the local #641 rule asks for a handoff before a hard restart.
+  writeFileSync(CONFIG, JSON.stringify({ boni: { enabled: true, limitTokens: 200_000, heavyJobDeferMaxMinutes: cap } }))
+  h.tokens = 198_000
 }
 function job(pid: number, label: string, state: 'running' | 'queued' = 'running'): Job {
   h.alive.add(pid)
@@ -451,12 +453,12 @@ describe('stale hold records (no restart decision follows)', () => {
     await at(270)                                   // held, recorded
     expect(restarts()).toBe(0)
     expect(Object.keys(JSON.parse(readFileSync(HOLDS, 'utf-8')).boni.jobs)).toHaveLength(1)
-    h.tokens = 10_000                               // the context dropped: no restart decision any more
+    h.tokens = 20_000                               // the context dropped: no restart decision any more
     await at(600)                                   // that sweep closes the episode
     expect(JSON.parse(readFileSync(HOLDS, 'utf-8'))).toEqual({})
     h.alive.delete(5001)                            // the job ends while nothing wants a restart
     await at(900)
-    h.tokens = 99_000                               // a later, unrelated restart
+    h.tokens = 198_000                               // a later, unrelated restart
     await at(1200)
     expect(restarts()).toBe(1)
     expect(pending().boni.heavyJobs).toBeUndefined()
@@ -483,9 +485,9 @@ describe('stale hold records (no restart decision follows)', () => {
     job(5001, 'job-a')
     await boot()
     await at(600)                                   // held 270 .. 600 (5.5 min)
-    h.tokens = 10_000
+    h.tokens = 20_000
     await at(1500)                                  // need gone for 15 min: the episode is closed
-    h.tokens = 99_000
+    h.tokens = 198_000
     await at(1800)                                  // new need, same live job: held again (old code: spent window)
     expect(restarts()).toBe(0)
     await at(1800 + 10 * 60)
@@ -608,8 +610,8 @@ describe('unreadable /proc is never "no job" or "killed"', () => {
 
 describe('main agent: the alert counts only when the channel took it', () => {
   it('a failed operator send is logged as a failed alert', async () => {
-    writeFileSync(CONFIG, JSON.stringify({ marveen: { enabled: true, limitTokens: 100_000, heavyJobDeferMaxMinutes: 0 } }))
-    h.tokens = 99_000
+    writeFileSync(CONFIG, JSON.stringify({ marveen: { enabled: true, limitTokens: 200_000, heavyJobDeferMaxMinutes: 0 } }))
+    h.tokens = 198_000
     job(5001, 'main-job')
     h.notifyOk = false
     h.mainRunning = true
@@ -626,8 +628,8 @@ describe('main agent: the alert counts only when the channel took it', () => {
 
 describe('main agent: a notifyChannel that does not report delivery', () => {
   it('a void result (a build whose notifyChannel resolves undefined) counts as sent', async () => {
-    writeFileSync(CONFIG, JSON.stringify({ marveen: { enabled: true, limitTokens: 100_000, heavyJobDeferMaxMinutes: 0 } }))
-    h.tokens = 99_000
+    writeFileSync(CONFIG, JSON.stringify({ marveen: { enabled: true, limitTokens: 200_000, heavyJobDeferMaxMinutes: 0 } }))
+    h.tokens = 198_000
     job(5001, 'main-job')
     h.notifyOk = undefined
     h.mainRunning = true

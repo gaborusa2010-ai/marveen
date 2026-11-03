@@ -132,6 +132,10 @@ function registrationCorpus(): string {
 // every agent. Keep every reason concrete and sourced (docstring, docs, PR):
 // a "misc" entry here would re-open exactly the blind spot this split closes.
 const CHECKOUT_ONLY: Record<string, string> = {
+  'subagent-bash-sandbox.py':
+    'the #782 sandbox for helpers spawned with the Agent tool: it resolves the repo root from its own file location, and the fleet agents get it through the install\'s settings.local.json entries with absolute paths (a $CLAUDE_PROJECT_DIR entry there broke every agent on 2026-11-03), so seeding it per agent is not needed',
+  'subagent-write-scope.py':
+    'the Write/Edit half of the same #782 sandbox, wired fleet-wide the same way (settings.local.json, absolute path)',
   'email-approval-gate.py':
     'level-aware email gate for the MAIN agent (EMAILKAPU901 PR2, #1149): its docstring scopes it to sessions rooted at PROJECT_ROOT, and sub-agents keep their unconditional hard-deny (email-send-gate.mjs), behind which this gate would be a no-op',
   'inbox-drain.py':

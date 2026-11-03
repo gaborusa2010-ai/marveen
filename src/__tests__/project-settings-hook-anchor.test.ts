@@ -131,6 +131,10 @@ const EXPECTED: Record<string, string[]> = {
     // in double quotes, $( ) in an inline interpreter payload, ...). Fail-open on
     // any internal error, so it cannot wedge a session.
     'shell-rescan-guard.py @ Bash',
+    // #782: a sub-agent's Bash runs read-only and its file tools land only in
+    // scratch or a side worktree (after the 11-03 repo wipe by a probe helper).
+    'subagent-bash-sandbox.py @ Bash',
+    'subagent-write-scope.py @ Write|Edit|MultiEdit|NotebookEdit',
   ],
   // Local additions on this install: ledger-midturn-capture.py backfills mid-turn
   // inbound rows into the conversation ledger (MIDTURN901); require-checked.py
