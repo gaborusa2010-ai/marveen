@@ -1639,7 +1639,7 @@ const GH_PROSE_FILE_FLAGS = new Set(['--body-file', '--notes-file', '-F'])
 // Form (c): the segment's text with its LITERAL message data removed. The data
 // words are found by the carrier's own grammar; anything not recognised keeps
 // the full text, so the reference stays and the segment is denied.
-function dataResidue(seg, words, name) {
+function dataResidue(seg, words, name, noteCtx = null) {
   const keep = (drop) => words.filter((_, i) => !drop.has(i)).map((w) => w.value).join(' ')
   if (name === 'curl') {
     const p = parseCurl(words)
@@ -1694,30 +1694,73 @@ function dataResidue(seg, words, name) {
     const stdinMsg = words[contentIdx]?.value === '-'
     return [keep(drop), ...(stdinMsg ? [] : seg.bodies)].join('\n')
   }
-  const noteIdx = noteTextIndex(words, name)
+  const noteIdx = noteCtx ? noteTextIndex(words, name, noteCtx) : null
   if (noteIdx !== null) return [keep(new Set([noteIdx])), ...seg.bodies].join('\n')
   return seg.text
 }
 
 // #728 review finding 2: the two local board CLIs whose free-text argument is
 // message payload, the same as agent-msg.sh's content:
-//   python3 <path>/scripts/tabla.py [--ki V|--json] komment REF TEXT [--allapot V] [--ki V] [--json]
+//   python3 <path>/scripts/tabla.py [--ki V] komment REF TEXT [--allapot V] [--ki V]
 //   python3 <path>/scripts/jegyzetek.py uj KINEK TEXT [--hatarido V] [--ki V]
 // Returns the index of TEXT, or null when the line is not exactly this shape: an
 // option outside these lists, `--`, an expansion in any word, a different
 // subcommand or script, or a positional count other than two all mean "not
 // provable", so the full text stays and the segment is judged as before. A
 // redirect is judged before this (redirectsOk), heredoc bodies are kept.
+//
+// Round 2 (#728 review 2, both measured as bypasses of the first version):
+//   - the endpoint echoes the text (tabla --json prints the comment, jegyzetek
+//     prints the line), so the output may never reach anything that could run
+//     it: noteOutputContained (no `|` anywhere in the command's shell text, no
+//     output redirect except to /dev/null or an fd dup), and --json is not part
+//     of the shape at all;
+//   - the script word must RESOLVE to this install's own scripts/tabla.py or
+//     scripts/jegyzetek.py (realpath, so a symlink counts as its target). A
+//     relative path is resolved against the hook's cwd, and only when that cwd
+//     is known and the command contains no cd/pushd/popd at all (this gate does
+//     not track a working directory); otherwise only an absolute path qualifies.
 const TABLA_SCRIPT_RX = /(?:^|\/)scripts\/tabla\.py$/
 const JEGYZETEK_SCRIPT_RX = /(?:^|\/)scripts\/jegyzetek\.py$/
-function noteTextIndex(words, name) {
+// built on first use: CMD_POS is declared further down this module
+let NOTE_CD_RX = null
+// every `>` in the masked text must be one of these: to /dev/null, or an fd dup
+const NOTE_OK_REDIRECT_RX = /(?:\d*|&)>>?\s*\/dev\/null(?![\w./-])|\d*>&\d-?/g
+
+// Whole-command facts for the exemption, computed once per command.
+function noteContext(command, cwd, root) {
+  const masked = maskInertLiterals(String(command ?? '').replace(/\\\r?\n/g, ' '), [], true)
+  if (masked == null) return null
+  const contained = !masked.includes('|') && !masked.replace(NOTE_OK_REDIRECT_RX, ' ').includes('>')
+  if (!contained) return null
+  const scripts = {}
+  for (const name of ['tabla.py', 'jegyzetek.py']) {
+    try { scripts[name] = realpathSync(join(root, 'scripts', name)) } catch { scripts[name] = null }
+  }
+  NOTE_CD_RX ??= new RegExp(`${CMD_POS}(?:cd|pushd|popd)(?=\\s|$|[;&|)])`)
+  return { cwd: typeof cwd === 'string' && cwd.startsWith('/') && !NOTE_CD_RX.test(masked) ? cwd : null, scripts }
+}
+
+function noteScriptIs(word, name, ctx) {
+  const want = ctx.scripts[name]
+  if (!want) return false
+  const raw = expandHome(word)
+  let abs
+  if (raw.startsWith('/')) abs = raw
+  else if (ctx.cwd && !raw.startsWith('~')) abs = resolve(ctx.cwd, raw)
+  else return false
+  try { return realpathSync(abs) === want } catch { return false }
+}
+
+function noteTextIndex(words, name, ctx) {
   if (!/^python3?$/.test(name) || words.some((w) => w.dollar || w.star)) return null
   const script = words[1]?.value ?? ''
   let sub, valueOpts, flagOpts
-  if (TABLA_SCRIPT_RX.test(script)) {
-    // argparse: --ki/--json also before the subcommand; `--opt=V` is the same option
-    sub = 'komment'; valueOpts = new Set(['--ki', '--allapot']); flagOpts = new Set(['--json'])
-  } else if (JEGYZETEK_SCRIPT_RX.test(script)) {
+  if (TABLA_SCRIPT_RX.test(script) && noteScriptIs(script, 'tabla.py', ctx)) {
+    // argparse: --ki also before the subcommand; `--opt=V` is the same option.
+    // --json is deliberately NOT here: it prints the stored text back.
+    sub = 'komment'; valueOpts = new Set(['--ki', '--allapot']); flagOpts = new Set()
+  } else if (JEGYZETEK_SCRIPT_RX.test(script) && noteScriptIs(script, 'jegyzetek.py', ctx)) {
     // hand-rolled: exact `--ki V` / `--hatarido V` only, each removed once
     sub = 'uj'; valueOpts = new Set(['--ki', '--hatarido']); flagOpts = new Set()
   } else return null
@@ -1729,7 +1772,7 @@ function noteTextIndex(words, name) {
     const v = words[i].value
     if (!subSeen) {
       // jegyzetek reads its subcommand from argv[1] only; tabla's top-level
-      // parser knows --ki and --json, nothing else, before the subcommand
+      // parser: only --ki is accepted before the subcommand here
       if (v === sub) { subSeen = true; continue }
       if (!isTabla) return null
     }
@@ -2014,6 +2057,7 @@ export function scheduleSurfaceDeny(command, gateOpts = {}) {
   if (!wholeStrong && !whole.db) return false
   const segs = shellSegments(command, opts)
   if (!segs) return true // unresolvable quoting around a reference: fail closed
+  const noteCtx = noteContext(command, gateOpts.cwd, gateOpts.projectRoot ?? PROJECT_ROOT)
 
   const tainted = new Set()
   const dbTainted = new Set()
@@ -2076,7 +2120,7 @@ export function scheduleSurfaceDeny(command, gateOpts = {}) {
     // script the next segment can run, so no redirect but /dev/null is
     // accepted there -- whatever the consumer (message carriers included).
     if (seg.bodies.length && refsIn(seg.bodies.join('\n')) && words.redirects.some((t) => t.value !== '/dev/null')) return true
-    if (!refsIn(dataResidue(view, words, name))) continue // (c) only message data mentions it
+    if (!refsIn(dataResidue(view, words, name, noteCtx))) continue // (c) only message data mentions it
     if (name === 'curl' && isPlainCurlGet(words)) continue // (a)
     if (isReadOnlyFsCommand(words, name) && pipesOnlyIntoSinks(segs, k, redirectsOk)) continue // (b)
     // the registry tool's read-only subcommands, and git on its source

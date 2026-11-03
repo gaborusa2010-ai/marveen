@@ -298,36 +298,83 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
   // #728 review finding 2: the text argument of `tabla.py komment` and
   // `jegyzetek.py uj` is message payload, like agent-msg.sh's content; a real
   // write into the store on the same command line stays denied.
+  // The exemption only holds for THIS install's scripts (realpath against the
+  // hook cwd, round 2): a fake install root with the two scripts, a symlink to
+  // one, and an impostor elsewhere.
+  mkdirSync(join(root, 'scripts'), { recursive: true })
+  writeFileSync(join(root, 'scripts', 'tabla.py'), '')
+  writeFileSync(join(root, 'scripts', 'jegyzetek.py'), '')
+  mkdirSync(join(root, 'evil', 'scripts'), { recursive: true })
+  writeFileSync(join(root, 'evil', 'scripts', 'tabla.py'), '')
+  writeFileSync(join(root, 'evil', 'scripts', 'jegyzetek.py'), '')
+  mkdirSync(join(root, 'linked'), { recursive: true })
+  symlinkSync(join(root, 'scripts'), join(root, 'linked', 'scripts'))
+  const note = (command: string, cwd: string | null = agentDir) =>
+    selfPaceDecision('Bash', { command }, { cwd: cwd ?? undefined, tasksDir, projectRoot: root }).deny
   it('ALLOWS a kanban comment / note whose TEXT mentions the directory (#728 review)', () => {
     for (const cmd of [
-      'python3 scripts/tabla.py komment 12 "scheduled-tasks seed javitva"',
+      `python3 ../../scripts/tabla.py komment 12 "scheduled-tasks seed javitva"`,
       `python3 ../../scripts/tabla.py komment 12 "a ${T}/margo-own SKILL.md-t frissitettem" --allapot kesz`,
-      `python3 scripts/tabla.py komment --ki margo 12 'irtam a ${T} ala'`,
+      `python3 ../../scripts/tabla.py komment --ki margo 12 'irtam a ${T} ala'`,
       `python3 ../../scripts/jegyzetek.py uj margo "nezd meg a ${T}/x mappat" --hatarido 2026-11-05 --ki margo`,
-      'python3 scripts/jegyzetek.py uj cody "scheduled-tasks ellenorzes"',
-    ]) expect(bash(cmd), cmd).toBe(false)
+      `python3 ${root}/scripts/jegyzetek.py uj cody "scheduled-tasks ellenorzes"`,
+      `python3 ${root}/linked/scripts/tabla.py komment 12 "${T} rendben"`,
+      `python3 ../../scripts/tabla.py komment 12 "${T} rendben" > /dev/null 2>&1`,
+      `cd /tmp && python3 ${root}/scripts/tabla.py komment 12 "${T} rendben"`,
+    ]) expect(note(cmd), cmd).toBe(false)
+    expect(note(`python3 scripts/tabla.py komment 12 "${T} rendben"`, root)).toBe(false)
   })
   it('denies a real store write through the same tabla.py / jegyzetek.py command lines (#728 review)', () => {
     for (const cmd of [
-      `python3 scripts/tabla.py komment 12 "x" > ${T}/x/SKILL.md`,
-      `python3 scripts/tabla.py komment 12 "x" >> ${T}/x/task-config.json`,
-      `python3 scripts/jegyzetek.py uj cody "x" --ki cody > ${T}/x/task-config.json`,
-      `python3 scripts/tabla.py komment 12 "x" | tee ${T}/x/SKILL.md`,
-      `python3 scripts/tabla.py komment 12 "x"; cp /tmp/a.md ${T}/x/SKILL.md`,
+      `python3 ../../scripts/tabla.py komment 12 "x" > ${T}/x/SKILL.md`,
+      `python3 ../../scripts/tabla.py komment 12 "x" >> ${T}/x/task-config.json`,
+      `python3 ../../scripts/jegyzetek.py uj cody "x" --ki cody > ${T}/x/task-config.json`,
+      `python3 ../../scripts/tabla.py komment 12 "x" | tee ${T}/x/SKILL.md`,
+      `python3 ../../scripts/tabla.py komment 12 "x"; cp /tmp/a.md ${T}/x/SKILL.md`,
       // the payload position only: the store named anywhere else stays a reference
-      `python3 scripts/tabla.py komment 12 --fajl ${T}/x/SKILL.md`,
-      `python3 scripts/tabla.py komment ${T} "x"`,
-      `python3 scripts/jegyzetek.py uj "${T}" "x"`,
+      `python3 ../../scripts/tabla.py komment 12 --fajl ${T}/x/SKILL.md`,
+      `python3 ../../scripts/tabla.py komment ${T} "x"`,
+      `python3 ../../scripts/jegyzetek.py uj "${T}" "x"`,
       // an expansion in the text can run a command
-      `python3 scripts/tabla.py komment 12 "$(cp /tmp/a ${T}/x/SKILL.md)"`,
-      'python3 scripts/tabla.py komment 12 "`cp /tmp/a ' + T + '/x/SKILL.md`"',
-      `python3 scripts/tabla.py komment 12 x <<'EOF'\n${T}\nEOF`,
-      `python3 -c 'import x' scripts/tabla.py komment 12 "${T}"`,
-      `python3 scripts/jegyzetek.py --ki cody uj cody "${T}"`,
+      `python3 ../../scripts/tabla.py komment 12 "$(cp /tmp/a ${T}/x/SKILL.md)"`,
+      'python3 ../../scripts/tabla.py komment 12 "`cp /tmp/a ' + T + '/x/SKILL.md`"',
+      `python3 ../../scripts/tabla.py komment 12 x <<'EOF'\n${T}\nEOF`,
+      `python3 -c 'import x' ../../scripts/tabla.py komment 12 "${T}"`,
+      `python3 ../../scripts/jegyzetek.py --ki cody uj cody "${T}"`,
       // other subcommands / other scripts are not widened
-      `python3 scripts/tabla.py naplo "irtam a ${T} ala"`,
-      `python3 scripts/other.py komment 12 "${T}"`,
-    ]) expect(bash(cmd), cmd).toBe(true)
+      `python3 ../../scripts/tabla.py naplo "irtam a ${T} ala"`,
+      `python3 ../../scripts/other.py komment 12 "${T}"`,
+    ]) expect(note(cmd), cmd).toBe(true)
+  })
+  // #728 review round 2, finding 1 (measured bypasses of the first version).
+  it('denies the text echoed back into a shell: --json, any pipe, an output file (#728 review 2)', () => {
+    const J = `python3 ../../scripts/jegyzetek.py uj cody "cp /tmp/a ${T}/x/SKILL.md"`
+    for (const cmd of [
+      `python3 ../../scripts/tabla.py --json komment 1 'x $(cp /tmp/a ${T}/x/SKILL.md)' | bash`,
+      `python3 ../../scripts/tabla.py --json komment 1 'x $(cp /tmp/a ${T}/x/SKILL.md)' | sh -s`,
+      `python3 ../../scripts/tabla.py --json komment 1 'x $(cp /tmp/a ${T}/x/SKILL.md)' > /tmp/s.sh; bash /tmp/s.sh`,
+      `python3 ../../scripts/tabla.py komment 1 'x $(cp /tmp/a ${T}/x/SKILL.md)' > /tmp/s.sh; bash /tmp/s.sh`,
+      `python3 ../../scripts/tabla.py komment 1 "${T}" --json`,
+      `${J} | bash`, `${J} |& sh -s`, `${J} 2>&1 | bash`, `${J} | cat | bash`, `${J} | tee /tmp/x`,
+      `{ ${J}; } | bash`, `if ${J}; then :; fi | bash`, `{ ${J}; } > /tmp/s.sh`,
+      `${J} 1>/tmp/s.sh`, `${J} &> /tmp/s.sh`, `${J} >> /tmp/s.sh`, `${J} >& /tmp/s.sh`, `${J} > >(bash)`,
+      `${J} || bash /tmp/s.sh`,
+    ]) expect(note(cmd), cmd).toBe(true)
+  })
+  it('denies a script that only has the right name (#728 review 2)', () => {
+    for (const cmd of [
+      `python3 ${root}/evil/scripts/tabla.py komment 1 "${T}/new/SKILL.md"`,
+      `python3 /tmp/evil/scripts/tabla.py komment 1 "${T}/new/SKILL.md"`,
+      `python3 ${root}/evil/scripts/jegyzetek.py uj cody "${T}/new/SKILL.md"`,
+      `cd ${root}/evil && python3 scripts/tabla.py komment 1 "${T}/new/SKILL.md"`,
+      `cd /tmp; python3 scripts/tabla.py komment 1 "${T}/x"`,
+      `pushd ${root}/evil; python3 scripts/jegyzetek.py uj cody "${T}/x"`,
+      `python3 ~/scripts/tabla.py komment 1 "${T}/x"`,
+    ]) expect(note(cmd), cmd).toBe(true)
+    // relative from a directory whose scripts/ is the impostor
+    expect(note(`python3 scripts/tabla.py komment 1 "${T}/x"`, join(root, 'evil'))).toBe(true)
+    // no hook cwd: a relative path cannot be resolved with certainty
+    expect(note(`python3 ../../scripts/tabla.py komment 1 "${T}/x"`, null)).toBe(true)
   })
   it('accepted overshoot: an inline program that reads the directory and writes elsewhere', () => {
     // The literal path and the write marker are judged on the whole program, not
