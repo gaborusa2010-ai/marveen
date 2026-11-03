@@ -1022,16 +1022,10 @@ const HERESTRING_SUBST = /\$\(|`|\$__SUBST__/
 const isCode = (f) => typeof f === 'object' && f !== null
 const stdinBody = (path, base) => (isCode(path) ? path.code : path === '/dev/null' ? '' : readScript(path, base))
 
-// null when no local module file runs (`python3 -m mod`), else whether it sends.
+// null when no local module file runs (`python3 -m mod`), else whether it sends; pythonModule
+// parses the flag cluster (`-um mod`, `-BImmod`, MAILGATEDIRZIP1027).
 function pythonModuleSends(rest, base, env) {
-  let mod = null
-  for (let i = 0; i < rest.length; i++) {
-    const t = rest[i]
-    if (t === '-m') { mod = rest[i + 1] ?? null; break }
-    if (t.startsWith('-m')) { mod = t.slice(2); break }
-    if (!t.startsWith('-') || t.startsWith('-c')) return null
-    if (PY_OPT_WITH_ARG.has(t)) i++
-  }
+  let mod = pythonModule(rest)
   if (!mod || base === null) return null
   mod = expandVars(mod, env)
   if (UNDECIDABLE_PATH.test(mod)) return null
@@ -1046,6 +1040,21 @@ function pythonModuleSends(rest, base, env) {
     }
   }
   return null
+}
+
+// MAILGATEDIRZIP1027: python runs DIR/__main__.py; a directory without one runs nothing ('').
+function readPyScript(script, base) {
+  let path = expandHome(script)
+  if (!isAbsolute(path)) {
+    if (base === null) return null
+    path = join(base, path)
+  }
+  let dir = false
+  try { dir = statSync(path).isDirectory() } catch { return null }
+  if (!dir) return readScript(path, base)
+  const main = join(path, '__main__.py')
+  try { lstatSync(main) } catch { return '' }
+  return readScript(main, base)
 }
 
 // True when the program comes from -c or -m: stdin is then data, not code.
@@ -1086,7 +1095,7 @@ function pythonHeadSends(rest, base, written, env, stdinFiles = null) {
   }
   if (script !== null) {
     if (written.has(script)) return scriptSends(written.get(script), script)
-    const body = readScript(script, base)
+    const body = readPyScript(script, base)
     return body === null ? unreadableSends : scriptSends(body, script)
   }
   return false

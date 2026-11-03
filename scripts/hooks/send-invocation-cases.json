@@ -3564,9 +3564,9 @@
       "expected": false
     },
     {
-      "name": "MAILGATEHEREDOCFP1027 heredoc python writes an inter-agent JSON whose text names smtplib (Marveen 50934)",
+      "name": "MAILGATEHEREDOCFP1027 heredoc python writes an inter-agent JSON whose text names smtplib (Marveen 50934) [LOCAL #725 coarse rule: a heredoc plus a send word stays a send (Marveen msg 14989, GO 14995); upstream expects false]",
       "cmd": "cd /Users/marvin/ClaudeClaw && S=/tmp/x && python3 - <<'EOF'\nimport json\nopen('/tmp/x/m.json', 'w').write(json.dumps({'from': 'marveen', 'to': 'dani', 'content': 'the gate knows the smtplib and Graph shapes, not Gmail REST'}))\nEOF\ncurl -s -X POST http://localhost:3420/api/messages --data-binary @/tmp/x/m.json",
-      "expected": false
+      "expected": true
     },
     {
       "name": "MAILGATEHEREDOCFP1027 python -c writes a JSON whose text quotes a Resend client call (Samu 50950)",
@@ -3574,9 +3574,9 @@
       "expected": false
     },
     {
-      "name": "MAILGATEHEREDOCFP1027 heredoc python whose comment names smtplib",
+      "name": "MAILGATEHEREDOCFP1027 heredoc python whose comment names smtplib [LOCAL #725 coarse rule: a heredoc plus a send word stays a send (Marveen msg 14989, GO 14995); upstream expects false]",
       "cmd": "python3 - <<'EOF'\n# this used to go through smtplib\nprint(1)\nEOF",
-      "expected": false
+      "expected": true
     },
     {
       "name": "MAILGATEHEREDOCFP1027 node -e whose JSON body names sendMail(",

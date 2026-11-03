@@ -1392,19 +1392,9 @@ def _stdin_body(path: str, base):
 
 
 def _python_module_sends(rest, base, env):
-    """None when no local module file runs (`python3 -m mod`), else whether it sends."""
-    mod, i = None, 0
-    while i < len(rest):
-        t = rest[i]
-        if t == "-m":
-            mod = rest[i + 1] if i + 1 < len(rest) else None
-            break
-        if t.startswith("-m"):
-            mod = t[2:]
-            break
-        if not t.startswith("-") or t.startswith("-c"):
-            return None
-        i += 2 if t in _PY_OPT_WITH_ARG else 1
+    """None when no local module file runs (`python3 -m mod`), else whether it sends; _python_module
+    parses the flag cluster (`-um mod`, `-BImmod`, MAILGATEDIRZIP1027)."""
+    mod = _python_module(rest)
     if not mod or base is None:
         return None
     mod = _expand_vars(mod, env)
@@ -1417,6 +1407,21 @@ def _python_module_sends(rest, base, env):
             body = _read_script(path, base)
             return _UNREADABLE_SENDS if body is None else _script_sends(body, path)
     return None
+
+
+def _read_py_script(script: str, base):
+    """MAILGATEDIRZIP1027: python runs DIR/__main__.py; a directory without one runs nothing ('')."""
+    path = os.path.expanduser(script)
+    if not os.path.isabs(path):
+        if base is None:
+            return None
+        path = os.path.join(base, path)
+    if not os.path.isdir(path):
+        return _read_script(path, base)
+    main = os.path.join(path, "__main__.py")
+    if not os.path.lexists(main):
+        return ""
+    return _read_script(main, base)
 
 
 def _runs_code_arg(rest) -> bool:
@@ -1465,7 +1470,7 @@ def _python_head_sends(rest, base, written, env, stdin_files=None) -> bool:
     if script is not None:
         if script in written:
             return _script_sends(written[script], script)
-        body = _read_script(script, base)
+        body = _read_py_script(script, base)
         return _UNREADABLE_SENDS if body is None else _script_sends(body, script)
     return False
 
