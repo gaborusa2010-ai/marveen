@@ -56,9 +56,20 @@ def check(now):
                for r in runs):
         return "a runner nem kuldte ki Anorak esti sorhatar-koret (nincs fired sor 22:00 ota)"
 
-    msgs = api("/api/messages?agent=marveen&limit=200")
-    if not isinstance(msgs, list):
-        return "a messages API nem listat adott: %r" % (str(msgs)[:200],)
+    # One page of 200 is not enough: a busy night pushed the 23:30 message past it on 2026-11-03
+    # and this said "no message" while msg 16632 was there. Page back with the before-cursor
+    # until the oldest row predates the window.
+    msgs, before = [], ""
+    for _ in range(20):
+        page = api("/api/messages?agent=marveen&limit=200" + before)
+        if not isinstance(page, list):
+            return "a messages API nem listat adott: %r" % (str(page)[:200],)
+        msgs += page
+        if len(page) < 200 or min((m.get("created_at") or 0) for m in page if isinstance(m, dict)) < start:
+            break
+        before = "&before=%d" % min(int(m["id"]) for m in page if isinstance(m, dict))
+    else:
+        return "a messages API 20 oldal utan sem ert vissza 22:00-ig"
     ours = [m for m in msgs if isinstance(m, dict) and m.get("from_agent") == "anorak"
             and m.get("to_agent") == "marveen" and start <= (m.get("created_at") or 0) <= end
             and str(m.get("content", "")).startswith("[SORHATAR]")]
