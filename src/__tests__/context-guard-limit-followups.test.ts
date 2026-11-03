@@ -265,8 +265,13 @@ describe('runner: transcript-tail read only where the verdict can matter', () =>
   it('any other tier armed: the tail is read', async () => {
     h.cfg = { idleFlushEnabled: true }
     await bootDashboard()
-    await advanceTo(4.5)
+    // #641: an idle agent gets its first check on the first 60 s hot tick
+    // after boot (one read), then leaves the hot cadence; the 4.5 min sweep
+    // reads it again. One read per check, on both paths.
+    await advanceTo(1)
     expect(h.readTail).toHaveBeenCalledTimes(1)
+    await advanceTo(4.5)
+    expect(h.readTail).toHaveBeenCalledTimes(2)
   })
 
   it('saturation net only, but await-ready: the tail is read (the resume park needs it)', async () => {

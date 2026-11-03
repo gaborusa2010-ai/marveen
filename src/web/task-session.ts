@@ -119,7 +119,7 @@ export function buildTaskSessionCmd(opts: {
 }): string {
   const providers = Object.keys(CHANNEL_PLUGIN_IDS) as ChannelProviderType[]
   return [
-    `export PATH="${fleetVenvPathPrefix()}/opt/homebrew/bin:$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"`,
+    `export PATH="${fleetVenvPathPrefix()}$HOME/.local/bin:/opt/homebrew/bin:$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"`,
     `&& unset ${BOT_TOKEN_VARS.join(' ')}`,
     `&& export ${providers.map((p) => `${channelStateDirEnvVar(p)}=${shSingleQuote(opts.emptyStateDir)}`).join(' ')}`,
     '&& export CLAUDE_CODE_DISABLE_AGENT_VIEW=1',

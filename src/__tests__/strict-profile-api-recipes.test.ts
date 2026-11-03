@@ -25,6 +25,12 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const tmpRoot = mkdtempSync(join(tmpdir(), 'marveen-strictapi-test-'))
 // The real profile files, so "strict" is what templates/profiles/developer-junior.json says.
 cpSync(join(REPO, 'templates', 'profiles'), join(tmpRoot, 'templates', 'profiles'), { recursive: true })
+// Local fork: no shipped profile is strict (owner decision 2026-10-16, msg 7936; commit df3b1f8a),
+// so the strict case is the shipped developer-junior with the mode switched on, in the tmp copy only.
+{
+  const p = join(tmpRoot, 'templates', 'profiles', 'developer-junior.json')
+  writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf-8')), permissionMode: 'strict' }, null, 2), 'utf-8')
+}
 const captured: string[] = []
 
 vi.mock('../config.js', () => ({
@@ -248,7 +254,9 @@ describe('the strict-api block follows the profile', () => {
 describe('the wiring', () => {
   it('the strict profile allow-lists the helper and agent-msg.sh', () => {
     const profile = JSON.parse(readFileSync(join(REPO, 'templates', 'profiles', 'developer-junior.json'), 'utf-8'))
-    expect(profile.permissionMode).toBe('strict')
+    // permissionMode is not pinned: the local fork ships developer-junior as permissive
+    // (owner decision 2026-10-16, msg 7936). The allow-list entries stay, so the helper
+    // works the day a profile is switched to strict.
     expect(profile.filesystem.allow).toContain('Bash(bash ${PROJECT_ROOT}/scripts/marveen-api.sh:*)')
     expect(profile.filesystem.allow).toContain('Bash(bash ${PROJECT_ROOT}/scripts/agent-msg.sh:*)')
   })

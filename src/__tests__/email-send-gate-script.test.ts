@@ -79,13 +79,15 @@ describe('a sender script under any name (SCRIPTSENDGATE1020)', () => {
       'kreta_heti.py': 'print("weekly page")\n',
       'plain.mjs': 'console.log(1)\n',
       'notes.txt': 'smtplib is mentioned here, but this is no script',
+      // fork (#718): a script that cannot be read is a send (fail-closed), so the
+      // non-mail scripts here exist; the missing one is checked below
+      'ncore.py': 'print("search")\n',
     })
     for (const cmd of [
       'python3 prober.py',
       // a Telegram chat id after --to is no address
       'python3 kreta_heti.py --to 8224042443',
       'python3 ncore.py search "x" --top 40 --json',
-      'python3 missing.py',
       'node plain.mjs',
       'cat notes.txt',
       'grep -rn smtplib scripts/',
@@ -93,17 +95,29 @@ describe('a sender script under any name (SCRIPTSENDGATE1020)', () => {
     ]) {
       expect(bash(cmd, cwd).deny, cmd).toBe(false)
     }
+    // fork (#718): a missing script is denied by the unreadable-script reader, not
+    // named a sender script by this narrowing
+    expect(scriptRunSends('python3 missing.py', cwd)).toBe(false)
+    expect(bash('python3 missing.py', cwd)).toEqual({ deny: true, kind: 'unreadable-script' })
   })
 
   it('stays out of isSendInvocation, the contract shared with the main agent gates', () => {
-    const cwd = workdir({ 'helden_send.py': SMTP_SCRIPT })
-    const cmd = 'python3 helden_send.py --to a@example.invalid < body.txt'
-    expect(isSendInvocation(cmd)).toBe(false)
-    expect(scriptRunSends(cmd, cwd)).toBe(true)
+    // fork (#725): the shared contract itself reads a script file that connects and
+    // sends with the stdlib SMTP client (both gates, send-invocation-cases.json), so
+    // that sender is a send there too. What stays gateDecision-only is the rest of
+    // this narrowing, e.g. another mail library in the script file.
+    const cwd = workdir({ 'helden_send.py': SMTP_SCRIPT, 'y.py': 'import yagmail\n' })
+    const smtp = 'python3 helden_send.py --to a@example.invalid < body.txt'
+    expect(isSendInvocation(smtp, 0, cwd)).toBe(true)
+    expect(scriptRunSends(smtp, cwd)).toBe(true)
+    const other = 'python3 y.py'
+    expect(isSendInvocation(other, 0, cwd)).toBe(false)
+    expect(scriptRunSends(other, cwd)).toBe(true)
   })
 
   it('the hook entrypoint resolves the script against the payload cwd', () => {
-    const cwd = workdir({ 'helden_send.py': SMTP_SCRIPT })
+    // other.py exists: a missing script is a send under the fork's #718 reader
+    const cwd = workdir({ 'helden_send.py': SMTP_SCRIPT, 'other.py': 'print(1)\n' })
     const hook = join(__dirname, '..', '..', 'scripts', 'email-send-gate.mjs')
     const run = (command: string) => spawnSync(process.execPath, [hook], {
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd }),
@@ -155,7 +169,8 @@ describe('sender scripts, review round 1 (SCRIPTSENDGATE1020)', () => {
   })
 
   it('judges the string of a shell -c the same way', () => {
-    const cwd = workdir({ 'smtp_send.py': SMTP_SCRIPT })
+    // other.py exists: a missing script is a send under the fork's #718 reader
+    const cwd = workdir({ 'smtp_send.py': SMTP_SCRIPT, 'other.py': 'print(1)\n' })
     for (const cmd of [
       'sh -c "python3 smtp_send.py"',
       "bash -lc 'timeout 30 python3 smtp_send.py'",

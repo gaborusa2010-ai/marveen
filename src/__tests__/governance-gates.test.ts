@@ -191,7 +191,7 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `cd ${T}/x && python3 - <<'PY'\np='SKILL.md'; s=open(p).read()\nopen(p,'w').write(s)\nPY`,
     ]) expect(bash(cmd), cmd).toBe(true)
   })
-  it('ALLOWS reads, copies OUT, deletes, and prose that names the directory', () => {
+  it('ALLOWS reads, copies OUT, and prose that names the directory', () => {
     for (const cmd of [
       `ls ${T}/ 2>/dev/null`,
       `cat ${T}/auto-update/task-config.json 2>&1 | head`,
@@ -201,19 +201,13 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `find ${T} -name task-config.json -mtime -1`,
       `diff ${T}/a/task-config.json ${T}/b/task-config.json`,
       `cp ${T}/x/SKILL.md /tmp/bak.md`,
-      `cd ${T}/x && cp SKILL.md /tmp/bak.md`,
       `cat ${T}/x/task-config.json > /tmp/copy.json`,
       `stat -c %y ${T}/x/task-config.json 2>/dev/null || echo none`,
-      'rm -rf /home/gabor/.claude/scheduled-tasks/margo-p96-atadas-0700',
-      `find ${T}/x -delete`,
       'cp x ~/.claude/scheduled-tasks-archive/y',
       'cp src/web/scheduled-tasks-io.ts /tmp/x.ts',
       'git log --oneline -- scheduled-tasks/',
-      `python3 -c "import json,glob; [print(json.load(open(p))['schedule']) for p in glob.glob('${T}/*/task-config.json')]"`,
-      `cd ${T} 2>/dev/null && for d in */; do c="$d/task-config.json"; [ -f "$c" ] && python3 -c "import json;print(json.load(open('$c')).get('agent'))"; done`,
       `ls -d ${T}/x 2>&1; cd /home/me/agents/margo; python3 - <<'EOF'\np='HANDOFF.md'; s=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF`,
       `curl -s http://localhost:3420/api/kanban/x/comments | python3 -c "import json,sys;[print(c.get('content','').replace('n',' ')) for c in json.load(sys.stdin)]"; ls ${T}/ | grep -i margo`,
-      `cd /x && python3 - <<'PY'\nimport json\nmsg = """A ${T}/x mappaba nem irtam."""\njson.dump({'content': msg}, open('/tmp/m.json','w'))\nPY`,
     ]) expect(bash(cmd), cmd).toBe(false)
   })
   // Ariel's cross-check (card comment 2095): three write shapes that passed and two
@@ -244,15 +238,31 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `tar -tvf ${T}/x/b.tgz`,
       `zip -r /tmp/m.zip ${T}/ariel-arfigyeles`,
       `unzip -l ${T}/x/b.zip`,
-      `cd ${T} && python3 -c "import json; print(json.load(open('ariel-arfigyeles/task-config.json')))"`,
-      `cd ${T} && python3 -c "print(open('wiki/task-config.json').read(), open('x/SKILL.md').read())"`,
       `ls ${T} | xargs -I{} cat ${T}/{}/task-config.json`,
       `find ${T} -name task-config.json | xargs grep -l agent`,
       `find ${T} -name '*.json' | xargs cp -t /tmp/backup`,
-      `(cd ${T} && ls -la) 2>/dev/null`,
       '(cd /tmp; echo x > a.txt)',
       'echo x >| /tmp/a.txt',
     ]) expect(bash(cmd), cmd).toBe(false)
+  })
+  // #728 merge: upstream's schedule-surface gate (scheduleSurfaceDeny, #1999) runs
+  // first and denies, by flat invariant, three shapes this table used to allow: any
+  // cd/pushd into the store, a delete (rm, find -delete), and any interpreter whose
+  // text names the store (even a read or a prose mention). The copy-out, archive
+  // and xargs reads above stay open (dirCopyOutAllowed). DECISION for marveen:
+  // reopening these would contradict upstream's own tests in this file.
+  it('since #728: cd into the store, deletes and interpreters naming it are denied (upstream invariants)', () => {
+    for (const cmd of [
+      `cd ${T}/x && cp SKILL.md /tmp/bak.md`,
+      'rm -rf /home/gabor/.claude/scheduled-tasks/margo-p96-atadas-0700',
+      `find ${T}/x -delete`,
+      `python3 -c "import json,glob; [print(json.load(open(p))['schedule']) for p in glob.glob('${T}/*/task-config.json')]"`,
+      `cd ${T} 2>/dev/null && for d in */; do c="$d/task-config.json"; [ -f "$c" ] && python3 -c "import json;print(json.load(open('$c')).get('agent'))"; done`,
+      `cd /x && python3 - <<'PY'\nimport json\nmsg = """A ${T}/x mappaba nem irtam."""\njson.dump({'content': msg}, open('/tmp/m.json','w'))\nPY`,
+      `cd ${T} && python3 -c "import json; print(json.load(open('ariel-arfigyeles/task-config.json')))"`,
+      `cd ${T} && python3 -c "print(open('wiki/task-config.json').read(), open('x/SKILL.md').read())"`,
+      `(cd ${T} && ls -la) 2>/dev/null`,
+    ]) expect(bash(cmd), cmd).toBe(true)
   })
   it('accepted overshoot: an inline program that reads the directory and writes elsewhere', () => {
     // The literal path and the write marker are judged on the whole program, not

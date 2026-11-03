@@ -352,7 +352,8 @@ export function fileToolTasksDirVerdict(toolName, toolInput, tasksDir = DEFAULT_
   // Outside the resolved directory, only the runner's own spellings count (a path
   // that does not resolve here, e.g. another home): `.claude/` or `.claude-config/`
   // right before it. A backup folder that merely has the name stays open (Ariel, #630).
-  if (!inside && !/(?:^|\/)\.claude(?:-config)?\/scheduled-tasks\//i.test(raw)) return null
+  // (.channels-config: the main agent's isolated config dir links it the same way, #728.)
+  if (!inside && !/(?:^|\/)\.(?:claude(?:-config)?|channels-config)\/scheduled-tasks\//i.test(raw)) return null
   if (toolName !== 'Edit' || !inside) return true
   const rel = real.slice(root.length + 1).split('/')
   if (rel.length !== 2 || rel[1] !== 'SKILL.md') return true
@@ -1406,6 +1407,9 @@ function readWord(s, i) {
       if (e === -1 || /[`{]|\$\(/.test(s.slice(i + 2, e))) return null
       value += s.slice(i, e + 1); dollar = true; i = e + 1; continue
     }
+    // `{}` (xargs -I{}, find's placeholder) is a literal word part in bash: an
+    // empty brace pair is neither a group nor a brace expansion (fork #630)
+    if (c === '{' && s[i + 1] === '}') { value += '{}'; i += 2; continue }
     if ('`(){}<>;&|'.includes(c)) return null
     if (c === '$' || c === '\u0000') dollar = true // $ or a NUL substitution marker
     if (c === '*' || c === '[') star = true
@@ -1734,6 +1738,136 @@ function dbSegmentWrites(words, name, text) {
   return name === '' // an untrusted command path (./x, $X/x) naming the database
 }
 
+// FORK (#630, Ariel's cross-check, card comment 2095): a few forms that read the
+// runner's task directory and write only OUTSIDE it -- a backup copy, an archive
+// made or listed, an xargs read. Accepted only when the segment's reference is the
+// store directory alone (no route, registry tool, schedule SQL or token mention),
+// with no expansion in any word, and every write target given literally and NOT
+// referencing the surface. Option grammars are allowlists: an unknown option means
+// not provable, so the segment falls through to the deny. What stays denied by
+// the flat invariants above is unchanged (cd into the store, a shadowing
+// definition, an interpreter, rm/mkdir/ln, a redirect into the store).
+const COPY_OUT_CP_FLAG_RX = /^-[aRrpvLHPn]+$|^--(?:archive|recursive|verbose|dereference|no-clobber|preserve(?:=[\w,]+)?)$/
+const COPY_OUT_ZIP_FLAG_RX = /^-[rqv0-9yDX]+$/
+const COPY_OUT_UNZIP_FLAG_RX = /^-[lvtZq]*[lvtZ][lvtZq]*$/
+const COPY_OUT_TAR_BUNDLE_RX = /^-?[ctvzjJf]+$/
+const XARGS_NOARG = new Set(['-0', '-r', '-t', '--null', '--no-run-if-empty', '--verbose'])
+const XARGS_ARG = new Set(['-I', '-n', '-P', '-L', '-d', '-s'])
+// git that only reads (the repo's scheduled-tasks/ is copied INTO the store, so
+// add/restore/checkout are not here)
+const GIT_DIR_READ_SUBCOMMANDS = new Set(['diff', 'log', 'show', 'status', 'blame', 'ls-files', 'grep'])
+
+// cp SRC... DEST | cp -t DEST SRC...: the write target, or null if not this form.
+// fromStdin: xargs supplies the sources, so a -t form needs none on the line.
+function cpCopyOutTargets(args, fromStdin = false) {
+  const ops = []
+  let target = null
+  for (let i = 0; i < args.length; i++) {
+    const v = args[i].value
+    if (v === '-t' || v === '--target-directory') { if (target !== null || i + 1 >= args.length) return null; target = args[++i]; continue }
+    if (v.startsWith('--target-directory=')) { if (target !== null) return null; target = { ...args[i], value: v.slice(19) }; continue }
+    if (v.startsWith('-')) { if (!COPY_OUT_CP_FLAG_RX.test(v)) return null; continue }
+    ops.push(args[i])
+  }
+  if (target) return ops.length || fromStdin ? [target] : null
+  return ops.length >= 2 ? [ops[ops.length - 1]] : null
+}
+
+// The words a copy-out form writes, [] for a pure listing, null when the
+// segment is none of these forms.
+function copyOutTargets(words, name) {
+  const args = words.slice(1)
+  if (name === 'cp') return cpCopyOutTargets(args)
+  if (name === 'tar') {
+    let mode = ''
+    let archive = null
+    for (let i = 0; i < args.length; i++) {
+      const v = args[i].value
+      // the first word is an option bundle (`czf`, `-tvf`); later ones are
+      // options only with a dash, and only from the same short set
+      if (i !== 0 && !v.startsWith('-')) continue // a source / member operand
+      if (!COPY_OUT_TAR_BUNDLE_RX.test(v)) return null
+      let takesArchive = false
+      for (const ch of v.replace(/^-/, '')) {
+        if (ch === 'c' || ch === 't') { if (mode && mode !== ch) return null; mode = ch }
+        if (ch === 'f') { if (archive || takesArchive || i + 1 >= args.length) return null; takesArchive = true }
+      }
+      if (takesArchive) archive = args[++i]
+    }
+    if (!mode || !archive) return null
+    return mode === 'c' ? [archive] : []
+  }
+  if (name === 'zip') {
+    const ops = args.filter((w) => !w.value.startsWith('-'))
+    if (args.some((w) => w.value.startsWith('-') && !COPY_OUT_ZIP_FLAG_RX.test(w.value))) return null
+    return ops.length >= 2 ? [ops[0]] : null
+  }
+  if (name === 'unzip') {
+    const flags = args.filter((w) => w.value.startsWith('-'))
+    if (!flags.length || !flags.every((w) => COPY_OUT_UNZIP_FLAG_RX.test(w.value))) return null
+    return []
+  }
+  return null
+}
+
+// `xargs [opts] CMD ARGS...`: the inner command, or null.
+function xargsInner(words) {
+  let i = 1
+  while (i < words.length && words[i].value.startsWith('-')) {
+    const v = words[i].value
+    if (XARGS_NOARG.has(v)) { i++; continue }
+    if (XARGS_ARG.has(v)) { i += 2; continue }
+    if (/^-[InPLds]./.test(v)) { i++; continue } // -I{}, -n1
+    return null
+  }
+  const inner = words.slice(i)
+  return inner.length ? inner : null
+}
+
+// An xargs that runs a read-only command, or a cp with a literal -t target.
+function xargsReadsOrCopiesOut(words, refsIn) {
+  const inner = xargsInner(words)
+  if (!inner) return false
+  const iname = commandName(inner)
+  if (iname === 'xargs') return false
+  if (isReadOnlyFsCommand(inner, iname)) return true
+  if (iname !== 'cp') return false
+  // xargs appends its input at the END: only -t names the target on the line
+  if (!inner.some((w) => w.value === '-t' || w.value.startsWith('--target-directory'))) return false
+  const t = cpCopyOutTargets(inner.slice(1), true)
+  return !!t && t.every((w) => !w.value.includes('{}') && copyOutTargetOk(w, refsIn))
+}
+
+// A write target outside the store: literal, not referencing the surface, and
+// not a store PARENT (or a directory that may be one: `.`, `..`, `~`), since
+// `cp -r <dir named scheduled-tasks> ~/.claude/` would create the store there.
+function copyOutTargetOk(w, refsIn) {
+  if (w.star || w.dollar || !w.value || refsIn(w.value)) return false
+  const last = normalizePathSegments(w.value).filter((x, i, a) => x !== '' || i === a.length - 1).pop() ?? ''
+  if (last === '' || last === '..' || last === '~') return false
+  return !STORE_PARENTS.some((p) => globMatchesName(last, p))
+}
+
+function dirCopyOutAllowed(words, name, refsIn) {
+  if (words.some((w) => w.dollar || w.ansi)) return false
+  if (name === 'xargs') return xargsReadsOrCopiesOut(words, refsIn)
+  if (name === 'git') return GIT_DIR_READ_SUBCOMMANDS.has(words[1]?.value) && isGitSourceCommand(words, name)
+  const targets = copyOutTargets(words, name)
+  return !!targets && targets.every((w) => copyOutTargetOk(w, refsIn))
+}
+
+// pipesOnlyIntoSinks, plus an xargs consumer that only reads or copies out.
+function pipesOnlyIntoDirSafeConsumers(segs, k, redirectsOk, refsIn) {
+  for (let j = k; j < segs.length - 1 && (segs[j].sep === '|' || segs[j].sep === '|&'); j++) {
+    const next = segs[j + 1]
+    const words = shellWords(next.own)
+    if (!words || next.bodies.length || !redirectsOk(words)) return false
+    const name = commandName(words)
+    if (!isPipeSink(words, name) && !(name === 'xargs' && !words.some((w) => w.dollar) && xargsReadsOrCopiesOut(words, refsIn))) return false
+  }
+  return true
+}
+
 // Shell grammar around a command that this check steps over: a loop/branch
 // keyword in front of it, or a keyword standing alone.
 const CONTROL_PREFIX_RX = /^(?:(?:do|then|else|elif|if|while|until|!|\{)\s+)+/
@@ -1886,6 +2020,12 @@ export function scheduleSurfaceDeny(command, gateOpts = {}) {
     if (isReadOnlyFsCommand(words, name) && pipesOnlyIntoSinks(segs, k, redirectsOk)) continue // (b)
     // the registry tool's read-only subcommands, and git on its source
     const r = scheduleSurfaceRefs(view.text, opts)
+    // fork #630: the store directory alone, read and copied OUT (see dirCopyOutAllowed)
+    const dirOnly = r.dir && !r.api && !r.cli && !r.sql && !usesVar(tainted, view.text) && !tokenMention(view.text)
+    if (dirOnly && !seg.bodies.length) {
+      if (isReadOnlyFsCommand(words, name) && pipesOnlyIntoDirSafeConsumers(segs, k, redirectsOk, refsIn)) continue
+      if (dirCopyOutAllowed(words, name, refsIn) && pipesOnlyIntoDirSafeConsumers(segs, k, redirectsOk, refsIn)) continue
+    }
     const cliOnly = r.cli && !r.api && !r.dir && !r.sql && !usesVar(tainted, view.text) && !tokenMention(view.text)
     if (cliOnly && (isRegistryCliRead(words, name) || isGitSourceCommand(words, name)) && pipesOnlyIntoSinks(segs, k, redirectsOk)) continue
     return true
@@ -1897,9 +2037,19 @@ export function scheduleSurfaceDeny(command, gateOpts = {}) {
   return !carried
 }
 
-// Native file tools: a path through a *scheduled-tasks directory (same scope
-// as SCHEDULE_DIR_REF_RX, see there).
-const SCHEDULE_DIR_PATH_RX = /scheduled-tasks([/\\]|$)/i
+// Native file tools: the repo's scheduled-tasks/ and seed-scheduled-tasks/, which
+// the dashboard start and update.sh copy into the store (see SCHEDULE_DIR_REF_RX).
+// Resolved like fileToolTasksDirVerdict, so a link to them counts too.
+const REPO_TASK_SEED_DIRS = ['scheduled-tasks', 'seed-scheduled-tasks']
+function fileToolTargetsRepoTaskSeeds(toolInput, cwd = process.cwd(), root = PROJECT_ROOT) {
+  const raw = String(toolInput?.file_path ?? toolInput?.notebook_path ?? '')
+  if (!raw) return false
+  const real = realpathNearest(resolve(cwd ?? process.cwd(), expandHome(raw)))
+  return REPO_TASK_SEED_DIRS.some((d) => {
+    const dir = realOrSelf(join(root, d))
+    return real === dir || real.startsWith(dir + '/')
+  })
+}
 
 // Pure decision: does this tool call set up self-pace / self-injection?
 // Any exception inside the decision is a DENY: a gate that throws must never
@@ -1924,9 +2074,13 @@ function decide(toolName, toolInput, opts = {}) {
     if (fileToolTargetsAllowlist(toolInput, opts.allowlistPath, opts.cwd)) return { deny: true, reason: 'egress-allowlist' }
     if (fileToolTargetsProtectedStoreFile(toolInput, opts.storeDir, opts.cwd)) return { deny: true, reason: 'protected-store-file' }
     // ...and the dashboard's schedule store, which the runner turns into turns.
-    // The one open route (#630, named in GATE_MSG): a native Edit of the SKILL.md of
-    // the caller's OWN task, resolved inside the real task directory.
-    if (tasksDirVerdict !== 'own-skill-edit' && SCHEDULE_DIR_PATH_RX.test(fp)) return { deny: true }
+    // The store itself is judged by fileToolTasksDirVerdict above (#630): resolved
+    // path, the runner's own spellings, and the one open route named in GATE_MSG (a
+    // native Edit of the SKILL.md of the caller's OWN task). A backup folder that
+    // merely has the name stays writable (Ariel, #630), so upstream's name-only
+    // SCHEDULE_DIR_PATH_RX is narrowed to the two repo directories the dashboard
+    // start and update.sh copy INTO the store (#728).
+    if (tasksDirVerdict === null && fileToolTargetsRepoTaskSeeds(toolInput, opts.cwd)) return { deny: true }
   }
   if (name === 'Bash') {
     // The schedule surface is judged on the RAW command, before the payload and

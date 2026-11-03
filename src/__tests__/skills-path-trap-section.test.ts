@@ -67,6 +67,20 @@ function read(agentName: string): string {
   return readFileSync(join(tmpRoot, 'agents', agentName, 'CLAUDE.md'), 'utf-8')
 }
 
+// Local fork (#638, owner msg 8944): the main agent's CLAUDE.md carries a COMPACT form of this
+// block that points at docs/tudas/generalt/skills-path-trap.md, where the full body is written
+// (src/web/main-compact-blocks.ts). So the main agent's full text is read from that file, and the
+// block in CLAUDE.md is pinned to point at it. Sub-agents keep the full body in CLAUDE.md.
+const MAIN_FULL_REL = 'docs/tudas/generalt/skills-path-trap.md'
+function mainFull(): string {
+  writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# Main\n', 'utf-8')
+  ensureSkillsPathTrapSection('agent-a')
+  const block = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8').split(MARKER_BEGIN)[1].split(MARKER_END)[0]
+  expect(block).toContain('## Skill-útvonal csapda')
+  expect(block).toContain(`Teljes szöveg: \`${MAIN_FULL_REL}\``)
+  return readFileSync(join(tmpRoot, MAIN_FULL_REL), 'utf-8')
+}
+
 describe('ensureSkillsPathTrapSection', () => {
   it('appends the warning block to a CLAUDE.md that lacks it', () => {
     setup('agent-b', '# Agent B\n\nSome persona.\n')
@@ -108,7 +122,7 @@ describe('ensureSkillsPathTrapSection', () => {
   it('says what an EMPTY $CLAUDE_CONFIG_DIR means, and never runs ls on "/skills"', () => {
     // A default install has no isolated root: the variable is empty, the root is ~/.claude itself.
     for (const [who, text] of [['sub', (setup('agent-b', '# B\n'), ensureSkillsPathTrapSection('agent-b'), read('agent-b'))],
-                               ['main', (writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# Main\n', 'utf-8'), ensureSkillsPathTrapSection('agent-a'), readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8'))]]) {
+                               ['main', mainFull()]]) {
       expect({ who, empty: text.includes('ÜRES') && text.includes('maga a `~/.claude`, és annak `skills` mappája a globális') }).toEqual({ who, empty: true })
       expect({ who, bare: text.includes('"$CLAUDE_CONFIG_DIR/skills"') }).toEqual({ who, bare: false })
     }
@@ -129,9 +143,7 @@ describe('ensureSkillsPathTrapSection', () => {
   // the direction that matters -- it promised a private dir that does not exist
   // for a reader whose cwd IS the project root.
   it('tells the main agent it has NO private dir, and the sub-agent where its own is', () => {
-    writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# Main\n', 'utf-8')
-    ensureSkillsPathTrapSection('agent-a')
-    const main = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8')
+    const main = mainFull()
     setup('agent-b', '# Agent B\n')
     ensureSkillsPathTrapSection('agent-b')
     const sub = read('agent-b')
@@ -196,9 +208,7 @@ describe('skills-path-trap memory paragraph', () => {
   })
 
   it('the main agent gets the same paragraph, and it follows the whole numbered list', () => {
-    writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# Main\n', 'utf-8')
-    ensureSkillsPathTrapSection('agent-a')
-    const main = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8').split(MARKER_BEGIN)[1].split(MARKER_END)[0]
+    const main = mainFull()
     expectMemoryParagraph(main)
     expect(main.indexOf('2. A PROJEKT-GYÖKÉR')).toBeGreaterThan(-1)
     expect(main.indexOf(MEM_START)).toBeGreaterThan(main.indexOf('NINCS olyan hely, ahova a fő ágens'))
@@ -209,9 +219,7 @@ describe('skills-path-trap memory paragraph', () => {
     ensureSkillsPathTrapSection('agent-mem2')
     const sub = read('agent-mem2').split(MARKER_BEGIN)[1].split(MARKER_END)[0]
     expect(sub.indexOf(MEM_START)).toBeGreaterThan(sub.indexOf('3. A saját `.claude/skills` mappád'))
-    writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# Main\n', 'utf-8')
-    ensureSkillsPathTrapSection('agent-a')
-    const main = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8').split(MARKER_BEGIN)[1].split(MARKER_END)[0]
+    const main = mainFull()
     expect(main.slice(main.indexOf(MEM_START))).toBe(sub.slice(sub.indexOf(MEM_START)))
   })
 })

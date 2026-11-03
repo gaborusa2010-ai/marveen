@@ -2281,7 +2281,18 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     }
     // #663: the full read the in_progress gate asks for. Only a token caller's agent claim counts.
     if (ctx.auth?.kind === 'token' && ctx.auth.agent) recordKanbanCardRead(ctx.auth.agent, card.id)
-    const element = { ...card, ...kanbanStateStaleness(card), labels: getLabelsForCard(id), blockers: getBlockersForCard(id) }
+    // The local board badges (#451/#454) ride along in the list element, so the single card
+    // carries them too, in the same key order: the two answers must stay byte-identical.
+    const checklist = listKanbanChecklist(card.id)
+    const element = {
+      ...card,
+      ...kanbanStateStaleness(card),
+      labels: getLabelsForCard(id),
+      blockers: getBlockersForCard(id),
+      checklist_total: checklist.length,
+      checklist_done: checklist.reduce((n, item) => n + (item.done ? 1 : 0), 0),
+      attachment_count: listKanbanAttachments(card.id).length,
+    }
     json(res, fieldsParse.fields ? pickFields(element, fieldsParse.fields) : element)
     return true
   }

@@ -342,7 +342,9 @@ export async function tryHandleMemories(ctx: RouteContext): Promise<boolean> {
     // 'strict' is upstream's v1.39.0 opt-in (see below). It has to be listed
     // here or our own typo guard rejects the endpoint's own documented param --
     // the exact shape the guard exists to prevent, pointed the wrong way.
-    if (rejectUnknownQueryParams(res, url, ['q', 'agent', 'agent_id', 'tier', 'category', 'limit', 'mode', 'offset', 'strict'],
+    // 'date' / 'since' / 'until' are upstream's card f90928e3 window (below):
+    // same reason, they must be listed or the guard 400s the documented filter.
+    if (rejectUnknownQueryParams(res, url, ['q', 'agent', 'agent_id', 'tier', 'category', 'limit', 'mode', 'offset', 'strict', 'date', 'since', 'until'],
       'the agent filter is "agent" ("agent_id" is a deprecated alias); the tier filter is "tier" or "category"')) return true
     const q = url.searchParams.get('q')?.trim() || ''
     const agentIdAlias = url.searchParams.get('agent_id')

@@ -7,6 +7,8 @@ import { Readable } from 'node:stream'
 import {
   initDatabase, createKanbanCard, moveKanbanCard, archiveKanbanCard, createLabel, addLabelToCard, addCardBlocker,
   listKanbanCards, getLabelsForAllCards, getBlockersForAllCards,
+  getKanbanChecklistCountsForAllCards, getKanbanAttachmentCountsForAllCards,
+  listKanbanStateStaleCounts, kanbanStateStaleness,
 } from '../db.js'
 import { tryHandleKanban, KANBAN_STATUS_VALUES } from '../web/routes/kanban.js'
 import type { RouteContext } from '../web/routes/types.js'
@@ -41,13 +43,23 @@ async function call(pathAndQuery: string) {
 
 // The list exactly as the route built it before card 12b0f698: the same query and the same
 // element construction, serialized. The no-parameter answer must be these bytes.
+// Local fork (#728 merge): the pre-12b0f698 list on this install already carried
+// state_stale / stale_comments (msg 9298) and the board badges (#451/#454), so the
+// legacy shape is the local one (route at eaa1ccad), not upstream's bare labels+blockers.
 function legacyList(opts: { includeArchived?: boolean; agent?: string } = {}): string {
   const labelsByCard = getLabelsForAllCards()
   const blockersByCard = getBlockersForAllCards()
+  const checklistByCard = getKanbanChecklistCountsForAllCards()
+  const attachmentsByCard = getKanbanAttachmentCountsForAllCards()
+  const staleCounts = listKanbanStateStaleCounts()
   return JSON.stringify(listKanbanCards({ includeArchived: !!opts.includeArchived, agent: opts.agent }).map((card) => ({
     ...card,
+    ...kanbanStateStaleness(card, staleCounts),
     labels: labelsByCard.get(card.id) ?? [],
     blockers: blockersByCard.get(card.id) ?? [],
+    checklist_total: checklistByCard.get(card.id)?.total ?? 0,
+    checklist_done: checklistByCard.get(card.id)?.done ?? 0,
+    attachment_count: attachmentsByCard.get(card.id) ?? 0,
   })))
 }
 

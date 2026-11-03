@@ -126,6 +126,18 @@ async function bootDashboard(): Promise<Runner> {
   return runner
 }
 
+/**
+ * Advance until the saturation net has restarted boni, and stop there.
+ * Every idle agent is on the 60 s hot sweep from boot (#641), so the two
+ * confirming sweeps land before the first interval tick; advancing a whole
+ * INTERVAL_MS would also run the delivery loop past its first check.
+ */
+async function advanceToGuardRestart(): Promise<void> {
+  for (let i = 0; i < INTERVAL_MS / 1_000 && h.restartAgentProcess.mock.calls.length === 0; i++) {
+    await vi.advanceTimersByTimeAsync(1_000)
+  }
+}
+
 function readPending(): Record<string, { restartedAtMs: number }> {
   return existsSync(PENDING) ? JSON.parse(readFileSync(PENDING, 'utf-8')) : {}
 }
@@ -308,8 +320,8 @@ describe('immediate resume delivery after a guard restart', () => {
   it('delivers ONE resume within 60 s of the restart, not 5 minutes later', async () => {
     h.pane = SATURATED_PANE
     await bootDashboard()
-    // Two saturated sweeps: 270 s (setTimeout) and 300 s (first interval tick).
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    // Two saturated sweeps (on the hot cadence since #641, see advanceToGuardRestart).
+    await advanceToGuardRestart()
     expect(h.restartAgentProcess).toHaveBeenCalledTimes(1)
     // The guard owns the first prompt, so the generic recovery brief stays out.
     expect(h.restartAgentProcess.mock.calls[0][1]).toMatchObject({ fresh: true, ownsResume: true })
@@ -341,7 +353,7 @@ describe('immediate resume delivery after a guard restart', () => {
     // its claim release) returned but before the .then.
     h.pane = SATURATED_PANE
     const runner = await bootDashboard()
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    await advanceToGuardRestart()
     expect(h.restartAgentProcess).toHaveBeenCalledTimes(1)
     h.pane = null
     const { logger } = await import('../logger.js')
@@ -363,7 +375,7 @@ describe('immediate resume delivery after a guard restart', () => {
     // claim is the only thing that stops it.
     h.pane = SATURATED_PANE
     const runner = await bootDashboard()
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    await advanceToGuardRestart()
     expect(h.restartAgentProcess).toHaveBeenCalledTimes(1)
     h.pane = null
 
@@ -394,7 +406,7 @@ describe('immediate resume delivery after a guard restart', () => {
     // starts. If the sweep stopped being a backstop, nothing would deliver.
     h.pane = SATURATED_PANE
     const runner = await bootDashboard()
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS) // restart; the loop is sleeping
+    await advanceToGuardRestart() // restart; the loop is sleeping
     expect(Object.keys(readPending())).toEqual(['boni'])
     expect(resumeCalls()).toHaveLength(0)
     h.pane = null

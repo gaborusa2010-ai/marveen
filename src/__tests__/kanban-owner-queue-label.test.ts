@@ -33,11 +33,14 @@ function slice(src: string, startMarker: string, endMarker: string): string {
 // The constant, the normaliser and the predicate sit together right above
 // renderKanbanOwnerStrip; kanbanHideFromLanes is evaluated next to them so the
 // "label does not hide from the lane" half is checked on the real function.
-const ctx: Record<string, unknown> = { owner: 'Gabor' }
+// Since the v1.45.0 merge (#728) the lane filter is upstream's: kanbanIsOwnerOpen sits
+// right above kanbanHideFromLanes, and the hiding applies only in the per-assignee
+// grouping (kanbanGroupBy === 'assignee'), which is the grouping these lanes belong to.
+const ctx: Record<string, unknown> = { owner: 'Gabor', kanbanGroupBy: 'assignee' }
 vm.createContext(ctx)
 vm.runInContext(
   slice(APP_JS, "const KANBAN_OWNER_QUEUE_LABEL", 'function renderKanbanOwnerStrip()') +
-    slice(APP_JS, 'function kanbanHideFromLanes(card)', 'function renderSwimlaneBoard(') +
+    slice(APP_JS, 'function kanbanIsOwnerOpen(card)', 'function renderSwimlaneBoard(') +
     "function ownerAssigneeName() { return owner }\n" +
     "globalThis.onStrip = kanbanIsOnOwnerStrip; globalThis.hide = kanbanHideFromLanes",
   ctx,

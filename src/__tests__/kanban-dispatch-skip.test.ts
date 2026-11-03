@@ -216,7 +216,10 @@ describe('KANBAN_DISPATCH_SKIP_AGENTS: the dispatch (DISPATCHSKIP1022)', () => {
     createKanbanCard({ id: 'w', title: 'Waiting', assignee: 'pm', status: 'waiting' })
     createKanbanCard({ id: 'b', title: 'Blocker', assignee: 'dex', status: 'in_progress' })
     addCardBlocker('w', 'b')
-    await move('b', 'done', 'dex')
+    // Local #663 gate: a sub-agent's done is refused (409 review_required), the main agent
+    // closes a card. So the closing actor is the main agent; the notice is still not a dispatch.
+    await move('b', 'done', 'orin')
+    expect(getKanbanCard('b')?.status).toBe('done')
     const toPm = sentTo('pm').map((c) => String(c[2]))
     expect(toPm.some((m) => m.includes('[Kanban feloldva #w]'))).toBe(true)
   })

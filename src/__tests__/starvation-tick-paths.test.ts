@@ -40,6 +40,17 @@ vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }))
 
+// Upstream #2003: the runner fires only registry-matched tasks. The registry gate
+// has its own tests; here it is a passthrough (same as schedule-runner-fire-current-def).
+vi.mock('../web/schedule-registry.js', () => ({
+  filterRegisteredTasks: <T,>(tasks: T[]) => tasks,
+  backfillScheduledTaskRegistryOnce: () => ({ ran: false, registered: [] }),
+  verifyScheduledTask: () => ({ ok: true }),
+  describeVerdict: () => '',
+  registerScheduledTask: () => 'test-hash',
+  unregisterScheduledTask: () => true,
+}))
+
 vi.mock('../web/atomic-write.js', () => ({
   atomicWriteFileSync: vi.fn(),
 }))
