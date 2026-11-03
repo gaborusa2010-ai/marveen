@@ -3669,6 +3669,22 @@ export function normaliseCardDate(v: unknown): number | null {
   return Number.isNaN(ms) ? null : epochSecondsOrNull(ms / 1000)
 }
 
+// #728 review finding 7: normaliseCardDate maps an unparseable value to null,
+// which on an UPDATE silently wiped the card's stored date (`"2026-11-05 10:00"`
+// came back 200 with due_date NULL). The date fields a caller sent that are NOT
+// an explicit clear (null / undefined / '' / whitespace) yet do not normalise:
+// PUT /api/kanban/:id answers 400 with these, and writeKanbanCard keeps the
+// stored value for them instead of clearing it.
+export const KANBAN_CARD_DATE_FIELDS = ['due_date', 'start_date', 'estimate_date'] as const
+export function isCardDateClear(v: unknown): boolean {
+  return v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
+}
+export function invalidCardDateFields(fields: Record<string, unknown>): string[] {
+  return KANBAN_CARD_DATE_FIELDS.filter((k) => k in fields && !isCardDateClear(fields[k]) && normaliseCardDate(fields[k]) === null)
+}
+export const CARD_DATE_SHAPES =
+  'epoch seconds, "YYYY-MM-DD" (UTC midnight, as the dashboard date field sends), or an ISO timestamp with an explicit offset ("2026-11-05T10:00:00Z", "2026-11-05T10:00+00:00"); null or "" clears the date'
+
 // The fields createKanbanCard actually reads off its argument. Deliberately a
 // SUBSET of KANBAN_WRITABLE_FIELDS (the PUT/update set), not the same list:
 // creation computes its own `sort_order` (see below) and never accepts
@@ -3816,6 +3832,13 @@ export function writeKanbanCard(
   // real change and stamp updated_at, which is exactly the #1023 staleness
   // signal the check below exists to protect.
   const incoming = { ...fields }
+  // An unparseable date never clears the stored one (#728 review); the PUT route
+  // refuses it with a 400 before this, other callers keep the old value.
+  const badDates = invalidCardDateFields(incoming as Record<string, unknown>)
+  if (badDates.length) {
+    logger.warn({ id, fields: badDates }, 'writeKanbanCard: unparseable date ignored, stored value kept')
+    for (const k of badDates) delete (incoming as Record<string, unknown>)[k]
+  }
   if ('due_date' in incoming) incoming.due_date = normaliseCardDate(incoming.due_date)
   if ('start_date' in incoming) incoming.start_date = normaliseCardDate(incoming.start_date)
   if ('estimate_date' in incoming) incoming.estimate_date = normaliseCardDate(incoming.estimate_date)

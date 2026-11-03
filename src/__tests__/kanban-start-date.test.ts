@@ -163,3 +163,59 @@ describe('start_date migration', () => {
     }
   })
 })
+
+// #728 review finding 7: an unparseable date on an UPDATE was stored as NULL and
+// answered 200, wiping the card's existing date. Now: the PUT route answers 400
+// and writes nothing; writeKanbanCard keeps the stored value; an explicit null or
+// "" still clears.
+describe('an unparseable date never clears a stored one (#728)', () => {
+  let warn: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    initDatabase(':memory:')
+    warn = vi.spyOn(logger, 'warn').mockImplementation(() => logger)
+  })
+  afterEach(() => { warn.mockRestore() })
+
+  it('PUT with "2026-11-05 10:00" is a 400 naming the field, and the card is unchanged', async () => {
+    createKanbanCard({ id: 'd1', title: 'Dated', due_date: OCT10, start_date: OCT10, estimate_date: OCT10 })
+    for (const [field, value] of [
+      ['due_date', '2026-11-05 10:00'], ['due_date', '2026-11-05T10:00'], ['start_date', 'next week'],
+      ['estimate_date', '05/11/2026'], ['due_date', 1790000000123],
+    ] as const) {
+      const { ctx, out } = routeCtx('PUT', '/api/kanban/d1', { [field]: value, title: 'Renamed', actor: 'marveen' })
+      expect(await tryHandleKanban(ctx)).toBe(true)
+      expect(out.status, `${field}=${value}`).toBe(400)
+      expect(out.body.fields).toEqual([field])
+      expect(out.body.error).toContain(field)
+      const card = getKanbanCard('d1')!
+      expect([card.due_date, card.start_date, card.estimate_date, card.title]).toEqual([OCT10, OCT10, OCT10, 'Dated'])
+    }
+  })
+
+  it('PUT with null or "" still clears the date (200)', async () => {
+    createKanbanCard({ id: 'd2', title: 'Dated', due_date: OCT10, start_date: OCT10 })
+    let r = routeCtx('PUT', '/api/kanban/d2', { due_date: null, actor: 'marveen' })
+    await tryHandleKanban(r.ctx)
+    expect(r.out.status).toBe(200)
+    expect(getKanbanCard('d2')!.due_date).toBeNull()
+    r = routeCtx('PUT', '/api/kanban/d2', { start_date: '', actor: 'marveen' })
+    await tryHandleKanban(r.ctx)
+    expect(r.out.status).toBe(200)
+    expect(getKanbanCard('d2')!.start_date).toBeNull()
+  })
+
+  it('PUT with a valid shape still sets it', async () => {
+    createKanbanCard({ id: 'd3', title: 'Dated', due_date: OCT10 })
+    const { ctx, out } = routeCtx('PUT', '/api/kanban/d3', { due_date: '2026-11-05T10:00:00Z', actor: 'marveen' })
+    await tryHandleKanban(ctx)
+    expect(out.status).toBe(200)
+    expect(getKanbanCard('d3')!.due_date).toBe(Date.UTC(2026, 10, 5, 10) / 1000)
+  })
+
+  it('updateKanbanCard (no route) keeps the stored date for an unparseable value', () => {
+    createKanbanCard({ id: 'd4', title: 'Dated', due_date: OCT10 })
+    expect(updateKanbanCard('d4', { due_date: '2026-11-05 10:00' as never, title: 'Renamed' })).toBe(true)
+    expect(getKanbanCard('d4')!.due_date).toBe(OCT10)
+    expect(getKanbanCard('d4')!.title).toBe('Renamed')
+  })
+})

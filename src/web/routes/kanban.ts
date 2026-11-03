@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
   listKanbanCards, kanbanAssigneeExists, createKanbanCard, writeKanbanCard, KANBAN_WRITABLE_FIELDS, KANBAN_CREATE_FIELDS,
-  normaliseCardDate,
+  normaliseCardDate, invalidCardDateFields, CARD_DATE_SHAPES,
   deleteKanbanCard, moveKanbanCard, archiveKanbanCard, unarchiveKanbanCard,
   getKanbanComments, addKanbanComment, getKanbanCardEvents, getKanbanCardFieldEvents, listKanbanProjects,
   getKanbanCard, getChildCards, getDb, KANBAN_STATUSES,
@@ -1600,6 +1600,13 @@ export async function tryHandleKanban(ctx: RouteContext): Promise<boolean> {
     if (recurrenceError) { json(res, recurrenceError.body, recurrenceError.status); return true }
     const locationError = normaliseLocationField(data)
     if (locationError) { json(res, { error: locationError }, 400); return true }
+    // #728 review: an unparseable date used to be stored as NULL with a 200,
+    // wiping the card's date. Refused here, nothing written.
+    const badDates = invalidCardDateFields(data)
+    if (badDates.length) {
+      json(res, { error: `Unparseable date in ${badDates.join(', ')}. Accepted: ${CARD_DATE_SHAPES}. The card was not changed.`, fields: badDates }, 400)
+      return true
+    }
     const written = writeKanbanCard(id, data, who.actor, expectedVersion)
     if (written.ok) {
       const after = getKanbanCard(id)
