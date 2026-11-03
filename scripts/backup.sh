@@ -953,7 +953,9 @@ if [[ "${STAGE_FAILS}" -gt 0 ]]; then
 fi
 
 if [[ "${missing}" -gt 0 ]]; then
-  echo "backup: FAILED verification -- ${missing} item(s) named in the manifest are not in ${ARCHIVE}." >&2
+  # #765: a file that failed staging also shows up as a MISSING line above, so
+  # the total can count one file twice; name both parts instead of one sum.
+  echo "backup: FAILED verification -- ${missing} problem(s) for ${ARCHIVE}: $((missing - STAGE_FAILS)) missing from the manifest check, ${STAGE_FAILS} staging failure(s) (one file can be in both)." >&2
   echo "backup: the archive is kept for inspection, but do NOT treat it as a good copy." >&2
   # launchd sends this script's output to logs/backup.log, which nobody opens.
   # A loud failure into an unread file is the same silence the verification
@@ -980,7 +982,7 @@ if [[ "${missing}" -gt 0 ]]; then
     # sent until then was dropped on the floor. MAIN_AGENT_ID is resolved from
     # .env above (the launchd block), with the same "marveen" default.
     bash "${REPO_ROOT}/scripts/agent-msg.sh" "${MAIN_AGENT_ID}" "${MAIN_AGENT_ID}" \
-      "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} tetel hianyzik az archivumbol (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
+      "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} hiba: $((missing - STAGE_FAILS)) hianyzo tetel, ${STAGE_FAILS} masolasi hiba, egy fajl mindkettoben szerepelhet (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
       >/dev/null 2>&1 || echo "backup: WARN could not queue the failure alert for ${MAIN_AGENT_ID}" >&2
   else
     echo "backup: WARN no scripts/agent-msg.sh -- the failure alert for ${MAIN_AGENT_ID} was not queued" >&2
