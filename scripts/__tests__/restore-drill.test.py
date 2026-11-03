@@ -40,7 +40,10 @@ def setup(tmp):
     with open(os.path.join(home, TASK), "w") as fh:
         fh.write("{}\n")
     make_db(os.path.join(root, "store", "claudeclaw.db"), 200)
-    old = time.time() - 86400 * 2  # live files older than any archive -> sha compared
+    # live files older than any archive -> sha compared. A fixed date, not now-2d:
+    # the archive stamps below are fixed (20261101-...), so now-2d overtook them
+    # on 2026-11-03 20:00 and the sha check silently turned into presence-only.
+    old = time.mktime((2026, 1, 1, 0, 0, 0, 0, 0, -1))
     for p in [os.path.join(root, k) for k in KEYS] + [os.path.join(home, TASK)]:
         os.utime(p, (old, old))
     return root, home
