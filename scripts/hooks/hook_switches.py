@@ -84,6 +84,13 @@ DEFAULT_NON_DISABLEABLE = frozenset({
     "ledger-turn-failure",
     "ledger-live-drain",
     "ledger-live-drain-precheck",
+    # this install's own gates (v1.46 merge): MARVEEN_DISABLED_HOOKS must not
+    # switch them off either
+    "bash-egress-gate",
+    "closed-topic-gate",
+    "dontes-lookup-gate",
+    "global-skill-write-gate",
+    "line-cap-gate",
 })
 # Backwards-compatible name for the built-in floor.
 NON_DISABLEABLE = DEFAULT_NON_DISABLEABLE

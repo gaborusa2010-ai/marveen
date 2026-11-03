@@ -275,9 +275,10 @@ const CODE_SEND_MODULE = new RegExp(
 // _code_api_sends in hooks/outgoing-copy-gate.py.
 const CODE_API_CLIENT_SEND = /\.(?:messages|drafts)\(\)\s*\.send\s*\(/
 const CODE_API_PAIRS = [
-  [/(?:gmail|www)\.googleapis\.com/i, /\b(?:messages|drafts)\/send\b/],
+  // v1.46 merge: the action word ends as in upstream's ACTION_END (send-status is a read).
+  [/(?:gmail|www)\.googleapis\.com/i, /\b(?:messages|drafts)\/send(?![A-Za-z0-9_-]|[^\x00-\x7f])/],
   [/\.users\(\)\s*\.(?:messages|drafts)\(\)/, /\.send\s*\(/],
-  [/graph\.microsoft\.com/i, /\/sendMail\b|\/messages\/[^/\s'"]+\/(?:send|reply|replyAll|forward)\b/],
+  [/graph\.microsoft\.com/i, /\/sendMail(?![A-Za-z0-9_-]|[^\x00-\x7f])|\/messages\/[^/\s'"]+\/(?:send|reply|replyAll|forward)(?![A-Za-z0-9_-]|[^\x00-\x7f])/],
 ]
 const codeApiSends = (code) =>
   CODE_API_CLIENT_SEND.test(code) || CODE_API_PAIRS.some(([host, path]) => host.test(code) && path.test(code))

@@ -119,14 +119,6 @@
       },
       {
         "index": 2,
-        "id": "post-tool-use/persona-change-notify",
-        "hook": "persona-change-notify",
-        "gate": false,
-        "purpose": "Notifies the owner when an agent's persona file (CLAUDE.md / SOUL.md) is changed.",
-        "fingerprint": "4938fb0c1b9895386167fe954877fb0a835b1fab91eacd91e0e1fa3835de82df"
-      },
-      {
-        "index": 3,
         "id": "post-tool-use/telegram_progress_reply_clear",
         "hook": "telegram_progress_reply_clear",
         "gate": false,
@@ -134,7 +126,7 @@
         "fingerprint": "1f672e535ee8fd5592cb69cb76771ac647950793adf8e4d7f5075a938855ad08"
       },
       {
-        "index": 4,
+        "index": 3,
         "id": "post-tool-use/browser-content-notice",
         "hook": "browser-content-notice",
         "gate": false,
@@ -142,7 +134,7 @@
         "fingerprint": "431e58bacd7afdad7ce8d2fc773f43279b51d7934a0da876a9131302e2a9d7e9"
       },
       {
-        "index": 5,
+        "index": 4,
         "id": "post-tool-use/slack_progress_reply_clear",
         "hook": "slack_progress_reply_clear",
         "gate": false,
@@ -150,7 +142,7 @@
         "fingerprint": "10b98e51a72b0acf734ba6c523783e0167fc38094a139efcb349c31bf8f1a258"
       },
       {
-        "index": 6,
+        "index": 5,
         "id": "post-tool-use/skill-usage-capture",
         "hook": "skill-usage-capture",
         "gate": false,
@@ -158,12 +150,44 @@
         "fingerprint": "1543593096a625ed429dde5b1e8e4932cb649b9dc858c450d9fd911ce1f546ee"
       },
       {
+        "index": 6,
+        "id": "post-tool-use/global-skill-write-audit",
+        "hook": "global-skill-write-audit",
+        "gate": false,
+        "purpose": "PostToolUse hook: the EFFECT-side half of the shared skill folder's guard.",
+        "fingerprint": "71592cb0aa4bfb648abfae3eb76f37840ab86829c859c1dc48e56a2c3805828d"
+      },
+      {
         "index": 7,
+        "id": "post-tool-use/persona-change-notify",
+        "hook": "persona-change-notify",
+        "gate": false,
+        "purpose": "Notifies the owner when an agent's persona file (CLAUDE.md / SOUL.md) is changed.",
+        "fingerprint": "4938fb0c1b9895386167fe954877fb0a835b1fab91eacd91e0e1fa3835de82df"
+      },
+      {
+        "index": 8,
         "id": "post-tool-use/memory-frontmatter-bash-gate",
         "hook": "memory-frontmatter-bash-gate",
         "gate": true,
         "purpose": "Memory frontmatter check for memory files written from Bash (after the write).",
         "fingerprint": "aa6cd306708c96b51c50a7cd351247e2967d164a2cf80ecabf154d5fda126563"
+      },
+      {
+        "index": 9,
+        "id": "post-tool-use/line-cap-gate",
+        "hook": "line-cap-gate",
+        "gate": true,
+        "purpose": "Line-cap gate: no SKILL.md and no hand-written CLAUDE.md part may grow past 500 lines.",
+        "fingerprint": "9be356d827765211687350e12d7e22c64f942891a3fc420847b93c1950cbce74"
+      },
+      {
+        "index": 10,
+        "id": "post-tool-use/limit-cut-notice",
+        "hook": "limit-cut-notice",
+        "gate": false,
+        "purpose": "PostToolUse(Bash) notice: the output is exactly as long as the limit the command set.",
+        "fingerprint": "d0314853bc97b01230abb1d7a8c566e27035e491fe2c9b75588f3f00aa848008"
       }
     ],
     "PostToolUseFailure": [
@@ -177,6 +201,14 @@
       },
       {
         "index": 1,
+        "id": "post-tool-use-failure/global-skill-write-audit",
+        "hook": "global-skill-write-audit",
+        "gate": false,
+        "purpose": "PostToolUse hook: the EFFECT-side half of the shared skill folder's guard.",
+        "fingerprint": "cda3651ff0923c3e41437881b4fcb23b4c015f6ae688d1a4e48f00eff8013760"
+      },
+      {
+        "index": 2,
         "id": "post-tool-use-failure/memory-frontmatter-bash-gate",
         "hook": "memory-frontmatter-bash-gate",
         "gate": true,
@@ -199,7 +231,7 @@
         "hook": "outgoing-copy-gate",
         "gate": true,
         "purpose": "Copy QA gate on outgoing email sent from Bash.",
-        "fingerprint": "ff6e53bd1f418b70b823cde7238b0fc3315bb7ad9d0749ac04287408cbf1331b"
+        "fingerprint": "4589a8651a90e5c321f598de13a4f1c980856260c2d4d1c0e559c3e98d68c2da"
       },
       {
         "index": 2,
@@ -247,7 +279,7 @@
         "hook": "outgoing-copy-gate",
         "gate": true,
         "purpose": "Copy QA gate on outgoing Telegram reply / edit_message text.",
-        "fingerprint": "9958c78989ed7fbf5a0a53e77b70f12fb281caa4ce2832c70469b84ab6b6399e"
+        "fingerprint": "31bf03a5e62da946e9ba145099569ffe73c2b254b9cdec3614f61cd940737aee"
       },
       {
         "index": 8,
@@ -323,6 +355,14 @@
       },
       {
         "index": 17,
+        "id": "pre-tool-use/global-skill-write-gate",
+        "hook": "global-skill-write-gate",
+        "gate": true,
+        "purpose": "PreToolUse hook: a technical brake on the SHARED skill folder.",
+        "fingerprint": "ed2372f6baaaed83573456cfa50f3d9f86630466c8ca8a55662cb49e33486ea9"
+      },
+      {
+        "index": 18,
         "id": "pre-tool-use/memory-frontmatter-gate",
         "hook": "memory-frontmatter-gate",
         "gate": true,
@@ -330,7 +370,7 @@
         "fingerprint": "bb10f94bf97b6bfd4aaba6dfada4ca01a7f62b2987ea5fa23852905457d4b611"
       },
       {
-        "index": 18,
+        "index": 19,
         "id": "pre-tool-use/memory-frontmatter-bash-gate",
         "hook": "memory-frontmatter-bash-gate",
         "gate": true,
@@ -338,7 +378,7 @@
         "fingerprint": "c43f4eb6a848f6abe80c053115250eb63529c59d8119f69463af15c904b6e55b"
       },
       {
-        "index": 19,
+        "index": 20,
         "id": "pre-tool-use/db-write-gate",
         "hook": "db-write-gate",
         "gate": true,
@@ -346,12 +386,20 @@
         "fingerprint": "ccb220ffc34e4c03f9b8267c0aee515a0a618a9ebd8e4650feb9e8c5c31be04e"
       },
       {
-        "index": 20,
+        "index": 21,
         "id": "pre-tool-use/shell-rescan-guard",
         "hook": "shell-rescan-guard",
         "gate": true,
         "purpose": "PreToolUse gate: refuse a Bash command whose own TEXT will be re-scanned by the shell, because that is how prose becomes an executed command.",
         "fingerprint": "dc80b8d05304d0e0c3e7015a34afe77f9b56f9f8c464800d65ac6b26f4f046b9"
+      },
+      {
+        "index": 22,
+        "id": "pre-tool-use/line-cap-gate",
+        "hook": "line-cap-gate",
+        "gate": true,
+        "purpose": "Line-cap gate: no SKILL.md and no hand-written CLAUDE.md part may grow past 500 lines.",
+        "fingerprint": "55133ca0cd7d87fac38cd7293efec6ed6a036b9a1299926ba31b1b55a658a41d"
       }
     ],
     "Stop": [
@@ -365,6 +413,14 @@
       },
       {
         "index": 1,
+        "id": "stop/ledger-midturn-capture",
+        "hook": "ledger-midturn-capture",
+        "gate": false,
+        "purpose": "Stop hook: back-fill the ledger with channel messages that arrived MID-TURN.",
+        "fingerprint": "9575a3cfb7da6dc823fd8f0e4cc7e5123b24ea88b66c49c30db65b95d8b754d5"
+      },
+      {
+        "index": 2,
         "id": "stop/telegram_progress_clear",
         "hook": "telegram_progress_clear",
         "gate": false,
@@ -372,7 +428,15 @@
         "fingerprint": "4b4028c2901b37155d6fe6feb8e34f1574d2b6580679fa646851f27069680d09"
       },
       {
-        "index": 2,
+        "index": 3,
+        "id": "stop/require-checked",
+        "hook": "require-checked",
+        "gate": false,
+        "purpose": "Stop hook: blokkolja a fordulo veget, ha az utolso assistant-uzenet VEGSO SZOVEGEBEN nincs \"Checked:\" blokk.",
+        "fingerprint": "edcf3e42ccf9c32e0d3543a68d347d5ac3ec5d30971f21109e568e86ec8e6ff1"
+      },
+      {
+        "index": 4,
         "id": "stop/slack_progress_clear",
         "hook": "slack_progress_clear",
         "gate": false,
@@ -380,22 +444,12 @@
         "fingerprint": "6c883aeafc4088a709f5a2b7684746f67a5604ab1519f789b2272a782907f4de"
       },
       {
-        "index": 3,
+        "index": 5,
         "id": "stop/marveen-commands",
         "hook": "marveen-commands",
         "gate": false,
         "purpose": "Slash-command bookkeeping at turn end (--stop).",
         "fingerprint": "d075d800e22a013b8a392a8796d6f5da1b6420e977b55eb46ccb059eb00c6c17"
-      }
-    ],
-    "StopFailure": [
-      {
-        "index": 0,
-        "id": "stop-failure/ledger-turn-failure",
-        "hook": "ledger-turn-failure",
-        "gate": true,
-        "purpose": "StopFailure hook: leave a trace when a turn that owed a channel reply died on an API error.",
-        "fingerprint": "2e634c28735c33523857e5d9ac9a6bc1917154a779853a4dd4b597c8222d240e"
       }
     ],
     "SessionStart": [
@@ -440,6 +494,16 @@
         "gate": false,
         "purpose": "SessionEnd hook: save the thread a /clear is about to erase.",
         "fingerprint": "b3cd6b08d74f1d53e05540f88f356238a2aeaec4424e16aaccd27d9e58f59c2f"
+      }
+    ],
+    "StopFailure": [
+      {
+        "index": 0,
+        "id": "stop-failure/ledger-turn-failure",
+        "hook": "ledger-turn-failure",
+        "gate": true,
+        "purpose": "StopFailure hook: leave a trace when a turn that owed a channel reply died on an API error.",
+        "fingerprint": "2e634c28735c33523857e5d9ac9a6bc1917154a779853a4dd4b597c8222d240e"
       }
     ]
   }

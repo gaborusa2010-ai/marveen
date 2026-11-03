@@ -298,10 +298,7 @@ PONTOSAN NULLA volt -- nem lustaságból, hanem mert a szabály le volt írva, a
 és senki nem ásta ki a forráskódból.
 
 ```bash
-curl -s -X PUT "http://localhost:{{WEB_PORT}}/api/messages/<id>" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(cat store/.dashboard-token)" \
-  -d '{"status":"done","result":"mit csinaltal vele"}'
+bash scripts/marveen-api.sh message-close <id> --result-file eredmeny.txt   # az eredmeny.txt: mit csinaltal vele
 ```
 
 Ellenőrzés (a `sqlite3` NINCS telepítve, ezért python3, csak olvasásra):

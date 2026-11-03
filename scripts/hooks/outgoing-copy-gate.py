@@ -218,10 +218,11 @@ _CODE_SENDER_LIT = re.compile(r"sendmail|msmtp|swaks|send\.py", re.I)
 # Mirrored in email-send-gate.mjs (CODE_API_CLIENT_SEND / CODE_API_PAIRS).
 _CODE_API_CLIENT_SEND = re.compile(r"\.(?:messages|drafts)\(\)\s*\.send\s*\(")
 _CODE_API_PAIRS = (
-    (re.compile(r"(?:gmail|www)\.googleapis\.com", re.I), re.compile(r"\b(?:messages|drafts)/send\b")),
+    # v1.46 merge: the action word ends as in upstream's _ACTION_END (send-status is a read).
+    (re.compile(r"(?:gmail|www)\.googleapis\.com", re.I), re.compile(r"\b(?:messages|drafts)/send(?![A-Za-z0-9_-]|[^\x00-\x7f])")),
     (re.compile(r"\.users\(\)\s*\.(?:messages|drafts)\(\)"), re.compile(r"\.send\s*\(")),
     (re.compile(r"graph\.microsoft\.com", re.I),
-     re.compile(r"/sendMail\b|/messages/[^/\s'\"]+/(?:send|reply|replyAll|forward)\b")),
+     re.compile(r"/sendMail(?![A-Za-z0-9_-]|[^\x00-\x7f])|/messages/[^/\s'\"]+/(?:send|reply|replyAll|forward)(?![A-Za-z0-9_-]|[^\x00-\x7f])")),
 )
 
 
