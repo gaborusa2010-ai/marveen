@@ -176,8 +176,11 @@ export function subEnd(cmd, i, heredocs) {
  *  ($VAR, $( ), backtick, glob). null when the word is not terminated. Twin of
  *  heredoc_scan._here_word; the same decoder reads a `-c` program word (#777).
  *  `inBacktick`: the `<<<` stands inside a backtick substitution, where the first
- *  unescaped backtick ends the substitution and with it the word (#777 review 3). */
-export function hereWord(cmd, j, heredocs, inBacktick = false) {
+ *  unescaped backtick ends the substitution and with it the word (#777 review 3). Its value
+ *  is the backtick LEVEL (#777 review 4): 1 = inside `...`, where `\`` opens a nested
+ *  substitution (a dynamic part of the word); 2 = inside that nested `\`...\``, where `\``
+ *  is the closer and ends the word. */
+export function hereWord(cmd, j, heredocs, inBacktick = 0) {
   const n = cmd.length;
   while (j < n && (cmd[j] === ' ' || cmd[j] === '\t')) j += 1;
   let out = '';
@@ -188,6 +191,15 @@ export function hereWord(cmd, j, heredocs, inBacktick = false) {
     if (META.has(c) || (inBacktick && c === '`')) break;
     if (c === '\\') {
       if (i + 1 >= n) return null;
+      if (cmd[i + 1] === '`' && inBacktick) {
+        if (inBacktick >= 2) break;                  // the escaped closer of the nested substitution
+        const k = cmd.indexOf('\\`', i + 2);        // a nested substitution as (part of) the word
+        if (k < 0) return null;
+        out += cmd.slice(i, k + 2);
+        dyn = true;
+        i = k + 2;
+        continue;
+      }
       if (cmd[i + 1] !== '\n') out += cmd[i + 1];
       i += 2;
       continue;
@@ -210,6 +222,15 @@ export function hereWord(cmd, j, heredocs, inBacktick = false) {
     if (c === '"' || cmd.startsWith('$"', i)) {
       i += c === '$' ? 2 : 1;
       while (i < n && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < n && cmd[i + 1] === '`' && inBacktick) {
+          if (inBacktick >= 2) return null;      // the nested substitution ends inside the open quote
+          const k = cmd.indexOf('\\`', i + 2);
+          if (k < 0) return null;
+          out += cmd.slice(i, k + 2);
+          dyn = true;
+          i = k + 2;
+          continue;
+        }
         if (cmd[i] === '\\' && i + 1 < n) {
           if ('$`"\\'.includes(cmd[i + 1])) out += cmd[i + 1];
           else if (cmd[i + 1] !== '\n') out += cmd.slice(i, i + 2);
@@ -323,7 +344,12 @@ function scan(value) {
       continue;
     }
     if (["$'", '"', '${'].includes(ctx)) {
-      if (ch === '\\') {
+      if (ch === '\\' && ctx === '"' && cmd.startsWith('\\`', i) && stack.some((s) => s === '`' || s === '\\`')) {
+        // `\`` in double quotes inside a backtick substitution: a nested substitution
+        // ("echo `echo \"\`bash <<< 'x'\`\"`" runs the word, measured, #777 review 4)
+        i = push('\\`', 2);
+        wordStart = true;
+      } else if (ch === '\\') {
         i += 2;
       } else if ((ctx === "$'" && ch === "'") || (ctx === '"' && ch === '"') || (ctx === '${' && ch === '}')) {
         pop();
@@ -389,6 +415,15 @@ function scan(value) {
     if (ch === '\\') {
       if (cmd.startsWith('\\\n', i)) {
         i += 2;
+      } else if (cmd.startsWith('\\`', i) && ctx === '`') {
+        // `\`` inside a backtick substitution opens a NESTED one (#777 review 4:
+        // "echo `echo \`bash <<< 'x'\``" runs the word, measured with bash)
+        i = push('\\`', 2);
+        wordStart = true;
+      } else if (cmd.startsWith('\\`', i) && ctx === '\\`') {
+        pop();
+        i += 2;
+        wordStart = false;
       } else {
         i += 2;
         wordStart = false;
@@ -409,9 +444,8 @@ function scan(value) {
     if (ch === '#' && wordStart) {
       let e = cmd.indexOf('\n', i);
       e = e < 0 ? n : e;
-      if (ctx === '`') {
-        const b = cmd.indexOf('`', i);
-        e = b < 0 ? e : Math.min(e, b);
+      if (ctx === '`' || ctx === '\\`') {
+        for (const b of [cmd.indexOf('`', i), cmd.indexOf('\\`', i)]) if (b >= 0) e = Math.min(e, b);
       }
       i = e;
       continue;
@@ -447,7 +481,12 @@ function scan(value) {
       continue;
     }
     if (ch === '`') {
-      if (ctx === '`') {
+      if (ctx === '\\`') {
+        // an unescaped backtick ends the OUTER substitution with the nested one open
+        certain = false;
+        while (stack.length && stack[stack.length - 1] === '\\`') pop();
+      }
+      if (stack.length && stack[stack.length - 1] === '`') {
         pop();
         i += 1;
         wordStart = false;
@@ -474,7 +513,7 @@ function scan(value) {
       continue;
     }
     if (cmd.startsWith('<<<', i)) {
-      herestrings.push([i, ctx === '`']);
+      herestrings.push([i, ctx === '\\`' ? 2 : ctx === '`' ? 1 : 0]);
       i += 3;
       wordStart = true;
       brackets = 0;

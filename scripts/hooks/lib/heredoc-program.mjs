@@ -388,6 +388,22 @@ export function runsStdinAsProgram(seg, loose = false, depth = 0) {
  *  command (#775). */
 const STDIN_SUB_RE = /^\s*(?:<\s*\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)|cat(?:\s+(?:-|\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)))?)\s*$/
 
+const BACKTICK_CLOSER = /\\`|`/
+
+/** The head stands in an UNCLOSED backtick substitution (an odd number of unescaped backticks). */
+function inBackticks(head) {
+  let n = 0
+  for (let i = 0; i < head.length; i++) if (head[i] === '`' && !escaped(head, i)) n++
+  return n % 2 === 1
+}
+
+/** text[i] has an odd number of backslashes before it (`\``, `\\\``: neither opener nor closer). */
+function escaped(text, i) {
+  let k = i
+  while (k > 0 && text[k - 1] === '\\') k--
+  return (i - k) % 2 === 1
+}
+
 function subBlanked(text) {
   let out = ''
   let i = 0
@@ -408,9 +424,13 @@ function subBlanked(text) {
       // measured, #777). runsWords reads the name.
       out += STDIN_SUB_RE.test(text.slice(i + 2, j - 1)) ? '$STDIN' : '$SUB'
       i = j
-    } else if (ch === '`') {
-      const j = text.indexOf('`', i + 1)
-      if (j < 0) { out += text.slice(i); break }
+    } else if (ch === '`' && !escaped(text, i)) {
+      // a `\`` is not a closer (inside backticks it is a NESTED substitution): the head
+      // `echo `echo \`bash ` stays unclosed, and HEAD_SPLIT cuts it at the nested opener
+      // (#777 review 4: "echo `echo \`bash <<< 'x'\``" runs the word)
+      let j = i + 1
+      while (j < n && (text[j] !== '`' || escaped(text, j))) j++
+      if (j >= n) { out += text.slice(i); break }
       out += STDIN_SUB_RE.test(text.slice(i + 1, j)) ? '$STDIN' : '$SUB'
       i = j + 1
     } else {
@@ -552,7 +572,11 @@ export function heredocRunsBody(cmd, h, funcs) {
     }
   }
   const parts = subBlanked(head).split(HEAD_SPLIT)
-  const tail = stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
+  let tail = stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
+  // inside a backtick substitution the next closer (`\`` of a nested one, or the bare backtick)
+  // ends the simple command: `echo `echo \`bash <<< 'x'\` tail`` runs `bash`, the ` tail` after
+  // the closer is the OUTER echo's (#777 review 4)
+  if (inBackticks(head)) tail = tail.split(BACKTICK_CLOSER)[0]
   const pipe = tail.split(PIPE_SPLIT)
   const first = simpleRuns(parts[parts.length - 1] + ' ' + pipe[0], funcs, cmd, h.start)
   if (first) return first

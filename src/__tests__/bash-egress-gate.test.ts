@@ -710,6 +710,12 @@ const H777_BLOCK: [string, string][] = [
   ["bash <&0 -c 'E'", `bash <&0 -c '${E}'`],
   ["bash <<'A' / bash <<< 'E' / A", `bash <<'A'\nbash <<< '${E}'\nA`],
   ["bash <<< 'E (unterminated word, over-block)", `bash <<< '${E}`],
+  // review 4: a non-code-interpreter consumer runs the body; nested escaped backticks
+  ["eval \"$(cat <<'A' / bash <<< 'E' / A / )\"", `eval "$(cat <<'A'\nbash <<< '${E}'\nA\n)"`],
+  ["source /dev/stdin <<'A' / bash <<< 'E' / A", `source /dev/stdin <<'A'\nbash <<< '${E}'\nA`],
+  ["{ bash; } <<'A' / bash <<< 'E' / A", `{ bash; } <<'A'\nbash <<< '${E}'\nA`],
+  ["echo `echo \\`bash <<< 'E'\\``", `echo \`echo \\\`bash <<< '${E}'\\\`\``],
+  ["echo `echo \"\\`bash <<< 'E'\\`\"`", `echo \`echo "\\\`bash <<< '${E}'\\\`"\``],
 ]
 const H777_ALLOW: [string, string][] = [
   ["wc -l <<< 'E'", `wc -l <<< '${E}'`],

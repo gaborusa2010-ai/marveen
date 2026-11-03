@@ -56,7 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, SHELLS } from './lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -315,7 +315,10 @@ function nestedPrograms(command) {
   const out = []
   if (command.includes('<<')) {
     for (const { consumer, body } of programHeredocs(command)) {
-      if (SHELLS.has(consumer) && body.trim()) out.push(body)
+      // review 4: ANY consumer that is not a code interpreter (eval, source, $SHELL, a function,
+      // a brace group, the closing-line pipe): heredocRunsBody already said the body runs as
+      // shell text. Only a python/node/... body stays out, its quoting is not bash's.
+      if (body.trim() && !(INTERPRETERS.has(consumer) && !SHELLS.has(consumer))) out.push(body)
     }
   }
   if (command.includes('<<<')) {

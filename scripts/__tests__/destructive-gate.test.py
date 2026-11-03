@@ -903,6 +903,37 @@ check("echo `grep rm <<< 'RM'`: a grep nem futtat", not blocks("echo `grep rm <<
 check("python3 - <<PY / x = \"bash <<< 'RM'\" / PY: idezojelben", not blocks("python3 - <<'PY'\nx = \"bash <<< '" + RMH + "'\"\nPY"))
 check("bash <<'A' / wc -l <<< 'RM' / A: a wc nem futtat", not blocks("bash <<'A'\nwc -l <<< '" + RMH + "'\nA"))
 
+# --- 15. #777 review 4: nem shell-nevu futtato torzse, beagyazott escape-elt backtick --------
+# (1) a _shell_opener csak shell-NEVET nezett a nyito soron, pedig a _heredoc_runs_body mar
+# tudta, hogy a torzs fut: eval "$(cat <<A)", source /dev/stdin <<A, $SHELL <<A, a zaro soron
+# allo cso, sorfolytatas, while read ... done <<A, fuggveny, { bash; } <<A. Most csak a
+# kod-ertelmezo (python/node/...) torzse marad ki (_code_opener). (2) backtickben a
+# visszaper-backtick BEAGYAZOTT helyettesites: a zaro a szo vegere ragadt, es a fej $SUB-ba
+# olvadt. Mind bash-sal merve (homokozo, probe-bash.sh): a szo lefut.
+print()
+print("#777 review 4, MUST-BLOCK:")
+check("source /dev/stdin <<'A' / bash <<< 'RM' / A", blocks("source /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+check(". /dev/stdin <<'A' / bash <<< 'RM' / A", blocks(". /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("eval \"$(cat <<'A' / bash <<< 'RM' / A / )\"", blocks("eval \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\""))
+check("echo \"$(cat <<'A' ... A )\" | bash (zaro soron cso)", blocks("echo \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\" | bash"))
+check("$SHELL <<'A' / bash <<< 'RM' / A", blocks("$SHELL <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("bash \\ (ujsor) <<'A' / bash <<< 'RM' / A (sorfolytatas)", blocks("bash \\\n<<'A'\nbash <<< '" + RMH + "'\nA"))
+check("while read l; do eval \"$l\"; done <<'A' / bash <<< 'RM' / A", blocks("while read l; do eval \"$l\"; done <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("source <(cat <<'A' / bash <<< 'RM' / A / )", blocks("source <(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)"))
+check("cat <<'A' | source /dev/stdin / bash <<< 'RM' / A", blocks("cat <<'A' | source /dev/stdin\nbash <<< '" + RMH + "'\nA"))
+check("cat <<'A' | eval \"$(cat)\" / bash <<< 'RM' / A", blocks("cat <<'A' | eval \"$(cat)\"\nbash <<< '" + RMH + "'\nA"))
+check("bash <<'A' / eval \"$(cat <<'B' / bash <<< 'RM' / B / )\" / A (ket szint)", blocks("bash <<'A'\neval \"$(cat <<'B'\nbash <<< '" + RMH + "'\nB\n)\"\nA"))
+check("f(){ bash; }; f <<'A' / bash <<< 'RM' / A", blocks("f(){ bash; }; f <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("{ bash; } <<'A' / bash <<< 'RM' / A", blocks("{ bash; } <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `echo \\`bash <<< 'RM'\\`` (beagyazott escape-elt backtick)", blocks("echo `echo \\`bash <<< '" + RMH + "'\\``"))
+check("echo `echo \"\\`bash <<< 'RM'\\`\"` (idezojelben)", blocks("echo `echo \"\\`bash <<< '" + RMH + "'\\`\"`"))
+check("echo `echo \\`bash <<< 'RM'\\` tail`", blocks("echo `echo \\`bash <<< '" + RMH + "'\\` tail`"))
+print("negativ kontroll (adat, nem program):")
+check("git commit -m \"$(cat <<'A' / bash <<< 'RM' / A / )\": a git nem futtat", not blocks("git commit -m \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\""))
+check("echo 'x <<< y' && cat <<'A' / bash <<< 'RM' / A: a cat nem futtat", not blocks("echo 'x <<< y' && cat <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `echo hi` 'bash <<< RM': idezett szoveg", not blocks("echo `echo hi` 'bash <<< " + RMH + "'"))
+check("echo `bash <<< \\`echo x\\``: dinamikus szo, nincs RM", not blocks("echo `bash <<< \\`echo x\\``"))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

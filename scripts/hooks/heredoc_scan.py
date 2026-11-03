@@ -102,7 +102,7 @@ def ansi_c(raw):
 _WORD_END = frozenset(" \t\n;&|()<>")
 
 
-def _here_word(cmd, j, heredocs, in_backtick=False):
+def _here_word(cmd, j, heredocs, in_backtick=0):
     """The word after a `<<<` whose text starts at j (blanks skipped): (text, dynamic,
     end). `text` is the word as bash passes it; `dynamic` says the shell still expands
     something in it ($VAR, $( ), backtick, glob), which the gates cannot read. A
@@ -111,7 +111,10 @@ def _here_word(cmd, j, heredocs, in_backtick=False):
     None when the word is not terminated (an open quote or substitution).
     `in_backtick`: the `<<<` stands inside a backtick substitution, where the first
     unescaped backtick ends the substitution and with it the word (#777 review 3:
-    "echo `bash <<< 'x'`" used to read the closing backtick as a nested one)."""
+    "echo `bash <<< 'x'`" used to read the closing backtick as a nested one). Its value is
+    the backtick LEVEL (#777 review 4): 1 = inside backticks, where a backslash-backtick
+    opens a nested substitution (a dynamic part of the word); 2 = inside that nested
+    substitution, where the backslash-backtick is the closer and ends the word."""
     n = len(cmd)
     while j < n and cmd[j] in " \t":
         j += 1
@@ -123,6 +126,15 @@ def _here_word(cmd, j, heredocs, in_backtick=False):
         if c == "\\":
             if i + 1 >= n:
                 return None
+            if cmd[i + 1] == "`" and in_backtick:
+                if in_backtick >= 2:
+                    break                        # the escaped closer of the nested substitution
+                k = cmd.find("\\`", i + 2)        # a nested substitution as (part of) the word
+                if k < 0:
+                    return None
+                out.append(cmd[i:k + 2])
+                dyn, i = True, k + 2
+                continue
             if cmd[i + 1] != "\n":
                 out.append(cmd[i + 1])
             i += 2
@@ -146,6 +158,15 @@ def _here_word(cmd, j, heredocs, in_backtick=False):
         if c == '"' or cmd.startswith('$"', i):
             i += 2 if c == "$" else 1
             while i < n and cmd[i] != '"':
+                if cmd[i] == "\\" and i + 1 < n and cmd[i + 1] == "`" and in_backtick:
+                    if in_backtick >= 2:
+                        return None      # the nested substitution ends inside the open quote
+                    k = cmd.find("\\`", i + 2)
+                    if k < 0:
+                        return None
+                    out.append(cmd[i:k + 2])
+                    dyn, i = True, k + 2
+                    continue
                 if cmd[i] == "\\" and i + 1 < n:
                     if cmd[i + 1] in '$`"\\':
                         out.append(cmd[i + 1])
@@ -349,7 +370,12 @@ def _scan(cmd):
             i = e + 1
             continue
         if ctx in ("$'", '"', "${"):
-            if ch == "\\":
+            if ch == "\\" and ctx == '"' and cmd.startswith("\\`", i) and any(s in ("`", "\\`") for s in stack):
+                # `\`` in double quotes inside a backtick substitution: a nested substitution
+                # ("echo `echo \"\`bash <<< 'x'\`\"`" runs the word, measured, #777 review 4)
+                i = push("\\`", 2)
+                word_start = True
+            elif ch == "\\":
                 i += 2
             elif (ctx == "$'" and ch == "'") or (ctx == '"' and ch == '"') or (ctx == "${" and ch == "}"):
                 pop()
@@ -413,6 +439,13 @@ def _scan(cmd):
         if ch == "\\":
             if cmd.startswith("\\\n", i):
                 i += 2
+            elif cmd.startswith("\\`", i) and ctx == "`":
+                # `\`` inside a backtick substitution opens a NESTED one (#777 review 4:
+                # "echo `echo \`bash <<< 'x'\``" runs the word, measured with bash)
+                i, word_start = push("\\`", 2), True
+            elif cmd.startswith("\\`", i) and ctx == "\\`":
+                pop()
+                i, word_start = i + 2, False
             else:
                 i, word_start = i + 2, False
             continue
@@ -426,9 +459,10 @@ def _scan(cmd):
         if ch == "#" and word_start:
             e = cmd.find("\n", i)
             e = n if e < 0 else e
-            if ctx == "`":
-                b = cmd.find("`", i)
-                e = e if b < 0 else min(e, b)
+            if ctx in ("`", "\\`"):
+                for b in (cmd.find("`", i), cmd.find("\\`", i)):
+                    if b >= 0:
+                        e = min(e, b)
             i = e
             continue
         if ch in "'\"":
@@ -450,7 +484,12 @@ def _scan(cmd):
             i, word_start = push("${", 2), False
             continue
         if ch == "`":
-            if ctx == "`":
+            if ctx == "\\`":
+                # an unescaped backtick ends the OUTER substitution with the nested one open
+                certain = False
+                while stack and stack[-1] == "\\`":
+                    pop()
+            if stack and stack[-1] == "`":
                 pop()
                 i, word_start = i + 1, False
             else:
@@ -471,7 +510,7 @@ def _scan(cmd):
             i, word_start, brackets = i + 1, True, 0
             continue
         if cmd.startswith("<<<", i):
-            herestrings.append((i, ctx == "`"))
+            herestrings.append((i, 2 if ctx == "\\`" else 1 if ctx == "`" else 0))
             i, word_start, brackets = i + 3, True, 0
             continue
         if cmd.startswith("<<", i):

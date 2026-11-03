@@ -4266,5 +4266,160 @@
   "certain": true,
   "herestrings": [],
   "certainAll": true
+ },
+ {
+  "cmd": "echo `echo \\`bash <<< 'x'\\``",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 18,
+    "tailStart": 25,
+    "lineEnd": 28,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `bash <<< \\`echo x\\``",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 11,
+    "tailStart": 25,
+    "lineEnd": 26,
+    "text": "\\`echo x\\`",
+    "dynamic": true
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `echo \"\\`bash <<< 'x'\\`\"`",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 19,
+    "tailStart": 26,
+    "lineEnd": 30,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `echo \\`bash <<< 'x'\\` tail`",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 18,
+    "tailStart": 25,
+    "lineEnd": 33,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `echo \\`bash <<< 'x'` tail",
+  "heredocs": [],
+  "certain": false,
+  "herestrings": [
+   {
+    "start": 18,
+    "tailStart": 25,
+    "lineEnd": 31,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": false
+ },
+ {
+  "cmd": "echo \\`bash <<< 'x'\\`",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 12,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "text": "x`",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `echo \\`bash <<< \"x\\`\"`",
+  "heredocs": [],
+  "certain": false,
+  "herestrings": [
+   {
+    "start": 18,
+    "tailStart": 28,
+    "lineEnd": 28,
+    "text": "x\\`\"`",
+    "dynamic": true
+   }
+  ],
+  "certainAll": false
+ },
+ {
+  "cmd": "echo `echo \\`echo \\\\\\`bash <<< 'x'\\\\\\`\\`\\``",
+  "heredocs": [],
+  "certain": false,
+  "herestrings": [
+   {
+    "start": 27,
+    "tailStart": 43,
+    "lineEnd": 43,
+    "text": "x'\\\\\\`\\`\\``",
+    "dynamic": true
+   }
+  ],
+  "certainAll": false
+ },
+ {
+  "cmd": "echo `echo \\`bash <<< x\\``; ls",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 18,
+    "tailStart": 23,
+    "lineEnd": 30,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "bash <<'A'\necho `echo \\`bash <<< 'x'\\``\nA",
+  "heredocs": [
+   {
+    "start": 5,
+    "tailStart": 10,
+    "lineEnd": 10,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 11,
+    "bodyEnd": 40,
+    "end": 41,
+    "closed": true
+   }
+  ],
+  "certain": true,
+  "herestrings": [],
+  "certainAll": true
  }
 ]

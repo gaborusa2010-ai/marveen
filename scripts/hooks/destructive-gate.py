@@ -658,6 +658,22 @@ _STDIN_SUB_RE = re.compile(r'^\s*(?:<\s*/(?:dev/stdin|(?:dev|proc/self)/fd/0+)'
                            r'|cat(?:\s+(?:-|/(?:dev/stdin|(?:dev|proc/self)/fd/0+)))?)\s*$')
 
 
+_BACKTICK_CLOSER_RE = re.compile(r'\\`|`')
+
+
+def _in_backticks(head):
+    """A fej egy LEZARATLAN backtick-helyettesitesben all (paratlan szamu nem escape-elt backtick)."""
+    return sum(1 for i, ch in enumerate(head) if ch == '`' and not _escaped(head, i)) % 2 == 1
+
+
+def _escaped(text, i):
+    """A text[i] elott paratlan szamu visszaper all (visszaper-backtick: nem nyito es nem zaro)."""
+    k = i
+    while k > 0 and text[k - 1] == '\\':
+        k -= 1
+    return (i - k) % 2 == 1
+
+
 def _sub_blanked(text):
     """A szoveg, amelyben minden LEZART `$(...)` es `...` helyettesites egyetlen
     dinamikus szo, `$SUB`. A lezaratlan (a heredoc a helyettesites BELSEJEBEN all)
@@ -683,9 +699,14 @@ def _sub_blanked(text):
             # runs it, measured, #777). _runs_words reads the name.
             out.append('$STDIN' if _STDIN_SUB_RE.match(text[i + 2:j - 1]) else '$SUB')
             i = j
-        elif ch == '`':
-            j = text.find('`', i + 1)
-            if j < 0:
+        elif ch == '`' and not _escaped(text, i):
+            # a `\`` is not a closer (inside backticks it is a NESTED substitution): the head
+            # `echo `echo \`bash ` stays unclosed, and _HEAD_SPLIT cuts it at the nested opener
+            # (#777 review 4: "echo `echo \`bash <<< 'x'\``" runs the word)
+            j = i + 1
+            while j < n and (text[j] != '`' or _escaped(text, j)):
+                j += 1
+            if j >= n:
                 out.append(text[i:])
                 break
             out.append('$STDIN' if _STDIN_SUB_RE.match(text[i + 1:j]) else '$SUB')
@@ -883,6 +904,11 @@ def _heredoc_runs_body(cmd, h, funcs=None):
             return _simple_runs(_HEAD_SPLIT.split(_sub_blanked(line))[-1], funcs, cmd, h.start)
     parts = _HEAD_SPLIT.split(_sub_blanked(head))
     tail = _TAIL_SPLIT.split(_strip_comment(cmd[h.tail_start:h.line_end]))[0]
+    if _in_backticks(head):
+        # inside a backtick substitution the next closer (`\`` of a nested one, or the bare
+        # backtick) ends the simple command: `echo `echo \`bash <<< 'x'\` tail`` runs `bash`,
+        # the ` tail` after the closer is the OUTER echo's (#777 review 4)
+        tail = _BACKTICK_CLOSER_RE.split(tail)[0]
     pipe = _PIPE_SPLIT.split(tail)
     if _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start):
         return True
@@ -913,7 +939,7 @@ def _stdin_programs(text, depth=0):
                 out.append(h.text)
         elif depth < _MAX_NEST:
             body = text[h.body_start:h.body_end]
-            if '<<<' in body and _shell_opener(text, h, funcs):
+            if '<<<' in body and not _code_opener(text, h):
                 out.extend(_stdin_programs(body, depth + 1))
     return out
 
@@ -921,16 +947,24 @@ def _stdin_programs(text, depth=0):
 _SHELL_OPENER_RE = re.compile(r'(?<![\w.-])(?:[\w./-]*/)?(?:%s)(?![\w.-])' % '|'.join(('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash')))
 
 
-def _shell_opener(text, h, funcs):
-    """A heredoc nyito sora SHELLT nevez meg (vagy egy fuggvenyt, amelynek a torzse shellt
-    futtat)? Csak ilyen torzsbe megyunk le itt-stringert: egy python-torzs (`python3 - <<PY`)
-    idezojel-szerkezete nem a bashe, es a sajat kapu-kommentjeit idezo szerkeszto-parancsot
-    is megfogta volna (replay, 4 valodi parancs). A JS iker ugyanigy a SHELLS fogyasztora szur."""
-    line = text[text.rfind('\n', 0, h.start) + 1:h.line_end]
-    if _SHELL_OPENER_RE.search(line):
-        return True
-    return any(re.search(r'(?<![\w/-])%s(?![\w-])' % re.escape(f), line) and _any_runs_stdin(funcs[f])
-               for f in funcs)
+_CODE_OPENER_RE = re.compile(r'(?<![\w.-])(?:[\w./-]*/)?(?:python3?|node|ruby|perl|php)(?![\w.-])')
+
+
+def _code_opener(text, h):
+    """A heredoc nyito sora (a sorfolytatasokkal egyutt) KOD-ertelmezot nevez meg shell
+    nelkul (`python3 - <<PY`, `cat <<X | node -`)? Ilyen torzsbe nem megyunk le itt-stringert:
+    a python/node idezojel-szerkezete nem a bashe, es a sajat kapu-kommentjeit idezo
+    szerkeszto-parancsot is megfogta volna (replay, 4 valodi parancs). MINDEN MAS futtato
+    torzsebe lemegyunk (#777 review 4): a _heredoc_runs_body mar tudja, hogy a torzs fut
+    (`eval "$(cat <<A)"`, `source /dev/stdin <<A`, `$SHELL <<A`, `while read l; do eval "$l";
+    done <<A`, fuggveny, `{ bash; } <<A`, a zaro soron allo cso), es a korabbi shell-nev szures
+    ezeket mind kihagyta. A JS iker (nestedPrograms) a fogyaszto NEVET nezi, es ott a
+    kod-ertelmezo fogyaszto marad ki: ugyanaz a hatar, mas oldalrol."""
+    ls = text.rfind('\n', 0, h.start)
+    while ls > 0 and text[ls - 1] == '\\':
+        ls = text.rfind('\n', 0, ls - 1)
+    line = text[ls + 1:h.line_end]
+    return bool(_CODE_OPENER_RE.search(line)) and not _SHELL_OPENER_RE.search(line)
 
 
 def _closing_pipe_runs(cmd, h, parts, funcs):

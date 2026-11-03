@@ -453,6 +453,20 @@ describe('#777: a here-string program and a literal `bash -c` program reach the 
     ["x=`bash <<< 'claude -p x'`"],
     ["bash <&0 -c $'cl\\x61ude -p x'"],
     ["bash <<< 'claude -p x"],
+    // review 4: ANY non-code-interpreter consumer runs the body (eval, source, $SHELL, a
+    // function, a brace group, the closing-line pipe); nested escaped backticks
+    ["source /dev/stdin <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["eval \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\""],
+    ["echo \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\" | bash"],
+    ["$SHELL <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["bash \\\n<<'A'\nbash <<< 'claude -p x'\nA"],
+    ["while read l; do eval \"$l\"; done <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["f(){ bash; }; f <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["{ bash; } <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["cat <<'A' | eval \"$(cat)\"\nbash <<< 'claude -p x'\nA"],
+    ["echo `echo \\`bash <<< 'claude -p x'\\``"],
+    ["echo `echo \"\\`bash <<< 'claude -p x'\\`\"`"],
+    ["echo `echo \\`bash <<< 'claude -p x'\\` tail`"],
   ])('denies %s', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(false)
   })
@@ -466,6 +480,8 @@ describe('#777: a here-string program and a literal `bash -c` program reach the 
     ["cat <<'A'\nbash <<< 'claude -p x'\nA"],
     ["echo `grep -c claude <<< 'claude -p x'`"],
     ["python3 - <<'PY'\nx = \"bash <<< 'claude -p x'\"\nPY"],
+    ["git commit -m \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\""],
+    ["echo `echo hi` 'bash <<< claude -p x'"],
   ])('allows the data shape %s', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(true)
   })
