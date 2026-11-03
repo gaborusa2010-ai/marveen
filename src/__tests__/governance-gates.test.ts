@@ -264,6 +264,71 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `(cd ${T} && ls -la) 2>/dev/null`,
     ]) expect(bash(cmd), cmd).toBe(true)
   })
+  // #728 review finding 1: the git read allowance (GIT_DIR_READ_SUBCOMMANDS /
+  // isGitSourceCommand) let git write a file or run a program. `--output` is
+  // exact-match only in git 2.53 (abbreviations exit 128/129), but grep's
+  // --open-files-in-pager goes through parse-options, so every unambiguous
+  // prefix down to `--op` runs the pager (measured), and -O may sit in a cluster.
+  it('denies git diff/log/show --output and git grep -O / --open-files-in-pager (#728 review)', () => {
+    for (const cmd of [
+      `git log -1 --format=%B --output=${T}/x/SKILL.md`,
+      `git log -1 --format=%B --output ${T}/x/SKILL.md`,
+      `git diff --output=${T}/x/SKILL.md HEAD~1 -- scheduled-tasks/`,
+      `git show --output=${T}/x/task-config.json HEAD:scheduled-tasks/x/task-config.json`,
+      `git log --output ${T}/x/SKILL.md`,
+      `git grep --open-files-in-pager=sh foo ${T}`,
+      `git grep --open-files-in-pager foo ${T}`,
+      `git grep --op=sh foo ${T}`,
+      `git grep -Ovim foo -- ${T}`,
+      `git grep -O foo -- ${T}`,
+      `git grep -iOsh foo -- ${T}`,
+      // the CLI-only route (registry tool mention) shares isGitSourceCommand
+      'git log -1 --format=%B --output=/tmp/x.ts -- src/schedule-registry-cli.ts',
+    ]) expect(bash(cmd), cmd).toBe(true)
+  })
+  it('still ALLOWS the read-only git forms on the directory (#728 review)', () => {
+    for (const cmd of [
+      `git log --oneline -- ${T}`,
+      `git diff --stat -- ${T}`,
+      `git diff --output-indicator-new=+ -- ${T}`,
+      `git grep -n foo -- ${T}`,
+      `git grep -o foo -- ${T}`,
+    ]) expect(bash(cmd), cmd).toBe(false)
+  })
+  // #728 review finding 2: the text argument of `tabla.py komment` and
+  // `jegyzetek.py uj` is message payload, like agent-msg.sh's content; a real
+  // write into the store on the same command line stays denied.
+  it('ALLOWS a kanban comment / note whose TEXT mentions the directory (#728 review)', () => {
+    for (const cmd of [
+      'python3 scripts/tabla.py komment 12 "scheduled-tasks seed javitva"',
+      `python3 ../../scripts/tabla.py komment 12 "a ${T}/margo-own SKILL.md-t frissitettem" --allapot kesz`,
+      `python3 scripts/tabla.py komment --ki margo 12 'irtam a ${T} ala'`,
+      `python3 ../../scripts/jegyzetek.py uj margo "nezd meg a ${T}/x mappat" --hatarido 2026-11-05 --ki margo`,
+      'python3 scripts/jegyzetek.py uj cody "scheduled-tasks ellenorzes"',
+    ]) expect(bash(cmd), cmd).toBe(false)
+  })
+  it('denies a real store write through the same tabla.py / jegyzetek.py command lines (#728 review)', () => {
+    for (const cmd of [
+      `python3 scripts/tabla.py komment 12 "x" > ${T}/x/SKILL.md`,
+      `python3 scripts/tabla.py komment 12 "x" >> ${T}/x/task-config.json`,
+      `python3 scripts/jegyzetek.py uj cody "x" --ki cody > ${T}/x/task-config.json`,
+      `python3 scripts/tabla.py komment 12 "x" | tee ${T}/x/SKILL.md`,
+      `python3 scripts/tabla.py komment 12 "x"; cp /tmp/a.md ${T}/x/SKILL.md`,
+      // the payload position only: the store named anywhere else stays a reference
+      `python3 scripts/tabla.py komment 12 --fajl ${T}/x/SKILL.md`,
+      `python3 scripts/tabla.py komment ${T} "x"`,
+      `python3 scripts/jegyzetek.py uj "${T}" "x"`,
+      // an expansion in the text can run a command
+      `python3 scripts/tabla.py komment 12 "$(cp /tmp/a ${T}/x/SKILL.md)"`,
+      'python3 scripts/tabla.py komment 12 "`cp /tmp/a ' + T + '/x/SKILL.md`"',
+      `python3 scripts/tabla.py komment 12 x <<'EOF'\n${T}\nEOF`,
+      `python3 -c 'import x' scripts/tabla.py komment 12 "${T}"`,
+      `python3 scripts/jegyzetek.py --ki cody uj cody "${T}"`,
+      // other subcommands / other scripts are not widened
+      `python3 scripts/tabla.py naplo "irtam a ${T} ala"`,
+      `python3 scripts/other.py komment 12 "${T}"`,
+    ]) expect(bash(cmd), cmd).toBe(true)
+  })
   it('accepted overshoot: an inline program that reads the directory and writes elsewhere', () => {
     // The literal path and the write marker are judged on the whole program, not
     // paired with each other; copy out with cp or a redirect instead.

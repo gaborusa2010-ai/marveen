@@ -1694,7 +1694,59 @@ function dataResidue(seg, words, name) {
     const stdinMsg = words[contentIdx]?.value === '-'
     return [keep(drop), ...(stdinMsg ? [] : seg.bodies)].join('\n')
   }
+  const noteIdx = noteTextIndex(words, name)
+  if (noteIdx !== null) return [keep(new Set([noteIdx])), ...seg.bodies].join('\n')
   return seg.text
+}
+
+// #728 review finding 2: the two local board CLIs whose free-text argument is
+// message payload, the same as agent-msg.sh's content:
+//   python3 <path>/scripts/tabla.py [--ki V|--json] komment REF TEXT [--allapot V] [--ki V] [--json]
+//   python3 <path>/scripts/jegyzetek.py uj KINEK TEXT [--hatarido V] [--ki V]
+// Returns the index of TEXT, or null when the line is not exactly this shape: an
+// option outside these lists, `--`, an expansion in any word, a different
+// subcommand or script, or a positional count other than two all mean "not
+// provable", so the full text stays and the segment is judged as before. A
+// redirect is judged before this (redirectsOk), heredoc bodies are kept.
+const TABLA_SCRIPT_RX = /(?:^|\/)scripts\/tabla\.py$/
+const JEGYZETEK_SCRIPT_RX = /(?:^|\/)scripts\/jegyzetek\.py$/
+function noteTextIndex(words, name) {
+  if (!/^python3?$/.test(name) || words.some((w) => w.dollar || w.star)) return null
+  const script = words[1]?.value ?? ''
+  let sub, valueOpts, flagOpts
+  if (TABLA_SCRIPT_RX.test(script)) {
+    // argparse: --ki/--json also before the subcommand; `--opt=V` is the same option
+    sub = 'komment'; valueOpts = new Set(['--ki', '--allapot']); flagOpts = new Set(['--json'])
+  } else if (JEGYZETEK_SCRIPT_RX.test(script)) {
+    // hand-rolled: exact `--ki V` / `--hatarido V` only, each removed once
+    sub = 'uj'; valueOpts = new Set(['--ki', '--hatarido']); flagOpts = new Set()
+  } else return null
+  const isTabla = sub === 'komment'
+  const positional = []
+  const seen = new Set()
+  let subSeen = false
+  for (let i = 2; i < words.length; i++) {
+    const v = words[i].value
+    if (!subSeen) {
+      // jegyzetek reads its subcommand from argv[1] only; tabla's top-level
+      // parser knows --ki and --json, nothing else, before the subcommand
+      if (v === sub) { subSeen = true; continue }
+      if (!isTabla) return null
+    }
+    if (v.startsWith('-')) {
+      const eq = v.indexOf('=')
+      const flag = isTabla && v.startsWith('--') && eq > 0 ? v.slice(0, eq) : v
+      if (flagOpts.has(flag) && flag === v) continue
+      if (!valueOpts.has(flag) || (!subSeen && flag !== '--ki')) return null
+      if (!isTabla && seen.has(flag)) return null
+      seen.add(flag)
+      if (flag === v) { if (i + 1 >= words.length) return null; i++ }
+      continue
+    }
+    if (!subSeen) return null
+    positional.push(i)
+  }
+  return subSeen && positional.length === 2 ? positional[1] : null
 }
 
 // The registry tool's read-only use: `node|tsx <path>/schedule-registry-cli.(js|ts)
@@ -1719,9 +1771,18 @@ function isRegistryCliRead(words, name) {
 // history commands that never execute it, without -c (an alias or a pager is a
 // command) and without an external diff driver.
 const GIT_SOURCE_SUBCOMMANDS = new Set(['add', 'diff', 'log', 'show', 'status', 'blame', 'ls-files', 'grep', 'restore'])
+// #728 review finding 1: options that make these subcommands WRITE a file or RUN
+// a program. diff/log/show `--output[=]FILE` (git 2.53 takes it exact only:
+// `--outpu=` exits 128/129, measured); grep `-O[PAGER]` / `--open-files-in-pager`,
+// which parse-options accepts down to the unambiguous prefix `--op` (measured)
+// and whose short form may sit inside a cluster (`-iOsh`).
+const GIT_WRITE_OPTION_RX = /^--output(?:=|$)/
+const GIT_GREP_PAGER_OPTION_RX = /^--op|^-[^-]*O/
 function isGitSourceCommand(words, name) {
   if (name !== 'git') return false
   if (words.some((w) => w.dollar || /^(?:-c|--exec-path(?:=.*)?|--ext-diff|--textconv|-p|--paginate)$/.test(w.value))) return false
+  if (words.some((w) => GIT_WRITE_OPTION_RX.test(w.value))) return false
+  if (words[1]?.value === 'grep' && words.some((w) => GIT_GREP_PAGER_OPTION_RX.test(w.value))) return false
   return GIT_SOURCE_SUBCOMMANDS.has(words[1]?.value)
 }
 
