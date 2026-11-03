@@ -87,17 +87,17 @@ const HOT_PCT = 0.8
 // pinned 150k the whole 80% -> 97% band is ~25k tokens, and one busy stretch
 // crossed it between two 5-minute sweeps: 2026-10-25 07:29 measured ~109k
 // (73%, not hot), 07:34 restarted at 98% with no handoff request (109k -> 147k
-// in 3.5 minutes). So an agent is also hot once it is within this many tokens
-// of its hard tier.
-const HOT_HEADROOM_TOKENS = 60_000
+// in 3.5 minutes). A 60k headroom below the hard tier still left a fresh
+// session (boot ~60k = 40% of 150k) on the 5-minute sweep after its first
+// reading: 2026-11-02 18:00:51 its first check past actPct read 89%. So a pinned agent is
+// always hot: one transcript-tail read per pinned agent per minute.
 const lastMeasuredPct = new Map<string, number>()
 // The pct at which each agent counts as hot, set from its config at measurement.
 const hotPctFor = new Map<string, number>()
 
 /** The pct from which an agent is re-checked on the hot cadence. */
-export function hotThresholdPct(limitTokens: number | null, hardPct: number): number {
-  if (!limitTokens || limitTokens <= 0) return HOT_PCT
-  return Math.max(0, Math.min(HOT_PCT, hardPct - HOT_HEADROOM_TOKENS / limitTokens))
+export function hotThresholdPct(limitTokens: number | null): number {
+  return limitTokens && limitTokens > 0 ? 0 : HOT_PCT
 }
 // A restarted agent stays on the hot cadence until its fresh session gives a
 // first reading. Deleting its reading instead dropped it to the 5-minute sweep
@@ -824,7 +824,7 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   const measuredPct = measured.pct
   if (measuredPct !== null) {
     lastMeasuredPct.set(name, measuredPct)
-    hotPctFor.set(name, hotThresholdPct(cfg.limitTokens, cfg.hardPct))
+    hotPctFor.set(name, hotThresholdPct(cfg.limitTokens))
     hotUntilMeasured.delete(name)
   }
   else if (!running) lastMeasuredPct.delete(name)

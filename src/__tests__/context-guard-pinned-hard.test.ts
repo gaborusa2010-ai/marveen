@@ -121,9 +121,55 @@ describe('decideGuard: await-handoff hard tier under a limitTokens pin (#641)', 
     expect(full.reason).toBe('hard threshold during await-handoff')
   })
 
-  it('the idle-phase hard tier is untouched (part 3 of the card plan, not in this change)', () => {
+})
+
+// #641 part 3: the idle-phase hard tier under a pin. A pinned agent past the
+// pin's hardPct with the real window measurably below hardPct is not wedged by
+// a full window, so it is asked for the handoff first; await-handoff (above)
+// then waits for it at most until the deadline. Unpinned, unknown or full real
+// window: the restart as before.
+const PINNED_HARD = 'pinned hard threshold (99% of the 150000 pin, real window at 15%) -- requesting handoff first'
+
+describe('decideGuard: idle-phase hard tier under a limitTokens pin (#641 part 3)', () => {
+  it('asks for the handoff first, and enters await-handoff with a deadline', () => {
     const d = decideGuard(INITIAL_GUARD_STATE, inputs(), CFG)
+    expect(d.action).toBe('request-handoff')
+    expect(d.reason).toBe(PINNED_HARD)
+    expect(d.nextState.phase).toBe('await-handoff')
+    expect(d.nextState.deadlineMs).toBe(NOW + CFG.handoffTimeoutMinutes * 60_000)
+    expect(d.nextState.handoffMtimeAtRequest).toBe(100)
+  })
+
+  it('the next sweep waits for that handoff, and the deadline still bounds the wait', () => {
+    const first = decideGuard(INITIAL_GUARD_STATE, inputs(), CFG)
+    const wait = decideGuard(first.nextState, inputs({ nowMs: NOW + 60_000 }), CFG)
+    expect(wait.action).toBe('none')
+    const late = decideGuard(first.nextState, inputs({ nowMs: first.nextState.deadlineMs }), CFG)
+    expect(late.action).toBe('restart')
+  })
+
+  it('a full real window restarts as before', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ windowPct: 0.98 }), CFG)
     expect(d.action).toBe('restart')
     expect(d.reason).toBe('hard threshold (99% >= 97%)')
+  })
+
+  it('an unknown real window restarts as before', () => {
+    expect(decideGuard(INITIAL_GUARD_STATE, inputs({ windowPct: null }), CFG).reason).toBe('hard threshold (99% >= 97%)')
+    const absent = inputs()
+    delete absent.windowPct
+    expect(decideGuard(INITIAL_GUARD_STATE, absent, CFG).reason).toBe('hard threshold (99% >= 97%)')
+  })
+
+  it('without a pin nothing changes', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs(), UNPINNED)
+    expect(d.action).toBe('restart')
+    expect(d.reason).toBe('hard threshold (99% >= 97%)')
+  })
+
+  it('a busy pane keeps its own handoff request wording', () => {
+    const d = decideGuard(INITIAL_GUARD_STATE, inputs({ paneBusy: true, paneIdle: false }), CFG)
+    expect(d.action).toBe('request-handoff')
+    expect(d.reason).toBe('hard threshold (99% >= 97%) but agent mid-turn -- requesting handoff, the restart waits for the turn')
   })
 })

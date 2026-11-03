@@ -1402,6 +1402,19 @@ function decideWedgeTiers(
         `hard threshold (${Math.round(pct * 100)}% >= ${Math.round(cfg.hardPct * 100)}%) but agent mid-turn -- requesting handoff, the restart waits for the turn`,
       )
     }
+    // #641: under a limitTokens pin with the real window measurably below
+    // hardPct, the pane is not wedged by a full window: ask for the handoff
+    // first. await-handoff waits for it at most until its deadline (see
+    // atHardDuringAwait), then restarts as before. Measured 2026-10-28: all 5
+    // hard restarts without a handoff request were pinned agents.
+    const w = inputs.windowPct
+    if (cfg.limitTokens !== null && typeof w === 'number' && w < cfg.hardPct) {
+      return handoffRequest(
+        nowMs, inputs, cfg,
+        `pinned hard threshold (${Math.round(pct * 100)}% of the ${cfg.limitTokens} pin, real window at ` +
+        `${Math.round(w * 100)}%) -- requesting handoff first`,
+      )
+    }
     return restartDecision(
       nowMs,
       `hard threshold (${Math.round(pct * 100)}% >= ${Math.round(cfg.hardPct * 100)}%)`,

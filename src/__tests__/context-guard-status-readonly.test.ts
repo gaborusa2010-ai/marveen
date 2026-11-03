@@ -58,7 +58,11 @@ vi.mock('../web/active-model.js', async (orig) => ({
 }))
 vi.mock('../web/context-guard-store.js', async () => {
   const { DEFAULT_CONTEXT_GUARD } = await import('../context-guard.js')
-  return { readContextGuardConfig: () => ({ ...DEFAULT_CONTEXT_GUARD, enabled: true }) }
+  // #641: the `rowpinned` agent runs a limitTokens pin, the rest none.
+  return {
+    readContextGuardConfig: (name: string) =>
+      ({ ...DEFAULT_CONTEXT_GUARD, enabled: true, limitTokens: name === 'rowpinned' ? 150_000 : null }),
+  }
 })
 
 const { getContextGuardStatus, measurePct, measurePcts } = await import('../web/context-guard-runner.js')
@@ -156,6 +160,15 @@ describe('measurePcts: the pinned fraction and the real window from one read (#6
     const row = getContextGuardStatus().find(r => r.agent === 'rowpin')
     expect(row?.pct).toBe(LOW / BASE)
     expect(row?.windowPct).toBe(LOW / BASE)
+  })
+
+  it('a pinned status row reports the pin fraction and the real window apart', () => {
+    tokensNow = LOW
+    agents = ['rowpinned']
+    const row = getContextGuardStatus().find(r => r.agent === 'rowpinned')
+    expect(row?.pct).toBe(LOW / PIN)
+    expect(row?.windowPct).toBe(LOW / calibrateLimit(LOW, BASE))
+    expect(row?.pct).not.toBe(row?.windowPct)
   })
 
   it('unmeasurable is null for both', () => {
