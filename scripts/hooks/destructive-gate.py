@@ -893,6 +893,46 @@ def _heredoc_runs_body(cmd, h, funcs=None):
     return _closing_pipe_runs(cmd, h, parts, funcs)
 
 
+def _stdin_programs(text, depth=0):
+    """Az itt-string PROGRAMOK a szovegben, a VEGREHAJTOTT heredoc-torzsokbe is lemenve
+    (#777 review 3): `bash <<'A'\\nbash <<< 'rm -rf x'\\nA` -- a kulso find_all a torzsbe nem
+    lat, mert a torzs a scannernek adat. A lezaratlan szavu itt-string is program: a scanner
+    a sor nyers maradekat adja ra (dynamic=True), inkabb tultilt. Egy nem shell fogado
+    (`python3 - <<PY`) torzseben a `<<<` csak idezojelen es komment kivul szamit, amit a
+    scanner nem jegyez fel, ezert oda is lemenni artalmatlan."""
+    records, _certain = _heredoc_scan().find_all(text)
+    if not records:
+        return []
+    funcs = _function_bodies(text)
+    out = []
+    for h in records:
+        if not _heredoc_runs_body(text, h, funcs):
+            continue
+        if h.kind == 'herestring':
+            if h.text.strip():
+                out.append(h.text)
+        elif depth < _MAX_NEST:
+            body = text[h.body_start:h.body_end]
+            if '<<<' in body and _shell_opener(text, h, funcs):
+                out.extend(_stdin_programs(body, depth + 1))
+    return out
+
+
+_SHELL_OPENER_RE = re.compile(r'(?<![\w.-])(?:[\w./-]*/)?(?:%s)(?![\w.-])' % '|'.join(('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash')))
+
+
+def _shell_opener(text, h, funcs):
+    """A heredoc nyito sora SHELLT nevez meg (vagy egy fuggvenyt, amelynek a torzse shellt
+    futtat)? Csak ilyen torzsbe megyunk le itt-stringert: egy python-torzs (`python3 - <<PY`)
+    idezojel-szerkezete nem a bashe, es a sajat kapu-kommentjeit idezo szerkeszto-parancsot
+    is megfogta volna (replay, 4 valodi parancs). A JS iker ugyanigy a SHELLS fogyasztora szur."""
+    line = text[text.rfind('\n', 0, h.start) + 1:h.line_end]
+    if _SHELL_OPENER_RE.search(line):
+        return True
+    return any(re.search(r'(?<![\w/-])%s(?![\w-])' % re.escape(f), line) and _any_runs_stdin(funcs[f])
+               for f in funcs)
+
+
 def _closing_pipe_runs(cmd, h, parts, funcs):
     """A heredoc egy LEZARATLAN `$( )` vagy backtick belsejeben all, es a helyettesitest
     zaro sor csovon adja tovabb: `echo $(cat <<EOF ... EOF\n) | bash` a torzset futtatja
@@ -1708,17 +1748,13 @@ def check_bash(cmd, _depth=0, cwd=None):
     # a fogado a stdin-jet futtatja (ugyanaz a kerdes, mint a heredocnal). A dinamikus szo
     # (`bash <<< "$(echo ..)"`) a kifejtetlen szovegevel megy tovabb: amit a shell csak
     # futaskor allit elo, azt a kapu nem latja (elfogadott res, a kartyan kimondva).
-    records, _certain = _heredoc_scan().find_all(cmd)
-    strings = [h for h in records if h.kind == 'herestring']
-    funcs = _function_bodies(cmd) if strings else {}
-    for h in strings:
-        if not h.text.strip() or not _heredoc_runs_body(cmd, h, funcs):
-            continue
+    # A vegrehajtott heredoc-torzsben allo itt-string is ide jon (review 3, _stdin_programs).
+    for prog in _stdin_programs(cmd):
         if _depth >= _MAX_NEST:
             block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
                   'vegigkovetni, ezert nem engedi at.' % _depth)
-        check_bash(h.text, _depth + 1, None if saw_cd else entry_cwd)
-        check_payload(h.text, _depth + 1, None if saw_cd else entry_cwd)
+        check_bash(prog, _depth + 1, None if saw_cd else entry_cwd)
+        check_payload(prog, _depth + 1, None if saw_cd else entry_cwd)
 
     # Az ertelmezo-burkon beluli payload (efccadab). A szegmens-ciklus UTAN fut,
     # mert nem a parancsnevrol szol: a burok parancsneve legitim (python3), a

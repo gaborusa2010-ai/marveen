@@ -223,6 +223,18 @@
    "programs": [
     "rm -rf ~/marveen"
    ]
+  },
+  {
+   "cmd": "bash <&0 -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash <&0 -c $'cl\\x61ude -p x'",
+   "programs": [
+    "claude -p x"
+   ]
   }
  ]
 }

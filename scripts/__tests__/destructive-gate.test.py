@@ -882,6 +882,27 @@ check('echo "a & b"', not blocks('echo "a & ' + RM + '"'))
 check("sed 's/&/and/' f", not blocks("sed 's/&/and/' f"))
 check("setsid nohup x >> log 2>&1 < /dev/null & disown", not blocks("setsid nohup x >> log 2>&1 < /dev/null & disown"))
 
+# --- 14. #777 review 3: itt-string vegrehajtott heredoc-torzsben, backtickben, `<&0` ------
+# A review harom alakja: (1) a vegrehajtott heredoc-torzsben allo `<<<` szot a kulso find_all
+# nem latta; (2) backtickben a zaro backtick nem zarta a szot, a rekord elveszett, es a
+# certain=False-t senki nem olvasta; (3) a JS iker a `<&0`-nal szegmenst vagott (itt a
+# python oldal kontrollja). A lezaratlan szo nyers sor-maradekkent megy tovabb (tultilt).
+print()
+print("#777 review 3, MUST-BLOCK:")
+check("bash <<'A' / bash <<< 'RM' / A", blocks("bash <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("bash <<A / sh <<< 'RM' / A (idezetlen tag)", blocks("bash <<A\nsh <<< '" + RMH + "'\nA"))
+check("bash <<'A' / bash <<'B' / bash <<< 'RM' / B / A (ket szint)", blocks("bash <<'A'\nbash <<'B'\nbash <<< '" + RMH + "'\nB\nA"))
+check("echo `bash <<< 'RM'`", blocks("echo `bash <<< '" + RMH + "'`"))
+check("x=`bash <<< 'RM'`", blocks("x=`bash <<< '" + RMH + "'`"))
+check("echo \"`bash <<< 'RM'`\"", blocks("echo \"`bash <<< '" + RMH + "'`\""))
+check("bash <&0 -c 'RM'", blocks("bash <&0 -c '" + RMH + "'"))
+check("bash <<< 'RM (lezaratlan szo, tultilt)", blocks("bash <<< '" + RMH))
+print("negativ kontroll (adat, nem program):")
+check("cat <<'A' / bash <<< 'RM' / A: a cat nem futtat", not blocks("cat <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `grep rm <<< 'RM'`: a grep nem futtat", not blocks("echo `grep rm <<< '" + RMH + "'`"))
+check("python3 - <<PY / x = \"bash <<< 'RM'\" / PY: idezojelben", not blocks("python3 - <<'PY'\nx = \"bash <<< '" + RMH + "'\"\nPY"))
+check("bash <<'A' / wc -l <<< 'RM' / A: a wc nem futtat", not blocks("bash <<'A'\nwc -l <<< '" + RMH + "'\nA"))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

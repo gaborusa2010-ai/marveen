@@ -102,20 +102,23 @@ def ansi_c(raw):
 _WORD_END = frozenset(" \t\n;&|()<>")
 
 
-def _here_word(cmd, j, heredocs):
+def _here_word(cmd, j, heredocs, in_backtick=False):
     """The word after a `<<<` whose text starts at j (blanks skipped): (text, dynamic,
     end). `text` is the word as bash passes it; `dynamic` says the shell still expands
     something in it ($VAR, $( ), backtick, glob), which the gates cannot read. A
     newline inside $( ) or backticks steps over the heredoc bodies the first pass
     found on that line (`bash <<<"$(cat <<EOF ... EOF )"`), like the main scan does.
-    None when the word is not terminated (an open quote or substitution)."""
+    None when the word is not terminated (an open quote or substitution).
+    `in_backtick`: the `<<<` stands inside a backtick substitution, where the first
+    unescaped backtick ends the substitution and with it the word (#777 review 3:
+    "echo `bash <<< 'x'`" used to read the closing backtick as a nested one)."""
     n = len(cmd)
     while j < n and cmd[j] in " \t":
         j += 1
     out, dyn, i, depth = [], False, j, 0
     while i < n:
         c = cmd[i]
-        if depth == 0 and c in _WORD_END:
+        if depth == 0 and (c in _WORD_END or (in_backtick and c == "`")):
             break
         if c == "\\":
             if i + 1 >= n:
@@ -150,6 +153,8 @@ def _here_word(cmd, j, heredocs):
                         out.append(cmd[i:i + 2])
                     i += 2
                     continue
+                if in_backtick and cmd[i] == "`":
+                    return None          # the substitution ends inside the open quote
                 if cmd.startswith("$(", i) or cmd[i] == "`":
                     k = _sub_end(cmd, i, heredocs)
                     if k is None:
@@ -293,10 +298,20 @@ def find_all(cmd):
     """(records, certain): heredocs and here-strings together, sorted by start."""
     heredocs, certain, offsets = _scan(cmd)
     out = list(heredocs)
-    for i in offsets:
-        w = _here_word(cmd, i + 3, heredocs)
+    for i, in_bt in offsets:
+        w = _here_word(cmd, i + 3, heredocs, in_bt)
         if w is None:
+            # Unterminated word: still a record, with the RAW rest of the line as its
+            # text, so every consumer judges it (over-block at the source, #777 review 3);
+            # certain=False stays the signal that this is not what bash would pass.
             certain = False
+            e = cmd.find("\n", i + 3)
+            e = len(cmd) if e < 0 else e
+            raw = cmd[i + 3:e].strip()
+            raw = raw[2:] if raw.startswith(("$'", '$"')) else raw[1:] if raw[:1] in "'\"" else raw
+            out.append(Heredoc(kind="herestring", start=i, tail_start=e, line_end=e, tag=None,
+                               quoted=False, dash=False, body_start=e, body_end=e, end=e,
+                               closed=False, text=raw, dynamic=True))   # the open quote itself is dropped
             continue
         text, dyn, k = w
         if "\0" in text:
@@ -456,7 +471,7 @@ def _scan(cmd):
             i, word_start, brackets = i + 1, True, 0
             continue
         if cmd.startswith("<<<", i):
-            herestrings.append(i)
+            herestrings.append((i, ctx == "`"))
             i, word_start, brackets = i + 3, True, 0
             continue
         if cmd.startswith("<<", i):

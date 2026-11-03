@@ -446,6 +446,13 @@ describe('#777: a here-string program and a literal `bash -c` program reach the 
     ["bash -c $'cl\\141ude -p x'"],
     ["bash -c 'cl''aude -p x'"],
     ["bash -c 'bash -c \"bash -c \\\"claude -p x\\\"\"'"],
+    // review 3: a here-string inside an executed heredoc body, inside backticks, `<&0` before -c
+    ["bash <<'A'\nsh <<< $'claude -p x'\nA"],
+    ["bash <<A\nbash <<< 'claude -p x'\nA"],
+    ["echo `bash <<< 'claude -p x'`"],
+    ["x=`bash <<< 'claude -p x'`"],
+    ["bash <&0 -c $'cl\\x61ude -p x'"],
+    ["bash <<< 'claude -p x"],
   ])('denies %s', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(false)
   })
@@ -456,6 +463,9 @@ describe('#777: a here-string program and a literal `bash -c` program reach the 
     ["echo \"bash -c 'claude -p x'\""],
     ["bash -c'claude -p x'"],
     ["cat <<< 'claude -p x' > notes.txt"],
+    ["cat <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["echo `grep -c claude <<< 'claude -p x'`"],
+    ["python3 - <<'PY'\nx = \"bash <<< 'claude -p x'\"\nPY"],
   ])('allows the data shape %s', (command) => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(true)
   })

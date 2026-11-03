@@ -56,7 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies, shellCPrograms } from './lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, SHELLS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -309,8 +309,15 @@ function startsNoServer(args) {
 // (`bash -xc 'claude -p x'`, `bash -c $'cl\\141ude -p x'`, `bash -c claude\\ -p\\ x`) of a
 // command, each a command line of its own. The shared twin decodes the word the way
 // bash does, so an encoded `claude` is visible here even when the raw text has none.
+// A heredoc body a SHELL runs (`bash <<'A' ... A`) is a command line too (#777 review 3):
+// decide() recurses into it, so a here-string or `-c` program inside the body is found.
 function nestedPrograms(command) {
   const out = []
+  if (command.includes('<<')) {
+    for (const { consumer, body } of programHeredocs(command)) {
+      if (SHELLS.has(consumer) && body.trim()) out.push(body)
+    }
+  }
   if (command.includes('<<<')) {
     const { records } = findAll(command)
     const funcs = functionBodies(command)

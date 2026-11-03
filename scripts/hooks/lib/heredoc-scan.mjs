@@ -174,8 +174,10 @@ export function subEnd(cmd, i, heredocs) {
 /** The word after a `<<<` whose text starts at j (blanks skipped): [text, dynamic, end],
  *  the text as bash passes it; `dynamic` says the shell still expands something in it
  *  ($VAR, $( ), backtick, glob). null when the word is not terminated. Twin of
- *  heredoc_scan._here_word; the same decoder reads a `-c` program word (#777). */
-export function hereWord(cmd, j, heredocs) {
+ *  heredoc_scan._here_word; the same decoder reads a `-c` program word (#777).
+ *  `inBacktick`: the `<<<` stands inside a backtick substitution, where the first
+ *  unescaped backtick ends the substitution and with it the word (#777 review 3). */
+export function hereWord(cmd, j, heredocs, inBacktick = false) {
   const n = cmd.length;
   while (j < n && (cmd[j] === ' ' || cmd[j] === '\t')) j += 1;
   let out = '';
@@ -183,7 +185,7 @@ export function hereWord(cmd, j, heredocs) {
   let i = j;
   while (i < n) {
     const c = cmd[i];
-    if (META.has(c)) break;
+    if (META.has(c) || (inBacktick && c === '`')) break;
     if (c === '\\') {
       if (i + 1 >= n) return null;
       if (cmd[i + 1] !== '\n') out += cmd[i + 1];
@@ -214,6 +216,7 @@ export function hereWord(cmd, j, heredocs) {
           i += 2;
           continue;
         }
+        if (inBacktick && cmd[i] === '`') return null;   // the substitution ends inside the open quote
         if (cmd.startsWith('$(', i) || cmd[i] === '`') {
           const k = subEnd(cmd, i, heredocs);
           if (k === null) return null;
@@ -259,9 +262,21 @@ export function findAll(value) {
   const cmd = String(value ?? '');
   let { heredocs, certain, herestrings } = scan(cmd);
   const records = [...heredocs];
-  for (const i of herestrings) {
-    const w = hereWord(cmd, i + 3, heredocs);
-    if (w === null) { certain = false; continue; }
+  for (const [i, inBt] of herestrings) {
+    const w = hereWord(cmd, i + 3, heredocs, inBt);
+    if (w === null) {
+      // Unterminated word: still a record, with the RAW rest of the line as its text, so
+      // every consumer judges it (over-block at the source, #777 review 3); certain=false
+      // stays the signal that this is not what bash would pass.
+      certain = false;
+      let e = cmd.indexOf('\n', i + 3);
+      if (e < 0) e = cmd.length;
+      let raw = cmd.slice(i + 3, e).trim();
+      raw = raw.startsWith("$'") || raw.startsWith('$"') ? raw.slice(2) : "'\"".includes(raw[0] ?? '-') ? raw.slice(1) : raw;
+      records.push({ kind: 'herestring', start: i, tailStart: e, lineEnd: e, tag: null, quoted: false,
+        dash: false, bodyStart: e, bodyEnd: e, end: e, closed: false, text: raw, dynamic: true });   // the open quote itself is dropped
+      continue;
+    }
     let [text, dynamic, k] = w;
     const nul = text.indexOf('\0');
     if (nul >= 0) text = text.slice(0, nul);   // bash cuts the word at a NUL (measured)
@@ -459,7 +474,7 @@ function scan(value) {
       continue;
     }
     if (cmd.startsWith('<<<', i)) {
-      herestrings.push(i);
+      herestrings.push([i, ctx === '`']);
       i += 3;
       wordStart = true;
       brackets = 0;

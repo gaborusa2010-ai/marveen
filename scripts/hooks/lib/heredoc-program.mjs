@@ -59,7 +59,7 @@ export const STDIN_SCRIPT_FLAGS = {
   python: ['-c', '-m'], python3: ['-c', '-m'],
   node: ['-e', '-p', '--eval', '--print'], perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'],
 }
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash'])
+export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash'])
 
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
   'case', 'esac', 'in', 'select', 'function', 'coproc', '!', '{', '}', '(', ')', '[[', ']]'])
@@ -703,7 +703,7 @@ function simpleSegments(text) {
     if (c === '"') { q = '"'; i++; continue }
     if (text.startsWith("$'", i)) { q = "$'"; i += 2; continue }
     if (text.startsWith('||', i) || text.startsWith('&&', i) || text.startsWith('$(', i)) { cut(i, 2); continue }
-    if (c === '&' && text[i + 1] !== '>' && text[i - 1] !== '>') { cut(i, 1); continue }
+    if (c === '&' && text[i + 1] !== '>' && text[i - 1] !== '>' && text[i - 1] !== '<') { cut(i, 1); continue }   // `<&0` is a dup, not a separator (#777 review 3)
     if (c === '|' && text[i - 1] !== '>') { cut(i, 1); continue }
     if (';\n(){}`'.includes(c)) { cut(i, 1); continue }
     i++

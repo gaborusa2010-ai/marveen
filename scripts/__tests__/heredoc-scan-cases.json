@@ -1444,7 +1444,15 @@
   "cmd": "&&$(<<<'|]1<<-",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 4,
+    "tailStart": 14,
+    "lineEnd": 14,
+    "text": "|]1<<-",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -1866,7 +1874,15 @@
   "cmd": "<<<$['E)\n}-<<<",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 0,
+    "tailStart": 8,
+    "lineEnd": 8,
+    "text": "$['E)",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -1915,7 +1931,15 @@
   "cmd": "1<<<\"$-$(",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 1,
+    "tailStart": 9,
+    "lineEnd": 9,
+    "text": "$-$(",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -2315,7 +2339,15 @@
   "cmd": "<<<$'$EOFcat @(",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 0,
+    "tailStart": 15,
+    "lineEnd": 15,
+    "text": "$EOFcat @(",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -2881,7 +2913,15 @@
   "cmd": "E1|<<<\"E]))x",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 3,
+    "tailStart": 12,
+    "lineEnd": 12,
+    "text": "E]))x",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -2909,7 +2949,15 @@
   "cmd": "`-}\\ <<<EOF']`EOFa=a=\n\tEOF\n",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 5,
+    "tailStart": 21,
+    "lineEnd": 21,
+    "text": "EOF']`EOFa=a=",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -3870,7 +3918,15 @@
   "cmd": "bash <<< 'unterminated",
   "heredocs": [],
   "certain": false,
-  "herestrings": [],
+  "herestrings": [
+   {
+    "start": 5,
+    "tailStart": 22,
+    "lineEnd": 22,
+    "text": "unterminated",
+    "dynamic": true
+   }
+  ],
   "certainAll": false
  },
  {
@@ -4099,6 +4155,116 @@
     "dynamic": false
    }
   ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `bash <<< 'x'`",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 11,
+    "tailStart": 18,
+    "lineEnd": 19,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "x=`bash <<< 'x'`",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 8,
+    "tailStart": 15,
+    "lineEnd": 16,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `bash <<< x`; ls",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 11,
+    "tailStart": 16,
+    "lineEnd": 21,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo \"`bash <<< 'x'`\"",
+  "heredocs": [],
+  "certain": true,
+  "herestrings": [
+   {
+    "start": 12,
+    "tailStart": 19,
+    "lineEnd": 21,
+    "text": "x",
+    "dynamic": false
+   }
+  ],
+  "certainAll": true
+ },
+ {
+  "cmd": "echo `bash <<< \"x`\"",
+  "heredocs": [],
+  "certain": false,
+  "herestrings": [
+   {
+    "start": 11,
+    "tailStart": 19,
+    "lineEnd": 19,
+    "text": "x`\"",
+    "dynamic": true
+   }
+  ],
+  "certainAll": false
+ },
+ {
+  "cmd": "bash <<< 'x",
+  "heredocs": [],
+  "certain": false,
+  "herestrings": [
+   {
+    "start": 5,
+    "tailStart": 11,
+    "lineEnd": 11,
+    "text": "x",
+    "dynamic": true
+   }
+  ],
+  "certainAll": false
+ },
+ {
+  "cmd": "bash <<'A'\nbash <<< 'x'\nA",
+  "heredocs": [
+   {
+    "start": 5,
+    "tailStart": 10,
+    "lineEnd": 10,
+    "tag": "A",
+    "quoted": true,
+    "dash": false,
+    "bodyStart": 11,
+    "bodyEnd": 24,
+    "end": 25,
+    "closed": true
+   }
+  ],
+  "certain": true,
+  "herestrings": [],
   "certainAll": true
  }
 ]
