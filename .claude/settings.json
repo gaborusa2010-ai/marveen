@@ -288,6 +288,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/dontes-lookup-gate.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/subagent-bash-sandbox.py\"",
+            "timeout": 5
           }
         ]
       },
