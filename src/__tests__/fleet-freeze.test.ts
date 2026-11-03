@@ -299,7 +299,7 @@ describe('the loops', () => {
   it('a gated first tick armed while frozen never runs, even though the freeze outlived a restart', async () => {
     vi.useFakeTimers()
     try {
-      await freeze(TOKEN)
+      await freeze(MAIN)
       const body = vi.fn()
       setTimeout(whileNotFrozen('fake-first-tick', body), 30_000)
       vi.advanceTimersByTime(31_000)

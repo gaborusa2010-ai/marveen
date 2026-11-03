@@ -1710,9 +1710,13 @@ export function startContextGuardRunner(): NodeJS.Timeout {
       tickRunning = false
     }
   }
-  setTimeout(whileNotFrozen('context-guard', sweep), INITIAL_DELAY_MS)
   // The hot tick acts on agents exactly like the full sweep (it can restart
   // one), so it carries the same fleet-freeze gate, under its own label.
-  setInterval(whileNotFrozen('context-guard-hot', hotSweep), HOT_INTERVAL_MS)
+  // CONTEXT_GUARD_HOT_OFF=1 leaves only the upstream 5-minute cadence: the
+  // upstream tests that pin their timeline to it (heavy-job hold) set it.
+  if (process.env.CONTEXT_GUARD_HOT_OFF !== '1') {
+    setInterval(whileNotFrozen('context-guard-hot', hotSweep), HOT_INTERVAL_MS)
+  }
+  setTimeout(whileNotFrozen('context-guard', sweep), INITIAL_DELAY_MS)
   return setInterval(whileNotFrozen('context-guard', sweep), INTERVAL_MS)
 }

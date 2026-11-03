@@ -178,6 +178,8 @@ const stopReports = () => h.createAgentMessage.mock.calls.filter((c) => String(c
 const resumeTexts = () => h.sendSystemDirective.mock.calls.map((c) => String(c[2])).filter((t) => t.includes('Friss kontextussal indultál'))
 
 beforeEach(() => {
+  // LOCAL: this timeline is the upstream 5-minute sweep; our 60 s hot tick (#416/#641) is off here.
+  process.env.CONTEXT_GUARD_HOT_OFF = '1'
   rmSync(STORE, { recursive: true, force: true })
   mkdirSync(STORE, { recursive: true })
   vi.useFakeTimers()
@@ -208,6 +210,7 @@ afterEach(() => {
 })
 
 afterAll(() => {
+  delete process.env.CONTEXT_GUARD_HOT_OFF
   rmSync(ROOT, { recursive: true, force: true })
 })
 
@@ -398,10 +401,12 @@ describe('heavy-job gate restart hold', () => {
     await at(900)                                   // bound -> restart 1, job survives; cooldown follows
     expect(restarts()).toBe(1)
     expect(alerts()).toHaveLength(1)
-    // resume at 1200, cooldown to 2100: the next restart need opens a new episode at 2400
-    await at(2400 + 9 * 60)
+    // resume at 1200, cooldown to 2100. LOCAL: our runner measures pct as soon as
+    // the cooldown elapses (#416/#641), so the new episode opens at 2100, not
+    // at upstream's next sweep (2400).
+    await at(2100 + 9 * 60)
     expect(restarts()).toBe(1)                      // held inside the new episode
-    await at(2400 + 10 * 60)
+    await at(2100 + 10 * 60)
     expect(restarts()).toBe(2)                      // released at its cap
     expect(alerts()).toHaveLength(2)
   })
@@ -464,11 +469,12 @@ describe('stale hold records (no restart decision follows)', () => {
     await boot()
     await at(900)                                   // 270 .. 900 held, released at the cap: restart 1 (kills it)
     expect(restarts()).toBe(1)
-    // the next need comes after the cooldown; a NEW job runs then
+    // the next need comes after the cooldown; a NEW job runs then.
+    // LOCAL: measured when the cooldown elapses (2100), not at 2400 (#416/#641).
     job(5002, 'fresh')
-    await at(2400 + 9 * 60)
+    await at(2100 + 9 * 60)
     expect(restarts()).toBe(1)                      // held: a fresh episode, not the old one's leftovers
-    await at(2400 + 10 * 60)
+    await at(2100 + 10 * 60)
     expect(restarts()).toBe(2)
   })
 
