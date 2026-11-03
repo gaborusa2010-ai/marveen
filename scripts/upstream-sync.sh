@@ -213,13 +213,43 @@ fi
 # an IGNORED one it overwrites with no message at all (measured 2026-11-02: a
 # locally excluded file silently became upstream's copy). Both stop here, with
 # the names, before any merge runs.
-ADDED="$(git diff --name-only --diff-filter=A --no-renames HEAD "$MT_TREE" | sort)"
-CLOBBER=""
-if [ -n "$ADDED" ]; then
-  CLOBBER="$({ comm -12 <(printf '%s\n' "$ADDED") <(git ls-files --others --exclude-standard | sort)
-               comm -12 <(printf '%s\n' "$ADDED") <(git ls-files --others --ignored --exclude-standard | sort) \
-                 | sed 's/$/ (ignored)/'; } | sed '/^$/d')"
-fi
+# A path collides not only when it is EQUAL: the review of #746 measured an
+# ignored file `d` silently becoming a directory when upstream added d/x, and an
+# ignored d/y vanishing when upstream added a file named d. So every local
+# untracked/ignored path is matched against the added path, its parent
+# directories, and its descendants. NUL-separated on both sides: a name with a
+# space or a newline must come out whole.
+CLOBBER="$(/usr/bin/python3 - "$MT_TREE" <<'PY'
+import bisect, subprocess, sys
+
+def paths(*args):
+    out = subprocess.run(['git', *args], check=True, capture_output=True).stdout
+    return [p for p in out.decode('utf-8', 'surrogateescape').split('\0') if p]
+
+added = paths('diff', '--name-only', '-z', '--diff-filter=A', '--no-renames', 'HEAD', sys.argv[1])
+if not added:
+    sys.exit(0)
+hits = []
+for label, local in (('', paths('ls-files', '-z', '--others', '--exclude-standard')),
+                     (' (ignored)', paths('ls-files', '-z', '--others', '--ignored', '--exclude-standard'))):
+    local_set = set(local)
+    local_sorted = sorted(local)
+    found = set()
+    for a in added:
+        parts = a.split('/')
+        for i in range(1, len(parts) + 1):
+            prefix = '/'.join(parts[:i])
+            if prefix in local_set:
+                found.add(prefix)
+        below = a + '/'
+        k = bisect.bisect_left(local_sorted, below)
+        while k < len(local_sorted) and local_sorted[k].startswith(below):
+            found.add(local_sorted[k])
+            k += 1
+    hits.extend(p + label for p in sorted(found))
+sys.stdout.buffer.write(''.join(h + '\n' for h in hits).encode('utf-8', 'surrogateescape'))
+PY
+)"
 if [ -n "$CLOBBER" ]; then
   DETAIL="$(echo "$CLOBBER" | tr '\n' ' ')"
   blocked_report "kovetetlen helyi fajlt irna felul: $DETAIL" "by untracked files: $DETAIL" "$(printf '%s\n' \

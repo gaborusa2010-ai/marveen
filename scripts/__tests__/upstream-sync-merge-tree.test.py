@@ -264,6 +264,76 @@ with tempfile.TemporaryDirectory() as td:
           and open(os.path.join(work, 'n')).read() == 'upstream\n'
           and os.path.exists(os.path.join(work, 'd', 'x')), (st, p.stderr))
 
+# --- 11. ignored FILE d here, upstream adds d/x (#746 review) ---------------
+# Equal-name matching passed this: the real merge turned the ignored file into
+# a directory without a word. A parent of an added path is a collision too.
+def add_dx(seed):
+    os.makedirs(os.path.join(seed, 'd'))
+    write(os.path.join(seed, 'd', 'x'), 'upstream\n')
+    git(seed, 'add', 'd/x')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_dx)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\nd\n')
+    dpath = os.path.join(work, 'd')
+    write(dpath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('ignored parent file: state blocked naming d as ignored',
+          st['result'] == 'blocked' and 'd (ignored)' in st['detail'], (st, p.stderr))
+    check('ignored parent file: d still a file with my bytes, no merge',
+          os.path.isfile(dpath) and open(dpath).read() == 'mine\n'
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, os.path.isfile(dpath))
+    check('ignored parent file: one notification', notes(work) == 1, notes(work))
+
+# --- 12. ignored d/y here, upstream adds a FILE d (#746 review) -------------
+def add_d(seed):
+    write(os.path.join(seed, 'd'), 'upstream\n')
+    git(seed, 'add', 'd')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_d)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\nd/\n')
+    os.makedirs(os.path.join(work, 'd'))
+    ypath = os.path.join(work, 'd', 'y')
+    write(ypath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('ignored child: state blocked naming d/y as ignored',
+          st['result'] == 'blocked' and 'd/y (ignored)' in st['detail'], (st, p.stderr))
+    check('ignored child: d/y kept, no merge',
+          os.path.isfile(ypath) and open(ypath).read() == 'mine\n'
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, os.path.isfile(ypath))
+    check('ignored child: one notification', notes(work) == 1, notes(work))
+
+# --- 13. UNTRACKED file d here, upstream adds d/x (#746 review) -------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_dx)
+    dpath = os.path.join(work, 'd')
+    write(dpath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('untracked parent file: state blocked naming d, not as ignored',
+          st['result'] == 'blocked' and 'd' in st['detail'].split() and '(ignored)' not in st['detail'], (st, p.stderr))
+    check('untracked parent file: d kept, no merge run',
+          os.path.isfile(dpath) and open(dpath).read() == 'mine\n'
+          and 'reset: moving to HEAD' not in git(work, 'reflog')
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2)
+    check('untracked parent file: one notification', notes(work) == 1, notes(work))
+
+# --- 14. a name with a space comes out whole ---------------------------------
+def add_spaced(seed):
+    write(os.path.join(seed, 'my file'), 'upstream\n')
+    git(seed, 'add', 'my file')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_spaced)
+    write(os.path.join(work, 'my file'), 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('spaced name: blocked and named whole',
+          st['result'] == 'blocked' and 'my file' in st['detail'], (st, p.stderr))
+
 print()
 if FAILS:
     print('%d FAILED: %s' % (len(FAILS), FAILS), file=sys.stderr)
