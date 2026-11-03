@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
 import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, verbIndex } from './lib/shell-command.mjs'
-import { programHeredocs, dataBodySubstitutions } from './lib/heredoc-program.mjs'
+import { programFeeds, dataBodySubstitutions, shellCPrograms } from './lib/heredoc-program.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
@@ -103,9 +103,9 @@ const URL_ONLY_FETCHERS = new Set(['ffmpeg', 'ffplay', 'ffprobe'])
 // did exactly that.
 const NET_URL_RE = /^(https?|ftps?|rtmps?|rtsp|srt|tcp|udp|ws|wss):\/\/[^\s'"`]+$/i
 
-const INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'sh', 'bash', 'zsh'])
+const INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash'])
 // The subset whose inline program IS a shell command line.
-const SHELLS = new Set(['sh', 'bash', 'zsh'])
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash'])
 // A heredoc body run by one of these is read as CODE (CODE_FETCHER_RE); any other
 // consumer (a shell, eval, source, a loop, a function, a dynamic name) runs it as a
 // shell command line, so it gets the shell reading below.
@@ -232,7 +232,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
   // them (Marveen's #729 review, comment 3284). A body run by a shell is judged
   // as a command line of its own, exactly like `sh -c "..."`; one run by
   // python/node/... by CODE_FETCHER_RE on its text, as before.
-  for (const { body, consumer } of programHeredocs(cmd)) {
+  // #777: the here-string word a shell runs (`bash <<< 'curl ..'`) is a feed like a body.
+  for (const { body, consumer } of programFeeds(cmd)) {
     if (!body) continue
     if (!CODE_INTERPRETERS.has(consumer)) {
       if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
@@ -252,6 +253,15 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
     if (!sub.trim()) continue
     if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
     const inner = bashEgressDecision(sub, runtimeList, depth + 1)
+    if (inner.blocked) return inner
+  }
+  // #777: every `-c` program, read by the shared twin the way bash reads it (`-xc`,
+  // `-c --`, `-o pipefail -c`, `$'..'`, backslash escapes, a wrapper in front). The
+  // per-segment INLINE_CODE_FLAGS reading below sees only the plain `-c "..."` shape.
+  for (const prog of shellCPrograms(cmd)) {
+    if (!prog.trim()) continue
+    if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
+    const inner = bashEgressDecision(prog, runtimeList, depth + 1)
     if (inner.blocked) return inner
   }
   for (const rawSeg of splitSegments(tokenizeDetailed(cmd))) {

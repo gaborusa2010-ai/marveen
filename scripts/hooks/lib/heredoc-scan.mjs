@@ -97,9 +97,186 @@ function bodies(cmd, nl, pending, out) {
   return end;
 }
 
+/** The text of a $'...' word as bash expands it (ANSI-C escapes); an escape bash does
+ *  not know keeps its backslash. Twin of heredoc_scan.ansi_c (#777). */
+const ANSI_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v',
+  '\\': '\\', "'": "'", '"': '"', '?': '?' };
+
+export function ansiC(raw) {
+  let out = '';
+  let i = 0;
+  const n = raw.length;
+  while (i < n) {
+    const c = raw[i];
+    if (c !== '\\' || i + 1 >= n) { out += c; i += 1; continue; }
+    const e = raw[i + 1];
+    if (Object.hasOwn(ANSI_SIMPLE, e)) { out += ANSI_SIMPLE[e]; i += 2; continue; }
+    if ('01234567'.includes(e)) {
+      const m = /^[0-7]{1,3}/.exec(raw.slice(i + 1));
+      out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
+      i += 1 + m[0].length;
+      continue;
+    }
+    if ('xuU'.includes(e)) {
+      const width = { x: 2, u: 4, U: 8 }[e];
+      const m = new RegExp('^[0-9A-Fa-f]{1,' + width + '}').exec(raw.slice(i + 2));
+      if (!m) { out += '\\' + e; i += 2; continue; }
+      const cp = parseInt(m[0], 16);
+      out += cp <= 0x10ffff ? String.fromCodePoint(cp) : '\\' + e + m[0];
+      i += 2 + m[0].length;
+      continue;
+    }
+    if (e === 'c' && i + 2 < n) {
+      let x = raw[i + 2];
+      if (x === '\\' && i + 3 < n && raw[i + 3] === '\\') i += 1;   // \c\\ : the backslash is the control argument
+      const u = x.toUpperCase().charCodeAt(0);
+      out += u >= 63 && u <= 95 ? String.fromCharCode(u ^ 64) : '\\c' + x;
+      i += 3;
+      continue;
+    }
+    out += '\\' + e;
+    i += 2;
+  }
+  return out;
+}
+
+/** The index after the `$( )` or backtick substitution starting at i, read with its own
+ *  quotes; null when it is not closed. A newline steps over the heredoc bodies on that line. */
+export function subEnd(cmd, i, heredocs) {
+  const n = cmd.length;
+  if (cmd[i] === '`') {
+    const e = cmd.indexOf('`', i + 1);
+    return e < 0 ? null : e + 1;
+  }
+  let depth = 1;
+  let k = i + 2;
+  while (k < n && depth) {
+    const c = cmd[k];
+    if (c === '\\') k += 2;
+    else if (c === "'") {
+      const e = cmd.indexOf("'", k + 1);
+      if (e < 0) return null;
+      k = e + 1;
+    } else if (c === '"') {
+      k += 1;
+      while (k < n && cmd[k] !== '"') k += cmd[k] === '\\' ? 2 : 1;
+      k += 1;
+    } else if (c === '\n') {
+      const ends = heredocs.filter((h) => (h.kind ?? 'heredoc') === 'heredoc' && h.lineEnd === k).map((h) => h.end);
+      k = ends.length ? Math.max(...ends) + 1 : k + 1;
+    } else if (c === '(') { depth += 1; k += 1; }
+    else if (c === ')') { depth -= 1; k += 1; }
+    else k += 1;
+  }
+  return depth === 0 ? k : null;
+}
+
+/** The word after a `<<<` whose text starts at j (blanks skipped): [text, dynamic, end],
+ *  the text as bash passes it; `dynamic` says the shell still expands something in it
+ *  ($VAR, $( ), backtick, glob). null when the word is not terminated. Twin of
+ *  heredoc_scan._here_word; the same decoder reads a `-c` program word (#777). */
+export function hereWord(cmd, j, heredocs) {
+  const n = cmd.length;
+  while (j < n && (cmd[j] === ' ' || cmd[j] === '\t')) j += 1;
+  let out = '';
+  let dyn = false;
+  let i = j;
+  while (i < n) {
+    const c = cmd[i];
+    if (META.has(c)) break;
+    if (c === '\\') {
+      if (i + 1 >= n) return null;
+      if (cmd[i + 1] !== '\n') out += cmd[i + 1];
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      const e = cmd.indexOf("'", i + 1);
+      if (e < 0) return null;
+      out += cmd.slice(i + 1, e);
+      i = e + 1;
+      continue;
+    }
+    if (cmd.startsWith("$'", i)) {
+      let e = i + 2;
+      while (e < n && cmd[e] !== "'") e += cmd[e] === '\\' ? 2 : 1;
+      if (e >= n) return null;
+      out += ansiC(cmd.slice(i + 2, e));
+      i = e + 1;
+      continue;
+    }
+    if (c === '"' || cmd.startsWith('$"', i)) {
+      i += c === '$' ? 2 : 1;
+      while (i < n && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < n) {
+          if ('$`"\\'.includes(cmd[i + 1])) out += cmd[i + 1];
+          else if (cmd[i + 1] !== '\n') out += cmd.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        if (cmd.startsWith('$(', i) || cmd[i] === '`') {
+          const k = subEnd(cmd, i, heredocs);
+          if (k === null) return null;
+          out += cmd.slice(i, k);
+          dyn = true;
+          i = k;
+          continue;
+        }
+        if (cmd[i] === '$') dyn = true;
+        out += cmd[i];
+        i += 1;
+      }
+      if (i >= n) return null;
+      i += 1;
+      continue;
+    }
+    if (cmd.startsWith('$(', i) || c === '`') {
+      const k = subEnd(cmd, i, heredocs);
+      if (k === null) return null;
+      out += cmd.slice(i, k);
+      dyn = true;
+      i = k;
+      continue;
+    }
+    if ('$*?[{'.includes(c)) dyn = true;
+    else if (c === '~' && !out) dyn = true;
+    out += c;
+    i += 1;
+  }
+  return [out, dyn, i];
+}
+
+/** { heredocs, certain }: the heredocs only (the gates' data/code split). */
 export function find(value) {
+  const { heredocs, certain } = scan(value);
+  return { heredocs, certain };
+}
+
+/** { records, certain }: heredocs and here-strings together, sorted by start. A here-string
+ *  record has kind 'herestring', start = the `<<<`, tailStart = after the word, text = the
+ *  DECODED word, dynamic; its body range is empty. Twin of heredoc_scan.find_all (#777). */
+export function findAll(value) {
+  const cmd = String(value ?? '');
+  let { heredocs, certain, herestrings } = scan(cmd);
+  const records = [...heredocs];
+  for (const i of herestrings) {
+    const w = hereWord(cmd, i + 3, heredocs);
+    if (w === null) { certain = false; continue; }
+    let [text, dynamic, k] = w;
+    const nul = text.indexOf('\0');
+    if (nul >= 0) text = text.slice(0, nul);   // bash cuts the word at a NUL (measured)
+    const e = cmd.indexOf('\n', k);
+    records.push({ kind: 'herestring', start: i, tailStart: k, lineEnd: e < 0 ? cmd.length : e, tag: null,
+      quoted: false, dash: false, bodyStart: k, bodyEnd: k, end: k, closed: true, text, dynamic });
+  }
+  records.sort((a, b) => a.start - b.start);
+  return { records, certain };
+}
+
+function scan(value) {
   const cmd = String(value ?? '');
   const out = [];
+  const herestrings = [];
   let pending = [];
   const stack = [];
   const depth = [];
@@ -282,6 +459,7 @@ export function find(value) {
       continue;
     }
     if (cmd.startsWith('<<<', i)) {
+      herestrings.push(i);
       i += 3;
       wordStart = true;
       brackets = 0;
@@ -313,5 +491,5 @@ export function find(value) {
   if (stack.length) certain = false;
   if (pending.length) bodies(cmd, n, pending, out);
   if (out.some((heredoc) => !heredoc.closed)) certain = false;
-  return { heredocs: out, certain };
+  return { heredocs: out, certain, herestrings };
 }

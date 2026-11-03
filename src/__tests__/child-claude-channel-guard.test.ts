@@ -427,3 +427,36 @@ describe('child-claude guard: where it lands', () => {
     expect(fn.slice(0, 200)).toMatch(/return name !== MAIN_AGENT_ID/)
   })
 })
+
+describe('#777: a here-string program and a literal `bash -c` program reach the child claude', () => {
+  // bash runs every shape below (oracle: agents/cody/work/777/oracle-out.txt); on the base
+  // (f2fba696) each one passed the guard.
+  it.each([
+    ["bash <<< 'claude -p x'"],
+    ["bash <<< 'claude -p x' #comment"],
+    ["bash 3<<< 'claude -p x' <&3"],
+    ["bash -- /dev/stdin <<< 'claude -p x'"],
+    ["sh -c 'cat | sh' <<< 'claude -p x'"],
+    ["bash -c 'bash' <<EOF\nclaude -p x\nEOF"],
+    ["bash -c 'bash -c \"source /dev/stdin\"' <<< 'claude -p x'"],
+    ["bash -c 'bash -c \"$(cat)\"' <<< 'claude -p x'"],
+    ["bash -xc 'claude -p x'"],
+    ["bash -o pipefail -c 'claude -p x'"],
+    ["nice bash -c 'claude -p x'"],
+    ["bash -c $'cl\\141ude -p x'"],
+    ["bash -c 'cl''aude -p x'"],
+    ["bash -c 'bash -c \"bash -c \\\"claude -p x\\\"\"'"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["wc -l <<< 'claude -p x'"],
+    ["grep -c claude <<< 'claude -p x'"],
+    ["echo \"bash -c 'claude -p x'\""],
+    ["bash -c'claude -p x'"],
+    ["cat <<< 'claude -p x' > notes.txt"],
+  ])('allows the data shape %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})

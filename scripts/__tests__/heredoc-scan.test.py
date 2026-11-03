@@ -28,9 +28,18 @@ hs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hs)
 
 
+HS_FIELDS = [("start", "start"), ("tail_start", "tailStart"), ("line_end", "lineEnd"), ("text", "text"),
+             ("dynamic", "dynamic")]
+
+
 def scan(cmd):
     heredocs, certain = hs.find(cmd)
-    return {"heredocs": [{js: getattr(h, py) for py, js in FIELDS} for h in heredocs], "certain": certain}
+    # #777: the here-strings from find_all, separately; its `certain` is certainAll and may be
+    # false where find()'s is true (an unreadable here-string word).
+    records, certain_all = hs.find_all(cmd)
+    return {"heredocs": [{js: getattr(h, py) for py, js in FIELDS} for h in heredocs], "certain": certain,
+            "herestrings": [{js: getattr(h, py) for py, js in HS_FIELDS} for h in records if h.kind == "herestring"],
+            "certainAll": certain_all}
 
 
 def main():
@@ -46,7 +55,8 @@ def main():
     # offsets are code points here and UTF-16 units in JS: keep the file to the BMP
     assert all(ord(ch) <= 0xFFFF for c in cases for ch in c["cmd"]), "astral-plane character in a case"
     assert len(cases) >= 300, "case file shrank"
-    bad = [c["cmd"] for c in cases if scan(c["cmd"]) != {"heredocs": c["heredocs"], "certain": c["certain"]}]
+    bad = [c["cmd"] for c in cases if scan(c["cmd"]) != {"heredocs": c["heredocs"], "certain": c["certain"],
+                                                         "herestrings": c["herestrings"], "certainAll": c["certainAll"]}]
     for cmd in bad[:5]:
         print("MISMATCH", repr(cmd))
     print("cases", len(cases), "mismatches", len(bad))

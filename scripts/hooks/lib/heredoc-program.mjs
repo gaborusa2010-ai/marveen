@@ -48,18 +48,18 @@
 // ('' when none). Callers that only need yes/no test truthiness; the egress gate
 // uses the word to choose between the shell reading and the code reading.
 
-import { find as findHeredocs } from './heredoc-scan.mjs'
+import { find as findHeredocs, findAll, hereWord } from './heredoc-scan.mjs'
 
 /** Interpreters that run their stdin as a program when no script is named. */
-export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'node', 'perl', 'ruby', 'php'])
+export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'node', 'perl', 'ruby', 'php'])
 /** Flags after which the PROGRAM follows (stdin is data), per interpreter: bash -e is
  *  errexit, not a script; python3 -m runs a module whose input the body is. */
 export const STDIN_SCRIPT_FLAGS = {
-  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'], dash: ['-c'], ksh: ['-c'],
+  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'], dash: ['-c'], ksh: ['-c'], rbash: ['-c', '--command'],
   python: ['-c', '-m'], python3: ['-c', '-m'],
   node: ['-e', '-p', '--eval', '--print'], perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'],
 }
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash'])
 
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
   'case', 'esac', 'in', 'select', 'function', 'coproc', '!', '{', '}', '(', ')', '[[', ']]'])
@@ -148,7 +148,52 @@ const baseName = (w) => w.split('/').pop()
 
 /** [word without quotes and backslashes, dynamic?]: `$P`, `{a,b}`, `pytho?3` expand. */
 function word(tok) {
-  return [tok.replace(/["'\\]/g, ''), /[$*?[{`]/.test(tok)]
+  // Shell-rule unquoting (#777): a quote or backslash inside single quotes stays, so the
+  // program of `bash -c 'bash -c "source /dev/stdin"'` keeps its inner quotes (the old
+  // strip-everything form gave `bash -c source /dev/stdin`, and /dev/stdin read as $0).
+  let out = ''
+  let dyn = false                  // a `$` in single quotes or behind a backslash does not expand
+  for (let i = 0; i < tok.length;) {
+    const c = tok[i]
+    if (c === "'") {
+      let j = tok.indexOf("'", i + 1)
+      if (j < 0) j = tok.length
+      out += tok.slice(i + 1, j)
+      i = j + 1
+    } else if (c === '"') {
+      i++
+      while (i < tok.length && tok[i] !== '"') {
+        if (tok[i] === '\\' && i + 1 < tok.length && '"\\$`\n'.includes(tok[i + 1])) { out += tok[i + 1]; i += 2 }
+        else { if (tok[i] === '$' || tok[i] === '`') dyn = true; out += tok[i]; i++ }
+      }
+      i++
+    } else if (c === '\\' && i + 1 < tok.length) {
+      out += tok[i + 1]
+      i += 2
+    } else {
+      if ('$*?[{`'.includes(c)) dyn = true
+      out += c
+      i++
+    }
+  }
+  return [out, dyn]
+}
+
+/** The text without its trailing `# ...` comment (#777: after `bash <<< X #c` and
+ *  `bash <<EOF #c` the `#c` read as a script file). Quote-aware; `#` opens a comment
+ *  only at the start of a word (`x#y` is one word). */
+function stripComment(text) {
+  let q = null
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (q) {
+      if (c === '\\' && q === '"') i++
+      else if (c === q) q = null
+    } else if (c === '\\') i++
+    else if (c === "'" || c === '"') q = c
+    else if (c === '#' && (i === 0 || text[i - 1] === ' ' || text[i - 1] === '\t')) return text.slice(0, i)
+  }
+  return text
 }
 
 /** The index of the command word from `k` on: assignments, keywords, transparent
@@ -223,7 +268,20 @@ function runsWords(words, k, depth, loose) {
   if (k >= words.length || depth > MAX_NEST) return ''
   const [w, dyn] = words[k]
   const base = baseName(w)
-  if (dyn || base === 'source' || base === '.' || base === 'eval') return w
+  if (dyn) return w
+  if (base === 'eval') {
+    // `eval <<< X` runs nothing (measured, #777): eval reads its OPERANDS. A dynamic
+    // operand (`eval "$(cat)"`, `eval "$l"`) may be the stdin; literal operands are a
+    // command line of their own (`eval 'bash'` reads stdin, `eval 'echo hi'` does not).
+    const rest = words.slice(k + 1)
+    if (rest.some(([, d]) => d)) return w
+    return rest.length && anyRunsStdin(rest.map(([x]) => x).join(' '), depth + 1) ? w : ''
+  }
+  if (base === 'source' || base === '.') {
+    // `source /dev/stdin <<< X` runs it, `source file <<< X` runs the FILE; a dynamic
+    // operand or a process substitution (`source <(cat)`) may be the stdin.
+    return words.slice(k + 1).some(([x, d]) => d || STDIN_PATH_RE.test(x) || x.startsWith('<')) ? w : ''
+  }
   if (base.startsWith('-S') || base.startsWith('--split-string')) return base   // env -S'python3 -'
   if (!INTERPRETERS.has(base)) {
     if (Object.hasOwn(WRAPPERS, base)) {
@@ -244,7 +302,7 @@ function runsWords(words, k, depth, loose) {
   }
   const shell = SHELLS.has(base)
   const flags = STDIN_SCRIPT_FLAGS[base] ?? []
-  let longOpts = base === 'bash'    // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
+  let longOpts = base === 'bash' || base === 'rbash'   // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
   for (let j = k + 1; j < words.length; j++) {
     const [x, xdyn] = words[j]
     if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x)) return base
@@ -259,7 +317,23 @@ function runsWords(words, k, depth, loose) {
       }
       longOpts = false
     }
-    if (base === 'bash' && x.startsWith('--') && x.length > 2) return ''   // `bash --rcfile=F`, `bash -x --norc`: invalid option, nothing runs
+    if ((base === 'bash' || base === 'rbash') && x.startsWith('--') && x.length > 2) return ''   // `bash --rcfile=F`, `bash -x --norc`: invalid option, nothing runs
+    if (shell && x === '--') {
+      // `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE (even
+      // `-x`), only redirections may follow (#777 review 2). The file may be the stdin
+      // itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
+      let m = j + 1
+      if (m < words.length && !words[m][1] && STDIN_PATH_RE.test(words[m][0])) return base
+      while (m < words.length && !words[m][1]) {
+        const y = words[m][0]
+        if (REDIR_OP_RE.test(y)) m += 2
+        else if (REDIR_GLUED_RE.test(y)) m += 1
+        else return ''
+      }
+      return base
+    }
+    // `bash -c'rm ..'`, `bash -c-x`: a dash word that is not a letter cluster is an invalid option, nothing runs (#777)
+    if (shell && (x.startsWith('-') || x.startsWith('+')) && x.length > 1 && !flags.includes(x) && !OPT_CLUSTER_RE.test(x)) return ''
     if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) {
       // the program follows the flag. A shell still reads options after -c (`bash -c -x
       // "$l"`, `-o pipefail`, `+x`), a `-` or `--` ends them (`bash -c - "$l"`), and a
@@ -280,10 +354,19 @@ function runsWords(words, k, depth, loose) {
         else if (y === '-' || y === '--') { m += 1; ended = true }   // `bash -c -- 2>/dev/null "$l"`
         else if (optValues(y)) m += 1 + optValues(y)   // `-o pipefail`, `-xo pipefail`, `-xoo pipefail errexit`
         else if (y.startsWith('--')) return ''
-        else if (y.startsWith('-') || y.startsWith('+')) m += 1
-        else break
+        else if (y.startsWith('-') || y.startsWith('+')) {
+          if (shell && !OPT_CLUSTER_RE.test(y)) return ''   // `bash -c -c'x'`: invalid option, nothing runs
+          m += 1
+        } else break
       }
-      return loose && words[m]?.[1] ? base : ''
+      if (m >= words.length) return ''
+      // dynamic program: in a reading body it is a body line; INSIDE a literal -c program a
+      // `$(cat)` program is the fed body itself (#777)
+      if (words[m][1]) return (loose || (depth >= 1 && words[m][0] === '$STDIN')) ? base : ''
+      // #777: the LITERAL -c program may itself read stdin: `bash -c 'bash' <<EOF`,
+      // `sh -c 'cat | sh' <<< X`, `bash -c 'eval "$(cat)"' <<< X` run the body (measured
+      // with bash), `bash -c 'echo hi' <<EOF` does not. The program text is a command line.
+      return shell && anyRunsStdin(words[m][0], depth + 1) ? base : ''
     }
     if (shell && optValues(x)) { j += optValues(x); continue }  // `-o pipefail`, `-xo pipefail`: value word(s) follow
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
@@ -293,9 +376,9 @@ function runsWords(words, k, depth, loose) {
 }
 
 /** Does one simple command run its STDIN as a program? Returns the consumer word or ''. */
-export function runsStdinAsProgram(seg, loose = false) {
+export function runsStdinAsProgram(seg, loose = false, depth = 0) {
   const [words, k] = cmdWord(seg)
-  return runsWords(words, k, 0, loose)
+  return runsWords(words, k, depth, loose)
 }
 
 /** The text with every CLOSED `$(...)` and `...` substitution collapsed into one dynamic
@@ -303,6 +386,8 @@ export function runsStdinAsProgram(seg, loose = false) {
  *  is, for enclosingRuns. So `bash -c "$(echo "$l")"` reads as `bash -c "$SUB"` (a dynamic
  *  program), and a closed substitution in the head is not read in place of the outer
  *  command (#775). */
+const STDIN_SUB_RE = /^\s*(?:<\s*\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)|cat(?:\s+(?:-|\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)))?)\s*$/
+
 function subBlanked(text) {
   let out = ''
   let i = 0
@@ -318,12 +403,15 @@ function subBlanked(text) {
         j++
       }
       if (depth) { out += text.slice(i); break }
-      out += '$SUB'
+      // `$(cat)`, `$(cat -)`, `$(</dev/stdin)`: the substitution IS the stdin; inside a literal
+      // -c program that stdin is the fed body (`bash -c 'bash -c "$(cat)"' <<< X` runs it,
+      // measured, #777). runsWords reads the name.
+      out += STDIN_SUB_RE.test(text.slice(i + 2, j - 1)) ? '$STDIN' : '$SUB'
       i = j
     } else if (ch === '`') {
       const j = text.indexOf('`', i + 1)
       if (j < 0) { out += text.slice(i); break }
-      out += '$SUB'
+      out += STDIN_SUB_RE.test(text.slice(i + 1, j)) ? '$STDIN' : '$SUB'
       i = j + 1
     } else {
       out += ch
@@ -337,13 +425,14 @@ function subBlanked(text) {
  *  program? Read twice: as is (`x=$(bash -c "$l")` runs INSIDE the substitution), and with
  *  the closed substitutions collapsed (`bash -c "$(echo "$l")"`: the program is the
  *  substitution, #775). */
-function anyRunsStdin(text) {
+function anyRunsStdin(text, depth = 0) {
+  if (depth > MAX_NEST) return 'nested'   // what cannot be followed is not waved through
   const loose = READS_STDIN_RE.test(text)
   const blanked = subBlanked(text)
   for (const t of blanked !== text ? [text, blanked] : [text]) {
     for (const p of t.split(SIMPLE_SPLIT)) {
       if (!p.trim()) continue
-      const c = runsStdinAsProgram(p, loose)
+      const c = runsStdinAsProgram(p, loose, depth)
       if (c) return c
     }
   }
@@ -454,7 +543,7 @@ export function heredocRunsBody(cmd, h, funcs) {
       // it onto stdin (`bash 3<<SH <&3`): then the command is read as if it had stdin.
       const path = '/(?:dev|proc/self)/fd/0*' + n + '(?![0-9])'
       const dup = '(?:^|\\s)0?<&\\s*0*' + n + '-?(?=\\s|$)'
-      let line = head + ' ' + cmd.slice(h.tailStart, h.lineEnd).split(TAIL_SPLIT)[0]
+      let line = head + ' ' + stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
       if (!new RegExp(path).test(line) && !new RegExp(dup).test(line)) return ''
       line = line.replace(new RegExp(path, 'g'), '-').replace(new RegExp(dup, 'g'), ' ')
       // the last simple command, with its closer (`{ bash; } 2>&1 3<<EOF <&3`, #775):
@@ -463,7 +552,7 @@ export function heredocRunsBody(cmd, h, funcs) {
     }
   }
   const parts = subBlanked(head).split(HEAD_SPLIT)
-  const tail = cmd.slice(h.tailStart, h.lineEnd).split(TAIL_SPLIT)[0]
+  const tail = stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
   const pipe = tail.split(PIPE_SPLIT)
   const first = simpleRuns(parts[parts.length - 1] + ' ' + pipe[0], funcs, cmd, h.start)
   if (first) return first
@@ -471,7 +560,197 @@ export function heredocRunsBody(cmd, h, funcs) {
     const c = simpleRuns(p, funcs)
     if (c) return c
   }
-  return enclosingRuns(parts, funcs)
+  return enclosingRuns(parts, funcs) || closingPipeRuns(cmd, h, parts, funcs)
+}
+
+/** The heredoc stands inside an UNCLOSED `$( )` or backtick and the line closing the
+ *  substitution pipes it on: `echo $(cat <<EOF ... EOF\n) | bash` runs the body (measured
+ *  with bash, #777). The pipe members after the closing `)` are read like the opener line's. */
+function closingPipeRuns(cmd, h, parts, funcs) {
+  if ((h.kind ?? 'heredoc') !== 'heredoc') return ''
+  if (!parts.some((sep, i) => i % 2 === 1 && (sep === '$(' || sep === '`'))) return ''
+  const rest = cmd.slice(h.end + 1)
+  const nl = rest.indexOf('\n')
+  const line = nl < 0 ? rest : rest.slice(0, nl)
+  const close = /[)`]/.exec(line)
+  if (!close) return ''
+  const tail = stripComment(line.slice(close.index + 1)).split(TAIL_SPLIT)[0]
+  for (const p of tail.split(PIPE_SPLIT).slice(1)) {
+    const c = simpleRuns(p, funcs)
+    if (c) return c
+  }
+  return ''
+}
+
+/**
+ * Every stdin FEED of `cmd` that is RUN: the heredoc bodies of programHeredocs() plus the
+ * here-string words whose consumer runs its stdin (`bash <<< 'curl ..'`, `sh -c 'cat | sh'
+ * <<< X`), as [{ consumer, body }] with the DECODED word (#777). A dynamic word
+ * (`bash <<< "$(echo ..)"`) keeps its unexpanded text: the gates cannot read what the shell
+ * only produces at run time (a stated gap).
+ */
+export function programFeeds(cmd) {
+  const s = String(cmd ?? '')
+  const out = programHeredocs(s)
+  if (!s.includes('<<<')) return out
+  const { records } = findAll(s)
+  const funcs = functionBodies(s)
+  for (const h of records) {
+    if (h.kind !== 'herestring' || !h.text.trim()) continue
+    const consumer = heredocRunsBody(s, h, funcs)
+    if (consumer) out.push({ consumer: baseName(consumer), body: h.text })
+  }
+  return out
+}
+
+/** The index of the word a shell's `-c` runs, from command position `k` on, or -1: the
+ *  twin of the gate's _c_programs walk (clusters with c, `-o val`, long options at the
+ *  start, `-c -- prog`, `-c -x prog`, redirects in between; a dash word that is not a
+ *  letter cluster is an invalid option). -1 when the program is a FILE or the stdin. */
+function cProgramIndex(words, k, depth = 0) {
+  k = skipPrefix(words, k)
+  if (k >= words.length) return -1
+  const [w, dyn] = words[k]
+  const base = baseName(w)
+  if (dyn) return -1
+  if (Object.hasOwn(WRAPPERS, base)) {           // `nice bash -c x`, `timeout 5 sh -c x`
+    const j = afterWrapper(words, k, WRAPPERS[base])
+    return j >= 0 && depth < MAX_NEST ? cProgramIndex(words, j, depth + 1) : -1
+  }
+  if (!SHELLS.has(base)) return -1
+  const flags = STDIN_SCRIPT_FLAGS[base] ?? []
+  let longOpts = base === 'bash' || base === 'rbash'
+  for (let j = k + 1; j < words.length; j++) {
+    const [x, xdyn] = words[j]
+    if (REDIR_OP_RE.test(x)) { j++; continue }
+    if (REDIR_GLUED_RE.test(x)) continue
+    if (xdyn) return -1
+    if (longOpts) {
+      const lm = BASH_LONG_OPT_RE.exec(x)
+      if (lm) {
+        if (BASH_LONG_OPT_NO_RUN.has(lm[1])) return -1
+        if (BASH_LONG_OPT_VALUE.has(lm[1])) j++
+        continue
+      }
+      longOpts = false
+    }
+    if ((base === 'bash' || base === 'rbash') && x.startsWith('--') && x.length > 2) return -1
+    if (flags.includes(x) || (OPT_CLUSTER_RE.test(x) && /^-[A-Za-z]*c/.test(x))) {
+      let m = j + 1 + optValues(x)
+      let ended = false
+      while (m < words.length) {
+        const [y, ydyn] = words[m]
+        if (REDIR_OP_RE.test(y)) m += 2
+        else if (REDIR_GLUED_RE.test(y)) m += 1
+        else if (ydyn || ended) break
+        else if (y === '-' || y === '--') { m += 1; ended = true }
+        else if (optValues(y)) m += 1 + optValues(y)
+        else if (y.startsWith('--')) return -1
+        else if (y.startsWith('-') || y.startsWith('+')) {
+          if (!OPT_CLUSTER_RE.test(y)) return -1
+          m += 1
+        } else break
+      }
+      return m < words.length ? m : -1
+    }
+    if (optValues(x)) { j += optValues(x); continue }
+    if ((x.startsWith('-') || x.startsWith('+')) && x.length > 1) {
+      if (!OPT_CLUSTER_RE.test(x)) return -1
+      continue
+    }
+    return -1                      // `-` (stdin) or a program FILE
+  }
+  return -1
+}
+
+/** The simple commands of a shell text, quote-aware (the twin of the gate's segment split):
+ *  cut at `&&`, `||`, `;`, `&`, `|`, newline, `(`, `)`, `{`, `}`, backtick and `$(`
+ *  outside quotes; a `$( )` or backtick inside double quotes is command context again. */
+function simpleSegments(text) {
+  const out = []
+  const n = text.length
+  const stack = []               // [closer, outer paren depth] per open substitution in double quotes
+  let start = 0
+  let i = 0
+  let q = null
+  let depth = 0
+  const cut = (end, width) => { out.push(text.slice(start, end)); start = end + width; i = start }
+  while (i < n) {
+    const c = text[i]
+    if (q === "'") { if (c === "'") q = null; i++; continue }
+    if (q === "$'") { if (c === '\\') i += 2; else { if (c === "'") q = null; i++ } continue }
+    if (q === '"') {
+      if (c === '\\') { i += 2; continue }
+      if (c === '"') { q = null; i++; continue }
+      if (c === '`' || text.startsWith('$(', i)) {
+        stack.push([c === '`' ? '`' : ')', depth])
+        depth = 0
+        q = null
+        cut(i, c === '`' ? 1 : 2)
+        continue
+      }
+      i++
+      continue
+    }
+    if (stack.length) {
+      const closer = stack[stack.length - 1][0]
+      if (closer === ')' && c === '(') depth++
+      else if (c === closer && (closer === '`' || depth === 0)) { depth = stack.pop()[1]; q = '"'; cut(i, 1); continue }
+      else if (closer === ')' && c === ')') depth--
+    }
+    if (c === '\\') { i += 2; continue }
+    if (c === "'") { q = "'"; i++; continue }
+    if (c === '"') { q = '"'; i++; continue }
+    if (text.startsWith("$'", i)) { q = "$'"; i += 2; continue }
+    if (text.startsWith('||', i) || text.startsWith('&&', i) || text.startsWith('$(', i)) { cut(i, 2); continue }
+    if (c === '&' && text[i + 1] !== '>' && text[i - 1] !== '>') { cut(i, 1); continue }
+    if (c === '|' && text[i - 1] !== '>') { cut(i, 1); continue }
+    if (';\n(){}`'.includes(c)) { cut(i, 1); continue }
+    i++
+  }
+  out.push(text.slice(start))
+  return out.map((s) => s.trim()).filter(Boolean)
+}
+
+/** `cmd` with the DATA heredoc bodies and the comment lines blanked (offsets kept): the
+ *  text the shell actually runs, the twin of the gate's light text. */
+function lightText(cmd) {
+  let s = cmd
+  if (s.includes('<<')) {
+    const { heredocs, certain } = findHeredocs(s)
+    const funcs = heredocs.length ? functionBodies(s) : {}
+    for (const h of heredocs) {
+      const body = s.slice(h.bodyStart, h.bodyEnd)
+      if (heredocRunsBody(s, h, funcs) || !certain || (!h.quoted && /\$\(|`/.test(body))) continue
+      s = s.slice(0, h.bodyStart) + body.replace(/[^\n]/g, ' ') + s.slice(h.bodyEnd)
+    }
+  }
+  return s.split('\n').map((l) => (/^\s*#/.test(l) ? ' '.repeat(l.length) : l)).join('\n')
+}
+
+/**
+ * Every program a shell runs through `-c` in `cmd`, as the DECODED text (#777):
+ * `bash -c "rm x"`, `sh -xc 'x'`, `bash -o pipefail -c x`, `bash -c -- x`, `bash -c $'r\x6d x'`,
+ * `bash -c rm\ x`, `nice bash -c x`. A dynamic word keeps its unexpanded text (stated gap).
+ * The child guard and the egress gate judge each text as a command line of its own.
+ */
+export function shellCPrograms(cmd) {
+  const s = String(cmd ?? '')
+  if (!/(?:^|[^A-Za-z0-9_-])(?:sh|bash|zsh|dash|ksh|rbash)(?![A-Za-z0-9_-])/.test(s)) return []
+  const out = []
+  for (const seg of simpleSegments(lightText(s))) {
+    const fixed = seg.replaceAll(')', ' ) ')
+    const matches = [...fixed.matchAll(SHELL_WORD_RE)]
+    let words = matches.map((m) => word(m[0]))
+    const k = skipPrefix(words, 0)
+    const close = words.findIndex(([w], i) => i > k && w === ')')
+    if (close >= 0) words = words.slice(0, close)
+    const m = cProgramIndex(words, k)
+    if (m < 0) continue
+    const w = hereWord(fixed, matches[m].index, [])
+    if (w && w[0].trim()) out.push(w[0])
+  }
+  return out
 }
 
 /**

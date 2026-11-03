@@ -824,6 +824,43 @@ check("sort -S 1M <<EOF: a -S nem az env-e", not blocks("sort -S 1M <<EOF" + PAY
 check("env -u HOME cat <<EOF", not blocks("env -u HOME cat <<EOF" + PAY + "EOF"))
 check("env -i <<EOF: parancs nelkul csak kiir", not blocks("env -i <<EOF" + PAY + "EOF"))
 
+# --- 10. HERE-STRING PROGRAM es LITERAL `bash -c` PROGRAM (#777) ----------------------
+# A bazison (f2fba696) minden MUST-BLOCK sor atment, es a bash lefuttatta a torzset
+# (orakulum: agents/cody/work/777/oracle-out.txt, a sorok a heredoc-program-cases.json-ban
+# 777_ nevvel). A negativ kontroll: ugyanaz a szoveg adatkent (grep, wc, jq, egy kartya-
+# komment), es a bash-sal mert "nem fut" alakok (ervenytelen -c szo, eval <<<).
+print()
+print("#777 here-string es -c program, MUST-BLOCK:")
+RMH = RM + " -rf ~/marveen"
+check("bash <<< 'RM'", blocks("bash <<< '" + RMH + "'"))
+check("bash <<< 'RM' #comment: a megjegyzes nem szkriptfajl", blocks("bash <<< '" + RMH + "' #comment"))
+check("bash <<EOF #c: a megjegyzes a heredoc fejen", blocks("bash <<EOF # note\n" + RMH + "\nEOF"))
+check("bash 3<<< 'RM' <&3", blocks("bash 3<<< '" + RMH + "' <&3"))
+check("bash <<< 'r''m ...': osszeragasztott idezet", blocks("bash <<< 'r''m -rf ~/marveen'"))
+check("bash -- /dev/stdin <<< 'RM'", blocks("bash -- /dev/stdin <<< '" + RMH + "'"))
+check("sh -c 'cat | sh' <<< 'RM'", blocks("sh -c 'cat | sh' <<< '" + RMH + "'"))
+check("bash -c 'bash' <<EOF", blocks("bash -c 'bash' <<EOF\n" + RMH + "\nEOF"))
+check("bash -c 'bash -c \"source /dev/stdin\"' <<< 'RM'", blocks("bash -c 'bash -c \"source /dev/stdin\"' <<< '" + RMH + "'"))
+check("bash -c 'bash -c \"$(cat)\"' <<< 'RM'", blocks("bash -c 'bash -c \"$(cat)\"' <<< '" + RMH + "'"))
+check("bash -xc 'RM'", blocks("bash -xc '" + RMH + "'"))
+check("bash -o pipefail -c 'RM'", blocks("bash -o pipefail -c '" + RMH + "'"))
+check("bash -c -- 'RM'", blocks("bash -c -- '" + RMH + "'"))
+check("nice bash -c 'RM'", blocks("nice bash -c '" + RMH + "'"))
+check("bash -c $'r\\x6d -rf ~/marveen': ANSI-C szo", blocks("bash -c $'r\\x6d -rf ~/marveen'"))
+check("bash -c rm\\ -rf\\ ~/marveen: visszaperjeles szo", blocks("bash -c r" + "m\\ -rf\\ ~/marveen"))
+check("bash -c 'ec'\"ho hi; RM\": osszeragasztott program", blocks("bash -c 'ec'\"ho hi; " + RMH + "\""))
+check('echo "$(bash -c \'RM\')"', blocks('echo "$(bash -c \'' + RMH + '\')"'))
+check("bash -c 'bash -c \"RM\"': ketszintu", blocks("bash -c 'bash -c \"" + RMH + "\"'"))
+print("#777 negativ kontroll (adat, nem program):")
+check("grep -c rm <<< 'RM' adat", not blocks("grep -c rm <<< '" + RMH + "'"))
+check("wc -l <<< 'RM' adat", not blocks("wc -l <<< '" + RMH + "'"))
+check("jq . <<< json adat", not blocks("jq . <<< '{\"cmd\":\"" + RMH + "\"}'"))
+check("cat <<< 'RM' > notes.txt adat", not blocks("cat <<< '" + RMH + "' > notes.txt"))
+check("tabla.py komment <<< 'bash -c RM' adat", not blocks("python3 scripts/tabla.py komment 777 <<< 'bash -c " + RMH + "'"))
+check("eval <<< 'RM': az eval nem olvas stdin-t (merve)", not blocks("eval <<< '" + RMH + "'"))
+check("bash -c'RM': ervenytelen kapcsolo, nem fut (merve)", not blocks("bash -c'" + RMH + "'"))
+check("bash x.sh <<< 'RM': a szkript a fajl", not blocks("bash x.sh <<< '" + RMH + "'"))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

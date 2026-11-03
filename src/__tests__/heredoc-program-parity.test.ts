@@ -11,31 +11,40 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 // @ts-expect-error -- plain .mjs module, no types
-import { find } from '../../scripts/hooks/lib/heredoc-scan.mjs'
+import { findAll } from '../../scripts/hooks/lib/heredoc-scan.mjs'
 // @ts-expect-error -- plain .mjs module, no types
-import { heredocRunsBody, functionBodies, programHeredocs, dataBodySubstitutions } from '../../scripts/hooks/lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, programHeredocs, dataBodySubstitutions, shellCPrograms } from '../../scripts/hooks/lib/heredoc-program.mjs'
 
-type Case = { name: string; cmd: string; expect: boolean[]; bash_runs: boolean | null }
+type Case = { name: string; cmd: string; expect: boolean[]; bash_runs: boolean | null; bash_note?: string }
 const file = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'heredoc-program-cases.json'), 'utf-8'))
 const cases: Case[] = file.cases
 const PAYLOAD = 'echo PWNED_MARK'
+type CCase = { cmd: string; programs: string[] }
+const cCases: CCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-c-program-cases.json'), 'utf-8')).cases
 
 describe('heredoc-program twin: JS reads every case like the Python side', () => {
   it('has the full case file', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(80)
-    expect(cases.filter((c) => c.expect.some(Boolean)).length).toBeGreaterThanOrEqual(40)
+    expect(cases.length).toBeGreaterThanOrEqual(400)
+    expect(cases.filter((c) => c.expect.some(Boolean)).length).toBeGreaterThanOrEqual(200)
   })
 
-  it('the file agrees with bash wherever bash was asked', () => {
-    const bad = cases.filter((c) => c.bash_runs !== null && c.bash_runs !== c.expect.some(Boolean))
+  it('the file agrees with bash wherever bash was asked (a bash_note explains a deliberate difference)', () => {
+    const bad = cases.filter((c) => c.bash_runs !== null && !c.bash_note && c.bash_runs !== c.expect.some(Boolean))
     expect(bad.map((c) => c.name)).toEqual([])
   })
 
   it.each(cases.map((c) => [c.name, c] as [string, Case]))('%s', (_name, c) => {
     const cmd = c.cmd.replaceAll('X', PAYLOAD)
     const funcs = functionBodies(cmd)
-    const got = find(cmd).heredocs.map((h: unknown) => !!heredocRunsBody(cmd, h, funcs))
+    const got = findAll(cmd).records.map((h: unknown) => !!heredocRunsBody(cmd, h, funcs))   // heredocs and here-strings (#777)
     expect(got).toEqual(c.expect)
+  })
+
+  // #777: the literal `sh -c PROGRAM` words; Python's shell_c_programs is pinned to the same file
+  it('reads every literal -c program like the Python twin', () => {
+    expect(cCases.length).toBeGreaterThanOrEqual(30)
+    const bad = cCases.filter((c) => JSON.stringify(shellCPrograms(c.cmd)) !== JSON.stringify(c.programs))
+    expect(bad.map((c) => c.cmd)).toEqual([])
   })
 
   it('names the consumer, so the egress gate can pick the shell or the code reading', () => {

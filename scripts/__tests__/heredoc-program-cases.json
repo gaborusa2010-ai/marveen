@@ -1,5 +1,5 @@
 {
- "_comment": "Shared case file of the heredoc-program twins (#748): scripts/hooks/destructive-gate.py _heredoc_runs_body and scripts/hooks/lib/heredoc-program.mjs heredocRunsBody. cmd carries X where the payload goes; expect has one bool per heredoc (does the shell RUN that body?); bash_runs is what bash itself did with X=echo PWNED_MARK when the file was built. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "_comment": "Shared case file of the heredoc-program twins (#748, #777): scripts/hooks/destructive-gate.py _heredoc_runs_body and scripts/hooks/lib/heredoc-program.mjs heredocRunsBody. cmd carries X where the payload goes; expect has one bool per record of find_all/findAll (heredocs AND here-strings, sorted by start: does the shell RUN that body?); bash_runs is what bash itself did with X=echo PWNED_MARK(_777) when the row was built. bash_note (#777) explains a row where bash_runs and expect differ on purpose: an oracle artefact of the payload framing, an accepted over-block, or a KNOWN GAP; the consistency check skips such rows, the expect check does not. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
  "cases": [
   {
    "name": "sq_tag_data",
@@ -857,6 +857,7 @@
    "name": "herestring_sub",
    "cmd": "bash <<<\"$(cat <<SH\nX\nSH\n)\"",
    "expect": [
+    true,
     true
    ],
    "bash_runs": true
@@ -865,6 +866,7 @@
    "name": "herestring_py",
    "cmd": "python3 - <<< \"$(cat <<PY\nimport os; os.system(\"X\")\nPY\n)\"",
    "expect": [
+    true,
     true
    ],
    "bash_runs": true
@@ -996,6 +998,7 @@
    "name": "data_echo_herestr",
    "cmd": "echo <<<\"$(cat <<EOF\nX\nEOF\n)\" >/dev/null",
    "expect": [
+    false,
     false
    ],
    "bash_runs": false
@@ -1816,9 +1819,10 @@
   {
    "name": "775_herestring_not_heredoc",
    "cmd": "bash <<< 'X'",
-   "expect": [],
-   "bash_runs": null,
-   "note": "a here-string is not a heredoc: no scan result, and all 3 live gates allowed the payload (measured 2026-11-03); its own card"
+   "expect": [
+    true
+   ],
+   "bash_runs": true
   },
   {
    "name": "775r2_top_bash_rcfile",
@@ -2297,6 +2301,1520 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "777_bash_x_2",
+   "cmd": "bash <<< \"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_3",
+   "cmd": "bash <<< X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_sh_x",
+   "cmd": "sh <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_dash_x",
+   "cmd": "dash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_rbash_x",
+   "cmd": "rbash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_eval_x",
+   "cmd": "eval <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_eval_cat_x",
+   "cmd": "eval \"$(cat)\" <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash expands $(cat) before the redirection, cat reads the OUTER stdin; the gate reads it as fed (over-block, accepted)"
+  },
+  {
+   "name": "777_source_dev_stdin_x",
+   "cmd": "source /dev/stdin <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_dev_stdin_x",
+   "cmd": ". /dev/stdin <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x",
+   "cmd": "bash -c 'bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_sh_x",
+   "cmd": "bash -c 'cat | sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_echo_hi_x",
+   "cmd": "bash -c 'echo hi' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_cd_tmp_nx",
+   "cmd": "bash <<< $'cd /tmp\\nX'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_170_170_170_x",
+   "cmd": "bash <<< $'\\170\\170\\170; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ec_ho_a_x",
+   "cmd": "bash <<< 'ec''ho a; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ec_ho_a_x_2",
+   "cmd": "bash <<< ec\\ho\\ a\\;\\ X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_3_x_3",
+   "cmd": "bash 3<<< 'X' <&3",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_3_x",
+   "cmd": "bash 3<<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_0_x",
+   "cmd": "bash 0<<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_pipefail_x",
+   "cmd": "bash -o pipefail <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_extglob_x",
+   "cmd": "bash -O extglob <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_posix_x",
+   "cmd": "bash +o posix <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_a_x",
+   "cmd": "bash <<< 'echo a' <<< 'X'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_echo_a",
+   "cmd": "bash <<< 'X' <<< 'echo a'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_eof_x_echo_a_eof",
+   "cmd": "bash <<EOF <<< 'X'\necho a\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_eof_echo_a_eof",
+   "cmd": "bash <<< 'X' <<EOF\necho a\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_xargs_0_bash_c_x",
+   "cmd": "xargs -0 bash -c <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_xargs_i_bash_c_x",
+   "cmd": "xargs -I{} bash -c {} <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_xargs_bash_c_x",
+   "cmd": "xargs bash -c <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "xargs splits the body into words and runs `bash -c echo PWNED_MARK_777` (echo with the marker as $0): the body IS run, the marker is not printed (oracle artefact)"
+  },
+  {
+   "name": "777_env_bash_x",
+   "cmd": "env bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_env_i_path_path_bash_x",
+   "cmd": "env -i PATH=$PATH bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_command_bash_x",
+   "cmd": "command bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_nice_bash_x",
+   "cmd": "nice bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_sh_x",
+   "cmd": "sh -c 'cat | sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_eof_x_eof",
+   "cmd": "bash -c 'bash' <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_s_x",
+   "cmd": "bash -c 'bash -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_s_x",
+   "cmd": "bash -s <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_4",
+   "cmd": "bash - <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_x",
+   "cmd": "bash -c \"$(cat)\" <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_cat_x_bash",
+   "cmd": "cat <<< 'X' | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_grep_x_x",
+   "cmd": "grep x <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_read_r_a_x",
+   "cmd": "read -r a <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_echo_x",
+   "cmd": "echo <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_python3_import_os_os_system_x",
+   "cmd": "python3 <<< 'import os; os.system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_python3_import_os_os_system_x_2",
+   "cmd": "python3 - <<< 'import os; os.system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_perl_system_x",
+   "cmd": "perl <<< 'system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_5",
+   "cmd": "bash <<< \"\\$(X)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_x",
+   "cmd": "bash <<< \"$(echo X)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_a_x_echo_b",
+   "cmd": "bash <<< 'a'\"; X; echo \"'b'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_6",
+   "cmd": "bash <<< \"\\`X\\`\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x58_x59_x",
+   "cmd": "bash <<< $'\\x58\\x59; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_u0041_x",
+   "cmd": "bash <<< $'\\u0041; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ca_x",
+   "cmd": "bash <<< $'\\cA; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_e_x",
+   "cmd": "bash <<< $'\\e; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_7",
+   "cmd": "bash <<< $'\\\\; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_x_8",
+   "cmd": "bash <<< $'\\\"; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_a_b_x",
+   "cmd": "bash <<< \"a\\\\b; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_9",
+   "cmd": "bash <<< \"\\\\; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_a_x",
+   "cmd": "bash <<< a\\\\; X",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_10",
+   "cmd": "bash <<<'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_11",
+   "cmd": "bash <<<\"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_12",
+   "cmd": "bash<<<'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sudo_n_true_2_dev_null_bash_x",
+   "cmd": "sudo -n true 2>/dev/null; bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_bash_x",
+   "cmd": "bash <<< 'bash' <<< 'X'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_a_bash_eof_x_eof",
+   "cmd": "bash <<< 'echo a; bash' <<EOF\nX\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_cat",
+   "cmd": "bash <<< 'X' | cat",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true",
+   "cmd": "bash <<< $'X' | true",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_13",
+   "cmd": "bash <<< ''\"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_14",
+   "cmd": "bash <<< 'X'\"\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_15",
+   "cmd": "bash <<< \"\"'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_notcomment",
+   "cmd": "bash <<< 'X'#notcomment",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_comment",
+   "cmd": "bash <<< 'X' #comment",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_stillword",
+   "cmd": "bash <<< X#stillword",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_0_x_2",
+   "cmd": "bash <<< $'\\0; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash cuts the word at the NUL, the fed body is empty: the shell reads it, nothing runs (the gate has nothing to inspect)"
+  },
+  {
+   "name": "777_bash_x_16",
+   "cmd": "bash <<< X\\",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_x_17",
+   "cmd": "bash <<< $X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_x_1_bash_x",
+   "cmd": "X=1; bash <<< \"$X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_x_2",
+   "cmd": "bash <<< 'echo $X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_home_x",
+   "cmd": "bash <<< \"echo \\$HOME; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_18",
+   "cmd": "bash <<< ~/X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_cd_x",
+   "cmd": "bash <<< 'cd ~; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_printf_x",
+   "cmd": "bash <<< \"$(printf 'X')\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_2_1",
+   "cmd": "bash <<< 'X' 2>&1",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_2_1_x",
+   "cmd": "bash 2>&1 <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_dev_null_x",
+   "cmd": "bash >/dev/null <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_dev_null",
+   "cmd": "bash <<< 'X' >/dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_dev_null_2",
+   "cmd": "bash <<< 'X' > /dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_sh_s_x",
+   "cmd": "sh -s <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_s_x_2",
+   "cmd": "sh -s -- <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_s_a_b_x",
+   "cmd": "bash -s -- a b <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_2",
+   "cmd": "bash -c '\"$@\"' _ bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_true_x",
+   "cmd": "bash -c 'true' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_sh_s_x",
+   "cmd": "bash -c 'sh -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_exec_bash_x",
+   "cmd": "bash -c 'exec bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_dev_stdin_x",
+   "cmd": "bash -c 'source /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_cat_x",
+   "cmd": "bash -c 'eval \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_x",
+   "cmd": "bash -c 'eval' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_xargs_i_bash_c_x",
+   "cmd": "bash -c 'xargs -I{} bash -c {}' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "KNOWN GAP (#777 follow-up): the program-side simple-command splitter cuts at `{`/`}`, so `xargs -I{} bash -c {}` inside a literal -c program is not read through; bash runs the body"
+  },
+  {
+   "name": "777_bash_c_bash_cat_x",
+   "cmd": "bash -c 'bash <<< \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_version_x",
+   "cmd": "bash --version <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_v_x",
+   "cmd": "bash -v <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_n_x",
+   "cmd": "bash -n <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "`bash -n` only parses the body; the gate does not model -n (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_help_x",
+   "cmd": "bash --help <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_eof_x_eof",
+   "cmd": "bash <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_x_eof_2",
+   "cmd": "bash <<'EOF'\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_x_eof_3",
+   "cmd": "bash <<-EOF\n\tX\n\tEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_eof2_echo_a_eof_x_eof2",
+   "cmd": "bash <<EOF <<EOF2\necho a\nEOF\nX\nEOF2",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_dev_null_3",
+   "cmd": "bash <<< 'X' < /dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_dev_null_x_2",
+   "cmd": "bash < /dev/null <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_19",
+   "cmd": "bash <<< 'X' <<< ''",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_true_x_bash",
+   "cmd": "true <<< 'X'; bash",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_f_bash_f_x",
+   "cmd": "f() { bash; }; f <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_20",
+   "cmd": "bash <<< 'X' &",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true_2",
+   "cmd": "bash <<< 'X' || true",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true_3",
+   "cmd": "bash <<< 'X' && true",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_echo_done",
+   "cmd": "bash <<< \"X\"; echo done",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_bash_echo_b",
+   "cmd": "bash <<< 'X'; bash <<< 'echo b'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof_bash",
+   "cmd": "echo $(cat <<EOF\nX\nEOF\n) | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof_bash_2",
+   "cmd": "echo \"$(cat <<EOF\nX\nEOF\n)\" | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_cat_eof_x_eof",
+   "cmd": "bash <<< \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof",
+   "cmd": "echo <<< \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_cat_eof_echo_a_eof_x",
+   "cmd": "bash <<< \"$(cat <<EOF\necho a\nEOF\n)\" <<< 'X'",
+   "expect": [
+    true,
+    true,
+    false
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_cat_x_sh_s",
+   "cmd": "cat <<< 'X' | sh -s",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_eof_x_eof",
+   "cmd": "sh -c \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_x",
+   "cmd": "sh -c \"$(cat <<< 'X')\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_sh_x",
+   "cmd": "bash -c 'sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_dash_x",
+   "cmd": "bash -c 'dash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_rbash_x",
+   "cmd": "bash -c 'rbash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_ksh_x",
+   "cmd": "bash -c 'ksh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "ksh is not installed on the measuring host; the gate reads the shape (over-block in this environment)"
+  },
+  {
+   "name": "777_bash_c_bin_bash_x",
+   "cmd": "bash -c '/bin/bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bin_sh_s_x",
+   "cmd": "bash -c '/bin/sh -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_command_bash_x",
+   "cmd": "bash -c 'command bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_env_bash_x",
+   "cmd": "bash -c 'env bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_nice_bash_x",
+   "cmd": "bash -c 'nice bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_bash_x",
+   "cmd": "bash -c 'cat - | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_dev_stdin_bash_x",
+   "cmd": "bash -c 'cat /dev/stdin | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_tee_dev_null_bash_x",
+   "cmd": "bash -c 'tee /dev/null | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_head_1_bash_x",
+   "cmd": "bash -c 'head -1 | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x",
+   "cmd": "bash -c 'bash -c \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x",
+   "cmd": "bash -c 'bash /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_3",
+   "cmd": "bash -c 'bash -' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_s_a_x",
+   "cmd": "bash -c 'bash -s -- a' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x_2",
+   "cmd": "bash -c 'bash -- /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_dev_fd_0_x",
+   "cmd": "bash -c 'source /dev/fd/0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_dev_stdin_x",
+   "cmd": "bash -c '. /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_cat_x",
+   "cmd": "bash -c 'source <(cat)' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_dev_stdin_x",
+   "cmd": "bash -c 'eval \"$(</dev/stdin)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_0_x",
+   "cmd": "bash -c 'eval \"$(<&0)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "`$(<&0)` expands to nothing (a redirect without a command); the gate reads the stdin-dup as fed (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_eval_cat_x_2",
+   "cmd": "bash -c 'eval $(cat)' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_read_r_l_eval_l_x",
+   "cmd": "bash -c 'read -r l; eval \"$l\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_read_r_l_l_x",
+   "cmd": "bash -c 'read -r l; $l' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_while_read_r_l_do_eval_l_done_x",
+   "cmd": "bash -c 'while read -r l; do eval \"$l\"; done' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_mapfile_a_eval_a_0_x",
+   "cmd": "bash -c 'mapfile a; eval \"${a[0]}\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_ifs_read_r_l_bash_c_l_x",
+   "cmd": "bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "KNOWN GAP (#777 follow-up): the head splitter is quote-blind and cuts the -c program at its inner `;`, so the read loop is not seen; bash runs the body"
+  },
+  {
+   "name": "777_bash_c_cat_dev_null_x",
+   "cmd": "bash -c 'cat > /dev/null' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_wc_l_x",
+   "cmd": "bash -c 'wc -l' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_true_bash_x",
+   "cmd": "bash -c 'true; bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_false_bash_x",
+   "cmd": "bash -c 'false || bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_if_true_then_bash_fi_x",
+   "cmd": "bash -c 'if true; then bash; fi' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_4",
+   "cmd": "bash -c '{ bash; }' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_5",
+   "cmd": "bash -c '( bash )' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_sleep_0_2",
+   "cmd": "bash -c 'bash &' <<< 'X'; sleep 0.2",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_x_1_bash_x",
+   "cmd": "bash -c 'x=1 bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_exec_3_0_bash_3_x",
+   "cmd": "bash -c 'exec 3<&0; bash <&3' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_0_x",
+   "cmd": "bash -c 'bash <&0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_0_0_x",
+   "cmd": "bash -c 'bash 0<&0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x_3",
+   "cmd": "bash -c 'bash </dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_fd_0_x",
+   "cmd": "bash -c 'bash < /dev/fd/0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_null_x",
+   "cmd": "bash -c 'bash </dev/null' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell takes its stdin from a redirect of its own, not from the fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_echo_a_x",
+   "cmd": "bash -c 'bash <<< \"echo a\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell takes its stdin from a here-string of its own (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_eof_echo_a_eof_x",
+   "cmd": "bash -c 'bash <<EOF\necho a\nEOF' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_echo_a_bash_x",
+   "cmd": "bash -c 'echo a | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell reads a pipe of its own, not the fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_echo_echo_a_x",
+   "cmd": "bash -c 'bash <(echo \"echo a\")' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell runs a process-substitution FILE, not the fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_c_bash_x",
+   "cmd": "bash -c 'bash -c bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_bash_c_bash_x",
+   "cmd": "bash -c 'bash -c \"bash -c bash\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_sh_x",
+   "cmd": "bash -c 'bash -c \"cat | sh\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_echo_hi_x",
+   "cmd": "bash -c 'bash -c \"echo hi\"' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_sh_c_cat_x",
+   "cmd": "bash -c 'sh -c \"\\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_sh_c_cat_x_2",
+   "cmd": "bash -c 'sh -c \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x_2",
+   "cmd": "bash -c 'bash -c \"$(cat)\" -' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x_3",
+   "cmd": "bash -c 'bash -c \"\\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_eval_x",
+   "cmd": "bash -c 'bash -c eval' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_bash_c_eval_cat_x",
+   "cmd": "bash -c 'bash -c \"eval \\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_source_dev_stdin_x",
+   "cmd": "bash -c 'bash -c \"source /dev/stdin\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
   }
  ]
 }

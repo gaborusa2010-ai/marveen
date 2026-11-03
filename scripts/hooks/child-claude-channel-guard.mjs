@@ -55,8 +55,8 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { find as findHeredocs } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies } from './lib/heredoc-program.mjs'
+import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -305,8 +305,29 @@ function startsNoServer(args) {
   return SAFE_SUBCOMMANDS.some(([a, b]) => args[0] === a && args[1] === b)
 }
 
-export function decide(command, env = process.env) {
-  if (typeof command !== 'string' || !command.includes('claude')) return { allow: true }
+// #777: the here-string PROGRAMS (`bash <<< 'claude -p x'`) and the `-c` programs
+// (`bash -xc 'claude -p x'`, `bash -c $'cl\\141ude -p x'`, `bash -c claude\\ -p\\ x`) of a
+// command, each a command line of its own. The shared twin decodes the word the way
+// bash does, so an encoded `claude` is visible here even when the raw text has none.
+function nestedPrograms(command) {
+  const out = []
+  if (command.includes('<<<')) {
+    const { records } = findAll(command)
+    const funcs = functionBodies(command)
+    for (const h of records) {
+      if (h.kind === 'herestring' && h.text.trim() && heredocRunsBody(command, h, funcs)) out.push(h.text)
+    }
+  }
+  out.push(...shellCPrograms(command))
+  return out
+}
+
+export function decide(command, env = process.env, depth = 0) {
+  if (typeof command !== 'string') return { allow: true }
+  // A `claude` the raw text does not show can still be spelled by quotes, `$'..'` or
+  // backslashes (`'cl''aude'`, `$'cl\\141ude'`): only a text with none of those is skipped.
+  if (!command.includes('claude') && !/['"\\$]/.test(command)) return { allow: true }
+  if (depth > 16) return { allow: false, segment: 'nesting-too-deep' }
   for (const segment of stripInertText(command).split(SEGMENT_SPLIT)) {
     const hit = inspectSegment(segment)
     if (!hit) continue
@@ -316,6 +337,10 @@ export function decide(command, env = process.env) {
     if (!childOwnsChannel(child)) continue
     if (ownConfigDir(child, env) || tokenlessStateDir(child)) continue
     return { allow: false, segment: segment.trim().replaceAll(Q_SPACE, ' ').replaceAll(Q_SEP, '_').slice(0, 200) }
+  }
+  for (const text of nestedPrograms(command)) {
+    const inner = decide(text, env, depth + 1)
+    if (!inner.allow) return inner
   }
   return { allow: true }
 }

