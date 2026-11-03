@@ -4202,6 +4202,12 @@ export function moveKanbanCard(
         else if (prev === 'in_progress') next = status === 'done' ? 'low' : 'normal'
         if (next && next !== pr.priority) {
           db.prepare('UPDATE kanban_cards SET priority=? WHERE id=?').run(next, id)
+          // Same audit row updateKanbanCard writes for a priority change (#783):
+          // without it the field history shows a hand-set "high" that later reads
+          // "normal" with no row saying the column move did it.
+          db.prepare(
+            'INSERT INTO kanban_card_field_events (card_id, field, old_value, new_value, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+          ).run(id, 'priority', pr.priority, next, actor ?? null, now)
         }
       }
     }
