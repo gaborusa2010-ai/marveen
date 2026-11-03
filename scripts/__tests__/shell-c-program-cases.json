@@ -1,0 +1,240 @@
+{
+ "_comment": "Shared case file of the shell -c program readers (#777): scripts/hooks/destructive-gate.py shell_c_programs (the destructive gate checks each program as a command of its own) and scripts/hooks/lib/heredoc-program.mjs shellCPrograms (child-claude guard, egress gate). programs = the LITERAL -c program words of cmd, per segment, in order; [] when the shell runs a file or its stdin, the -c word is invalid, or the shell name only appears as data. Literal words only: a dynamic word ($VAR, $( )) is read differently by the two sides on purpose. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "cases": [
+  {
+   "cmd": "bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -xc 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c -- 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c $'r\\x6d -rf x'",
+   "programs": [
+    "rm -rf x"
+   ]
+  },
+  {
+   "cmd": "bash -c rm\\ -rf\\ x",
+   "programs": [
+    "rm -rf x"
+   ]
+  },
+  {
+   "cmd": "nice bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c'rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "bash x.sh -c",
+   "programs": []
+  },
+  {
+   "cmd": "echo \"$(bash -c 'rm -rf ~/marveen')\"",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -o pipefail -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "cat > f <<EOF\nbash -c 'rm -rf ~/marveen'\nEOF",
+   "programs": []
+  },
+  {
+   "cmd": "bash <<EOF\nbash -c 'rm -rf ~/marveen'\nEOF",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "sh -c 'cat | sh' <<< 'rm -rf ~/marveen'",
+   "programs": [
+    "cat | sh"
+   ]
+  },
+  {
+   "cmd": "bash -c 'rm -rf ~/marveen'; sh -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen",
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash --norc -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 'echo a; rm -rf ~/marveen'",
+   "programs": [
+    "echo a; rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "python3 -c 'rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "timeout 5 bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c \"rm -rf ~/marveen\"",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 'ec'\"ho hi; rm -rf ~/marveen\"",
+   "programs": [
+    "echo hi; rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 'rm -rf ~/marveen' extra args",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -lc 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 'rm -rf ~/marveen' 2>/dev/null",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 2>/dev/null 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "dash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "rbash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -co pipefail 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c -x 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c 'rm -rf ~/marveen' | grep x",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "echo x | bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash -c --norc 'rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -c-x 'rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -ic 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "grep -c 'bash -c rm -rf ~/marveen' file",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'bash -c rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "git commit -m 'bash -c rm -rf ~/marveen'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -c 'bash -c \"rm -rf ~/marveen\"'",
+   "programs": [
+    "bash -c \"rm -rf ~/marveen\""
+   ]
+  },
+  {
+   "cmd": "bash -c 'X' <<< 'rm -rf ~/marveen'",
+   "programs": [
+    "X"
+   ]
+  },
+  {
+   "cmd": "true & bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "echo 'a & b' && bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash <&0 -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "bash <&0 -c $'cl\\x61ude -p x'",
+   "programs": [
+    "claude -p x"
+   ]
+  }
+ ]
+}

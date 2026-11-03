@@ -160,7 +160,7 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
-INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'node', 'perl', 'ruby', 'php'}
+INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash', 'node', 'perl', 'ruby', 'php'}
 SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
 # -p is node's print-eval and -E is perl's feature-enabled -e. They are in the
 # set only so the argument after them counts as CODE rather than prose. A flag
@@ -225,6 +225,20 @@ def _quote_map(text):
                 continue
             elif closer == ')' and ch == ')':
                 depth -= 1
+        if q == 0 and text.startswith("$'", i):
+            # $'..' (ANSI-C): a backslash escapes the closing quote too (#777 review 11:
+            # `echo $'\''` read as '\' left the rest of the line, a heredoc body with it, "quoted")
+            state[i] = state[i + 1] = 0
+            i += 2
+            while i < n and text[i] != "'":
+                step = 2 if text[i] == '\\' and i + 1 < n else 1
+                for k in range(step):
+                    state[i + k] = 1
+                i += step
+            if i < n:
+                state[i] = 0
+                i += 1
+            continue
         if q == 0 and ch in ("'", '"'):
             q = 1 if ch == "'" else 2
             state[i] = 0            # maga a nyito jel nincs "belul"
@@ -256,8 +270,75 @@ def _blank_ranges(text, ranges):
 def _word(tok):
     """(a szo idezojel es visszaperjel nelkul, dinamikus-e). Dinamikus a szo, ha a
     shell kifejti ($P, ${P}, {python3,}, pytho?3, `...`): a kapu nem tudja, mi lesz
-    belole (#729, Marveen review 2932: ezek a nevek atvittek egy ertelmezo-torzset)."""
-    return re.sub(r'["\'\\]', '', tok), bool(re.search(r'[$*?\[{`]', tok))
+    belole (#729, Marveen review 2932: ezek a nevek atvittek egy ertelmezo-torzset).
+    A levagas a shell szabalya szerint megy (#777): az aposztrofon beluli idezojel es
+    visszaperjel megmarad, mert `bash -c 'bash -c "source /dev/stdin"'` programja a BELSO
+    idezojelekkel egyutt egy parancssor (a regi, mindent levago alak `bash -c source
+    /dev/stdin`-t adott, es a /dev/stdin $0-nak latszott)."""
+    out = []
+    dyn = False                    # a `$` aposztrofban vagy visszaperjel mogott nem fejtodik ki
+    i, n = 0, len(tok)
+    while i < n:
+        c = tok[i]
+        if c == "'":
+            j = tok.find("'", i + 1)
+            if j < 0:
+                j = n
+            out.append(tok[i + 1:j])
+            i = j + 1
+        elif c == '"':
+            i += 1
+            while i < n and tok[i] != '"':
+                if tok[i] == '\\' and i + 1 < n and tok[i + 1] in '"\\$`\n':
+                    out.append(tok[i + 1])
+                    i += 2
+                else:
+                    if tok[i] in '$`':
+                        dyn = True
+                    out.append(tok[i])
+                    i += 1
+            i += 1
+        elif c == '\\' and i + 1 < n:
+            out.append(tok[i + 1])
+            i += 2
+        elif c == '$' and tok[i + 1:i + 2] == "'":
+            # $'..' is ANSI-C quoting, not an expansion: `g$'d'b`, `$'\x67db'` name gdb (#777 review 15)
+            j = i + 2
+            while j < n and tok[j] != "'":
+                j += 2 if tok[j] == '\\' else 1
+            out.append(_heredoc_scan().ansi_c(tok[i + 2:j]))
+            i = j + 1
+        elif c == '$' and tok[i + 1:i + 2] == '"':
+            i += 1             # $".." is a (translated) double-quoted string
+        else:
+            if c in '$*?[{`':
+                dyn = True
+            out.append(c)
+            i += 1
+    return ''.join(out), dyn
+
+
+def _strip_comment(text):
+    """A sor vegi `# ...` megjegyzes nelkul (#777: `bash <<< X #c` es `bash <<EOF #c` fejenel
+    a `#c` szkriptfajlnak latszott, es a torzs adatnak). Idezojel-tudatos; a `#` csak szo
+    elejen nyit megjegyzest (`x#y` egy szo)."""
+    q = None
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if q:
+            if c == '\\' and q == '"':
+                i += 1
+            elif c == q:
+                q = None
+        elif c == '\\':
+            i += 1
+        elif c in '\'"':
+            q = c
+        elif c == '#' and (i == 0 or text[i - 1] in ' \t'):
+            return text[:i]
+        i += 1
+    return text
 
 
 # Az atlatszo elotag KULON szoban erteket vivo kapcsoloi (`env -u VAR`, `exec -a NEV`,
@@ -304,6 +385,24 @@ def _skip_prefix(words, k):
 _SHELL_WORD_RE = re.compile(r'(?:[^\s"\'\\]|\\.|"(?:[^"\\]|\\.)*"|\'[^\']*\')+')
 
 
+def _collapse_params(text):
+    """Each unquoted, balanced `${...}` replaced by `${_}`: still dynamic, but one word."""
+    if '${' not in text:
+        return text
+    state = _quote_map(text)
+    out, i = [], 0
+    while i < len(text):
+        if not state[i] and text.startswith('${', i):
+            end = _param_end(text, state, i)
+            if end and re.search(r'\s', text[i:end]):
+                out.append('${_}')
+                i = end
+                continue
+        out.append(text[i])
+        i += 1
+    return ''.join(out)
+
+
 def _cmd_word(seg):
     """(szavak, k): a szegmens szavai (_word alak) es a PARANCSNEV indexe, az elotte
     allo ertekadasok, kulcsszavak, atlatszo burkolok es atiranyitasok atlepese utan.
@@ -312,7 +411,12 @@ def _cmd_word(seg):
     az utana allo szavak nem az operandusai."""
     # Idezojel-tudatos szavakra bontas: `bash > "o 775" <<EOF` celja egy szo, nem ketto
     # (a masodik fele programfajlnak latszott, #775). A `)` szokozzel korbeveve kulon szo.
-    words = [_word(t) for t in _SHELL_WORD_RE.findall(seg.replace(')', ' ) '))]
+    # a `${...}` is one word whatever it holds (#777 review 14: `X=${Y:-a b} bash <<A` ran bash)
+    toks = _SHELL_WORD_RE.findall(_collapse_params(seg).replace(')', ' ) '))
+    # an unquoted word starting with `#` opens a comment: the rest is not the command
+    # (#777 review 8: `f(){ bash #<x` read `#<x` as a script file)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    words = [_word(t) for t in toks]
     k = _skip_prefix(words, 0)
     for i in range(k + 1, len(words)):
         if words[i][0] == ')':
@@ -343,19 +447,461 @@ _STDIN_WRAPPERS = {
     'unbuffer': ((), 0),
     'watch': (('-n', '-d', '--interval', '--differences'), 0),
     'caffeinate': (('-t', '-w'), 0),
-    'unshare': (('-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root'), 0),
+    'unshare': (('-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root', '--map-user', '--map-group',
+                 '--map-users', '--map-groups'), 0),
     'nsenter': (('-t', '--target', '-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-r', '--root'), 0),
     'systemd-run': (('-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine',
-                     '--slice', '--on-active', '--on-calendar'), 0),
+                     '--slice', '--on-active', '--on-calendar', '--uid', '--gid', '--nice',
+                     '--working-directory'), 0),
+    # #777 review 8: further launchers that exec the command after their options
+    'chrt': (('-T', '-P', '-D', '--sched-runtime', '--sched-period', '--sched-deadline'), 1),
+    'taskset': ((), 1),
+    'setpriv': (('--reuid', '--regid', '--ruid', '--euid', '--rgid', '--egid', '--groups', '--inh-caps',
+                 '--ambient-caps', '--bounding-set', '--securebits', '--pdeathsig', '--selinux-label',
+                 '--apparmor-profile', '--landlock-access', '--landlock-rule'), 0),
+    'firejail': ((), 0),
+    'xvfb-run': (('-n', '--server-num', '-s', '--server-args', '-f', '--auth-file', '-e', '--error-file',
+                  '-p', '--xauth-protocol', '-w', '--wait'), 0),
+    'busybox': ((), 0),
+    'pkexec': (('--user',), 0),
+    # #777 review 9
+    'fakeroot': (('-l', '--lib', '--faked', '-s', '-i', '-b'), 0),
+    'proot': (('-r', '--rootfs', '-b', '--bind', '-m', '--mount', '-w', '--pwd', '--cwd', '-q', '--qemu',
+               '-k', '--kernel-release'), 0),
+    'valgrind': ((), 0),
+    'torsocks': (('-u', '--user', '-p', '--pass', '-a', '--address', '-P', '--port'), 0),
+    'catchsegv': ((), 0),
+    'flatpak-spawn': ((), 0),
+    'machinectl': (('-E', '--setenv', '--uid', '-M', '--machine', '-H', '--host'), 2),
+    'prlimit': (('-p', '--pid', '-o', '--output'), 0),
+    'numactl': (('-C', '--physcpubind', '-N', '--cpunodebind', '-m', '--membind', '-p', '--preferred',
+                 '-i', '--interleave', '-w', '--weighted-interleave'), 0),
+    'cgexec': (('-g',), 0),
+    'setarch': ((), 1),
+    'linux32': ((), 0),
+    'linux64': ((), 0),
+    'chpst': (('-u', '-U', '-b', '-e', '-/', '-C', '-n', '-l', '-L', '-m', '-d', '-o', '-p', '-f', '-c'), 0),
+    'faketime': (('-p',), 1),
+    'newgrp': ((), 1),
 }
+# Launchers that start a shell reading the stdin when no command follows (#777 review 9):
+# `pkexec <<A`, `firejail <<A`, `fakeroot <<A`, `proot <<A`, `machinectl shell host <<A`, `setarch x86_64 <<A`, `newgrp grp <<A`.
+_SHELL_WITHOUT_COMMAND = ('pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp')
+# ...but not when they only print something (#777 review 10: `setarch --list`, `machinectl list`).
+_INFO_FLAGS = ('--help', '-h', '--version', '-V', '--list')
+# The program follows a marker word (#777 review 9): `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
+# toolbox enter start a shell, their other subcommands (create, list, rm) run nothing (#777 review 10).
+_MARKER_LAUNCHERS = {'distrobox': ('--', True), 'distrobox-enter': ('--', True),
+                     'toolbox': ('run', True)}
+_SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
+# A gdb that reads a heredoc/here-string is BLOCKED whatever its flags (#777 review 12): its command
+# language runs shell lines and code many ways (`shell`, `she`, `!`, `pipe`, `python exec(stdin)`,
+# `eval "shell %s"`, `interpreter-exec`, guile, define, `-x /dev/stdin`, an inferior inheriting the
+# stdin), and listing them took three rounds without closing the class. Over-blocking is accepted:
+# nobody here feeds gdb a heredoc.
+_GDB_NAMES = ('gdb', 'gdb-multiarch')
+
+
+def _is_gdb(name):
+    """gdb under any build name: `rust-gdb`, `aarch64-linux-gnu-gdb`, `cuda-gdb`, `gdb-multiarch`
+    (#777 review 15)."""
+    return name in _GDB_NAMES or name.endswith('-gdb') or name.startswith('gdb-')
+
+
+# Without a heredoc too (#777 review 13): an -ex/-iex/--eval-command/--init-eval-command value
+# whose gdb command runs a shell line or code (`-ex 'shell X'`, `-ex '!X'`, `-ex 'pipe p 1 | X'`,
+# `-ex 'python ..'`, `py`, `pi`, guile, compile, eval, interpreter-exec; gdb takes any unique
+# prefix of 2+ letters) or is dynamic BLOCKs; `-ex bt`, `-ex 'info functions'` stay allowed.
+_GDB_EX_FLAG_RE = re.compile(r'^--?(ex|iex|ev[a-z-]*|init-e[a-z-]*)(=.*)?$', re.S)
+_GDB_EX_LONG = ('eval-command', 'init-eval-command')
+# A call: a `(` after a name, `)`, `]` or a quote (`$_shell(`, `($_shell)(`, `arr[0](`, `'system'(`);
+# sizeof/alignof are operators, not calls (#777 review 15).
+_GDB_CALL_RE = re.compile(r'(?<![A-Za-z0-9_$])(?!(?:sizeof|alignof|_Alignof|__alignof__)\s*\()[A-Za-z0-9_$]+\s*\(|[)\]\'"]\s*\(')
+_GDB_SAFE_ALIASES = ('bt', 'where', 'i', 'p', 'x', 'l', 'f', 'pt', 'c', 'q')
+_GDB_SAFE_PREFIXES = (('backtrace', 4), ('info', 3), ('print', 1), ('disassemble', 5), ('list', 2),
+                      ('ptype', 3), ('whatis', 5), ('frame', 2), ('show', 3), ('continue', 4),
+                      ('gcore', 5), ('generate-core-file', 18), ('set', 3), ('quit', 2), ('thread', 3),
+                      ('faas', 4), ('taas', 4), ('tfaas', 5))
+_GDB_RUNNING_CMDS = ('shell', 'pipe', 'python', 'python-interactive', 'guile', 'compile', 'eval',
+                     'interpreter-exec')
+_TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
+# su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
+# the options) they start a shell that reads the stdin (#777 review 8).
+_SU_LIKE = ('su', 'runuser', 'script', 'sg')
+_SU_VALUE_FLAGS = ('-u', '--user', '-g', '--group', '-G', '--supp-group', '-s', '--shell', '-w',
+                   '--whitelist-environment', '-T', '-O', '-I', '-B', '--log-timing', '--log-out', '--log-in',
+                   '--log-io', '-E', '--echo', '-m', '--logging-format')
 # `sudo -s <<EOF` / `sudo -i <<EOF` parancs nelkul: a felhasznalo shellje olvassa a torzset.
 _SHELL_FLAGS_OF = {'sudo': ('-s', '-i', '--shell', '--login'), 'doas': ('-s',)}
 # Ezek a torzset a futtatott parancs ARGUMENTUMAIVA teszik (`xargs -I{} sh -c {}`):
 # a torzs program, ha barhol mogottuk ertelmezo all.
 _ARGV_FEEDERS = ('xargs', 'parallel')
-# Tavoli es kontener-futtatok: a parancs az elso ertelmezo-szo mogottuk; a sajat
-# kapcsolo-alakjukat (host, image, -v, -p, ...) nem modellezzuk.
-_REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl')
+# Tavoli es kontener-futtatok (#777 review 7): a program a HOST/kontener utani elso nem-opcio
+# szo, es a kulon szoban erteket vivo kapcsoloik ertekei kimaradnak (`ssh -l python3 host bash`
+# erteke nem host, a host nem program; `ssh host python3 - bash` programja a python3, a bash csak
+# az argumentuma). A docker/podman/nerdctl es a kubectl alparancsa (exec/run/create/debug,
+# `compose`/`container` elotaggal es globalis kapcsolokkal is) a kapcsolok elott all; ismeretlen
+# alparancsnal az elso ertelmezo-szo a program (a review-6 elotti alak). A sshpass-nak nincs
+# hostja: a kapcsoloi utani szo a program (rendszerint egy ssh, amit ugyanigy olvasunk).
+_REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'rsh', 'dbclient', 'autossh', 'docker', 'podman', 'nerdctl', 'kubectl')
+# A remote login shell reads the stdin; the remote command line is re-parsed by a shell.
+_SSH_LIKE = ('ssh', 'mosh', 'plink', 'rsh', 'dbclient', 'autossh')
+_DOCKER_VALUE_FLAGS = ('-u', '--user', '-w', '--workdir', '-e', '--env', '--env-file', '--detach-keys', '-v', '--volume',
+     '-p', '--publish', '--name', '--network', '--net', '--entrypoint', '-l', '--label', '--label-file',
+     '--mount', '--cpus', '-m', '--memory', '--memory-swap', '-h', '--hostname', '--add-host', '--cap-add',
+     '--cap-drop', '--device', '--dns', '--dns-search', '--dns-option', '--domainname', '--expose', '--gpus',
+     '--ipc', '--log-driver', '--log-opt', '--pid', '--platform', '--pull', '--restart', '--security-opt',
+     '--shm-size', '--stop-signal', '--stop-timeout', '--sysctl', '--tmpfs', '--ulimit', '--userns', '--uts',
+     '--volumes-from', '--cidfile', '--cgroup-parent', '--ip', '--ip6', '--mac-address', '--index', '--link',
+     '--runtime', '--storage-opt', '--group-add', '--isolation', '--pids-limit', '--cpu-shares',
+     '--cpuset-cpus', '--cpuset-mems', '--oom-score-adj', '--health-cmd', '--health-interval', '--profile',
+     '-f', '--file', '--project-directory', '--project-name', '-H', '--host', '--context', '-c',
+     '--config', '-L', '--log-level', '--connection', '--url', '--namespace', '--address')
+_RUNNER_VALUE_FLAGS = {
+    'ssh': ('-l', '-p', '-i', '-o', '-F', '-J', '-b', '-c', '-D', '-E', '-e', '-I', '-L', '-m', '-O', '-Q', '-R',
+            '-S', '-W', '-w', '-B', '-P'),
+    'mosh': ('-p', '--port', '--ssh', '--server', '--predict', '--family', '--bind-server',
+             '--experimental-remote-ip'),
+    'plink': ('-l', '-P', '-i', '-pw', '-pwfile', '-m', '-L', '-R', '-D', '-proxycmd', '-hostkey', '-nc',
+              '-sercfg', '-sshlog', '-sshrawlog', '-loghost'),
+    'sshpass': ('-p', '-f', '-d', '-P'),
+    'rsh': ('-l',),
+    'dbclient': ('-p', '-l', '-i', '-L', '-R', '-o', '-W', '-K', '-I', '-J', '-c', '-m', '-b', '-B'),
+    'autossh': ('-M', '-l', '-p', '-i', '-o', '-F', '-J', '-b', '-c', '-D', '-E', '-e', '-I', '-L', '-m', '-O', '-Q',
+                '-R', '-S', '-W', '-w', '-B', '-P'),
+    'docker': _DOCKER_VALUE_FLAGS, 'podman': _DOCKER_VALUE_FLAGS, 'nerdctl': _DOCKER_VALUE_FLAGS,
+    'kubectl': ('-n', '--namespace', '-c', '--container', '--context', '--kubeconfig', '--cluster', '--user', '--as',
+     '--as-group', '--request-timeout', '-f', '--filename', '--pod-running-timeout', '-s', '--server',
+     '--token', '--image', '--env', '--port', '--overrides', '--restart', '--labels', '-l',
+     '--image-pull-policy', '--serviceaccount', '--target', '--profile', '--copy-to', '--set-image',
+     '--cache-dir', '--certificate-authority', '--client-certificate', '--client-key', '-v'),
+}
+_SUBCOMMAND_RUNNERS = ('docker', 'podman', 'nerdctl', 'kubectl')
+_RUNNER_SUBCOMMANDS = ('exec', 'run', 'create', 'debug')
+_RUNNER_SUBCOMMAND_PREFIX = ('compose', 'container')
+# Az xargs/parallel KULON szoban erteket vivo kapcsoloi: az ertek nem parancs (#777 review 6:
+# `xargs -a python3 sh <<A`, `parallel -a python3 sh <<A` torzset az sh olvassa). A `-i`
+# (xargs, elavult) az erteket csak osszeirva viszi, ezert nincs itt.
+_FEEDER_VALUE_FLAGS = (
+    '-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '-j', '-S', '-N',
+    '--max-args', '--max-procs', '--max-lines', '--max-chars', '--delimiter', '--replace',
+    '--arg-file', '--eof', '--process-slot-var', '--jobs', '--sshlogin', '--sshloginfile',
+    '--slf', '--colsep', '--joblog', '--results', '--tmpdir', '--wd', '--workdir',
+    '--block', '--retries', '--timeout', '--halt')
+
+
+def _takes_value(x, flags):
+    """Does the option word carry the NEXT word as its value: a value option itself, or a short
+    cluster (`-tl`, `-iu`, `-ic`) whose LAST letter is a value option and no earlier letter is
+    (after an earlier value letter the rest of the cluster is the value: `-lroot`) (#777 review 8)."""
+    if x in flags:
+        return True
+    if len(x) < 3 or x[0] != '-' or x[1] == '-':
+        return False
+    for i in range(1, len(x)):
+        if '-' + x[i] in flags:
+            return i == len(x) - 1
+    return False
+
+
+def _after_feeder_options(words, k):
+    """Az xargs/parallel kapcsoloi utani elso szo indexe (len(words), ha nincs)."""
+    j = k + 1
+    while j < len(words):
+        x = words[j][0]
+        if x == '--':
+            return j + 1
+        if not x.startswith('-'):
+            return j
+        j += 2 if _takes_value(x, _FEEDER_VALUE_FLAGS) else 1
+    return j
+
+
+def _first_interpreter(words, j):
+    """A j-tol allo szavak kozul az elso ertelmezo-szo indexe (None, ha nincs): a tartalek egy
+    ismeretlen alaku futtatonal (#777 review 7)."""
+    return next((i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS), None)
+
+
+_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE) | set(_MARKER_LAUNCHERS) | set(_GDB_NAMES)
+
+
+def _shell_word_after(words, j):
+    """The first shell word after index j ('' if none): the conservative answer when a launcher
+    runs a program we do not model (review-6 rule, #777 review 8: `chrt 1 bash`, `firejail bash`)."""
+    return next((os.path.basename(x) for x, _d in words[j + 1:] if os.path.basename(x) in _SHELLS), '')
+
+
+def _via_launcher(words, j, depth, loose, argv):
+    """Who consumes the body when a launcher runs the command at index j. `argv`: the body
+    becomes that command's ARGUMENTS (behind xargs/parallel), not its stdin. A program we do not
+    model answers with any shell word behind it (#777 review 8)."""
+    j0, j = j, _skip_prefix(words, j)
+    if j >= len(words):
+        # behind xargs a bare `env`/`nohup`/`time` execs the body's words (#777 review 9)
+        return next((os.path.basename(x) for x, _d in words[j0:] if os.path.basename(x) in _TRANSPARENT), '') if argv else ''
+    x, dyn = words[j]
+    if dyn:
+        return x
+    base = os.path.basename(x)
+    if base in _LAUNCHERS:
+        return _launcher_consumer(words, j, base, depth + 1, loose, argv)
+    if argv:
+        # the body is this program's argument list: an interpreter runs it (`xargs bash -c`)
+        return base if base in INTERPRETERS else _shell_word_after(words, j)
+    c = _runs_words(words, j, depth + 1, loose)
+    if c or base in INTERPRETERS or base in ('eval', 'source', '.'):
+        return c
+    return _shell_word_after(words, j)
+
+
+def _su_consumer(words, k, base, depth, loose, argv):
+    """su/runuser/script (#777 review 8). `-c CMD` (also in a cluster: `-qc`) runs CMD through a
+    shell; behind xargs the body may be that CMD. `runuser -u U -- cmd` execs cmd. Without a
+    command they start a shell that reads the stdin. `sg [-] group [-c] command` hands the
+    command to /bin/sh -c (#777 review 10: `sg grp cat` is data)."""
+    if base == 'sg':
+        rest = words[k + 1:]
+        if rest and rest[0][0] == '-':
+            rest = rest[1:]
+        cmd = rest[1:]
+        if cmd and cmd[0][0] == '-c':
+            cmd = cmd[1:]
+        if argv or not cmd or any(d for _x, d in cmd):
+            return base
+        return _program_consumer(' '.join(x for x, _d in cmd), base, depth)
+    j = k + 1
+    while j < len(words):
+        x, dyn = words[j]
+        if x == '--':
+            j += 1
+            break
+        if x in ('-c', '--command', '--session-command') or (re.match(r'^-[A-Za-z]*c$', x) and not x.startswith('--')):
+            if argv or j + 1 >= len(words):
+                return base
+            v, vdyn = words[j + 1]
+            return base if vdyn else _program_consumer(v, base, depth)
+        if x.startswith(('--command=', '--session-command=')):
+            return base if argv else _program_consumer(x.split('=', 1)[1], base, depth)
+        if not x.startswith('-') or x == '-':
+            if x == '-':
+                j += 1
+                continue
+            if base == 'runuser' and any(w in ('-u', '--user') for w, _d in words[k + 1:j]):
+                break              # `runuser -u U cmd`: the command
+            j += 1                 # su USER / script FILE: an operand, keep looking for -c
+            continue
+        j += 2 if _takes_value(x, _SU_VALUE_FLAGS) else 1
+    if base == 'runuser' and j < len(words) and any(w in ('-u', '--user') for w, _d in words[k + 1:j]):
+        return _via_launcher(words, j, depth, loose, argv)
+    return '' if argv else base
+
+
+def _launcher_consumer(words, k, base, depth, loose, argv=False):
+    """ONE resolver for every non-interpreter launcher at index k: stdin wrappers (sudo, nice,
+    chrt...), argv feeders (xargs, parallel), remote/container runners (ssh, docker, kubectl) and
+    su-like commands. Returns the word that consumes the body, or ''. The three separate paths it
+    replaces each had their own gaps (#777 review 8). `argv`: the body is the launcher's argument
+    list (we are behind an xargs/parallel), not its stdin."""
+    if depth > _MAX_NEST:
+        return 'nested'
+    if base in _STDIN_WRAPPERS:
+        j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
+        if j is None:
+            # `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
+            if argv:
+                return base
+            if base in _SHELL_WITHOUT_COMMAND and not any(x in _INFO_FLAGS for x, _d in words[k + 1:]):
+                # `machinectl shell box <<A` reads the body; `machinectl list`/`status box` do not
+                if base != 'machinectl' or next((x for x, _d in words[k + 1:] if not x.startswith('-')), '') in ('shell', 'login'):
+                    return base
+            return base if any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
+        return _via_launcher(words, j, depth, loose, argv)
+    if base in _ARGV_FEEDERS:
+        j = _after_feeder_options(words, k)
+        if j >= len(words):
+            # parallel without a command runs its input lines (stdin or arguments) as commands;
+            # xargs without one runs echo
+            return base if base == 'parallel' else ''
+        return _via_launcher(words, j, depth, loose, True)
+    if base in _REMOTE_RUNNERS:
+        if argv and base in _SSH_LIKE:
+            # the body's words join the remote command line, whatever program it names (#777 review 9)
+            return base
+        j = _runner_program(words, k)
+        if j is None:
+            # `ssh host <<A`: the remote login shell reads the body; behind xargs the body is
+            # the remote command (#777 review 7, 8). A container runner without a command runs nothing.
+            return base if base in _SSH_LIKE else ''
+        c = _via_launcher(words, j, depth, loose, argv)
+        if not c and base in _SSH_LIKE and not argv:
+            # the remote shell re-parses the joined words: `ssh host "bash -s"`, `ssh host 'cd /; bash'`
+            c = _body_consumer(' '.join(x for x, _d in words[j:]), None, depth + 1)
+        return c
+    if base in _SU_LIKE:
+        return _su_consumer(words, k, base, depth, loose, argv)
+    if _is_gdb(base):
+        return 'gdb'
+    if base in _MARKER_LAUNCHERS:
+        marker, shell = _MARKER_LAUNCHERS[base]
+        rest = [x for x, _d in words[k + 1:]]
+        if base in _SHELL_SUBCOMMAND:
+            shell = next((x for x in rest if not x.startswith('-')), '') == _SHELL_SUBCOMMAND[base]
+        j = next((i for i in range(k + 1, len(words)) if words[i][0] == marker), None)
+        if j is not None and base == 'toolbox':
+            j += 1
+            while j < len(words) and words[j][0].startswith('-'):
+                j += 2 if _takes_value(words[j][0], _TOOLBOX_VALUE_FLAGS) else 1
+            j -= 1
+        if j is None or j + 1 >= len(words):
+            return base if argv or shell else ''
+        return _via_launcher(words, j + 1, depth, loose, argv)
+    return ''
+
+
+def _gdb_ex_runs(seg):
+    """A gdb in this simple command runs a shell line or code through an -ex style value (see
+    _GDB_EX_FLAG_RE); the gdb word may stand after a wrapper (`sudo gdb -ex ..`), so every word is
+    looked at. Returns the offending value, or ''."""
+    toks = _SHELL_WORD_RE.findall(seg)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    words = [_word(t) for t in toks]
+    for g, (w, _d) in enumerate(words):
+        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', w))):
+            continue           # `(gdb -ex ..)`: the subshell paren is not part of the name (#777 review 14)
+        j = g + 1
+        while j < len(words):
+            m = _GDB_EX_FLAG_RE.match(words[j][0])
+            flag = m.group(1) if m else ''
+            if m and (flag in ('ex', 'iex') or any(f.startswith(flag) for f in _GDB_EX_LONG)):
+                if m.group(2) is not None:
+                    value, dyn = m.group(2)[1:], words[j][1]
+                elif j + 1 < len(words):
+                    j += 1
+                    value, dyn = words[j]
+                else:
+                    break
+                if dyn or _gdb_value_runs(value):
+                    return value or '(dynamic)'
+            j += 1
+    return ''
+
+
+def _gdb_value_runs(value):
+    """A gdb -ex value is allowed only when every line is a read-only inspection command (an
+    ALLOWLIST, #777 review 14: `with .. -- shell`, `alias`, `target remote | X`, `$_shell()`,
+    `make`, `set exec-wrapper`, `run $(X)` all ran a shell); anything else, a call included, runs."""
+    for line in value.split('\n'):
+        v = line.strip()
+        if not v:
+            continue
+        m = re.match(r'([A-Za-z][A-Za-z-]*)(?=$|[ \t/])', v)
+        if not m:
+            return True
+        name = m.group(1).lower()
+        if _GDB_CALL_RE.search(re.sub(r'^/\w*', '', v[m.end():])):
+            return True        # the command word and a `/x` format cut first: `p/x (char)c` is a cast
+        if name in ('r', 'run', 'start'):
+            if v[m.end():].strip():
+                return True    # `run $(X)`: gdb hands the arguments to a shell
+            continue           # bare `run`: the program on the command line, judged there
+        if name not in _GDB_SAFE_ALIASES and not any(
+                len(name) >= n and c.startswith(name) for c, n in _GDB_SAFE_PREFIXES):
+            return True
+        applied = _gdb_applied(name, v[m.end():])
+        if applied is not None:
+            if not applied or _gdb_value_runs(applied):
+                return True    # `thread apply all CMD`, `frame apply`, faas/taas/tfaas run CMD, judged as a line
+            continue
+        if 'set'.startswith(name) and name.startswith('se') and not re.match(
+                r'[A-Za-z-]+[ \t]+(?:pagination|confirm|print|width|height|style|listsize)(?![\w-])', v):
+            return True
+    return False
+
+
+# `--args`, `-args`, `--arg`, `-ar`, quoted too: gdb takes any unique prefix (#777 review 15)
+_GDB_ARGS_RE = re.compile(r'^--?ar(?:gs?)?$')
+
+
+def _gdb_applied(name, rest):
+    """The command `frame apply` / `thread apply` / faas / taas / tfaas runs (#777 review 15), ''
+    when it cannot be read, None when the line applies nothing."""
+    if name in ('faas', 'taas', 'tfaas'):
+        words = rest.split()
+    else:
+        words = rest.split()
+        if not (name in ('f', 'fr', 'fra', 'fram', 'frame') or 'thread'.startswith(name)):
+            return None
+        if not words or not 'apply'.startswith(words[0].lower()):
+            return None
+        words = words[1:]
+        if words and words[0] == 'all':
+            words = words[1:]
+        elif words and words[0] == 'level':
+            words = words[1:]
+            while words and re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                words = words[1:]
+        else:
+            if not words or not re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                return ''
+            while words and re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                words = words[1:]
+    while words and words[0].startswith('-'):
+        if words[0] == '--':
+            words = words[1:]
+            break
+        words = words[1:]
+    return ' '.join(words)
+
+
+def _gdb_args_programs(seg):
+    """The program after `gdb .. --args` (gdb runs it on `run`), as its raw text."""
+    toks = _SHELL_WORD_RE.findall(seg)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    out = []
+    for g, t in enumerate(toks):
+        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', _word(t)[0]))):
+            continue
+        rest = toks[g + 1:]
+        a = next((i for i, t in enumerate(rest) if _GDB_ARGS_RE.match(_word(t)[0])), None)
+        if a is not None:
+            out.append(' '.join(rest[a + 1:]))
+    return out
+
+
+def _runner_program(words, k):
+    """A k-adik szon allo tavoli/kontener-futtato PROGRAMJANAK indexe (None, ha nincs): az
+    alparancs (docker/podman/nerdctl/kubectl), a kapcsolok (az ertekesek az ertekukkel), a
+    host/kontener/pod, majd a kovetkezo szo; egy `--` az opciok veget jelzi. Ismeretlen
+    alparancsnal az elso ertelmezo-szo (#777 review 7)."""
+    base = os.path.basename(words[k][0])
+    flags = _RUNNER_VALUE_FLAGS.get(base, ())
+    j = k + 1
+    skip = 0 if base == 'sshpass' else 1
+    if base in _SUBCOMMAND_RUNNERS:
+        while j < len(words) and (words[j][0].startswith('-') or words[j][0] in _RUNNER_SUBCOMMAND_PREFIX):
+            j += 2 if _takes_value(words[j][0], flags) else 1
+        if j >= len(words) or words[j][0] not in _RUNNER_SUBCOMMANDS:
+            return _first_interpreter(words, k + 1)
+        j += 1
+    while j < len(words):
+        x = words[j][0]
+        if x == '--':
+            j += 1
+            if skip:
+                skip -= 1
+                j += 1
+                continue
+            return j if j < len(words) else None
+        if x.startswith('-'):
+            j += 2 if _takes_value(x, flags) else 1
+            continue
+        if skip:
+            skip -= 1
+            j += 1
+            continue
+        return j
+    return None
 # Egy utvonal, ami MAGA a standard bemenet: `bash /dev/stdin <<EOF` a torzset futtatja.
 _STDIN_PATH_RE = re.compile(r'^/(?:dev/stdin|(?:dev|proc/self)/fd/0+)$')
 # Atiranyitas-operator KULON szoban (a kovetkezo szo a celja: `> log`, `2>&1`-nel nincs
@@ -397,7 +943,7 @@ def _after_stdin_wrapper(words, k, spec):
             j += 1
             break
         if x.startswith('-'):
-            j += 2 if x in values else 1
+            j += 2 if _takes_value(x, values) else 1
             continue
         if skip > 0:
             skip -= 1
@@ -408,7 +954,8 @@ def _after_stdin_wrapper(words, k, spec):
 
 
 def _cmd_runs_stdin(seg, loose=False):
-    """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e? Lasd a hivo leirasat."""
+    """Egy egyszeru parancs a STDIN-jet PROGRAMKENT futtatja-e: a fogyaszto szo, vagy ''.
+    Lasd a hivo leirasat."""
     words, k = _cmd_word(seg)
     return _runs_words(words, k, 0, loose)
 
@@ -428,7 +975,9 @@ def _last_operand(words):
 
 
 def _runs_words(words, k, depth, loose=False):
-    """A szavak k-adik poziciojatol allo parancs a stdin-jet programkent futtatja-e.
+    """A szavak k-adik poziciojatol allo parancs a stdin-jet programkent futtatja-e:
+    a FOGYASZTO SZO (parancsnev, vagy a dinamikus szo), ha igen, kulonben '' (#777 review 5,
+    a JS iker runsWords alakja: a hivo a szo NEVEN dont, pl. kod-ertelmezo-e).
     Az ertelmezonek PARANCS-pozicioban kell allnia: kozvetlenul, vagy egy ismert alaku
     burkolo mogott. Egy ismeretlen parancs ARGUMENTUMA nem program (#748 review:
     `grep -c python <<EOF`, `git commit -m "node fix" -F - <<EOF` adat).
@@ -436,35 +985,37 @@ def _runs_words(words, k, depth, loose=False):
     dinamikus -c program a torzs egy sora (#773: `while read l; do bash -c "$l"; done <<EOF`)."""
     k = _skip_prefix(words, k)
     if k >= len(words) or depth > _MAX_NEST:
-        return False
+        return ''
     w, dyn = words[k]
     base = os.path.basename(w)
-    if dyn or base in ('source', '.', 'eval'):
-        return True
+    if dyn:
+        return w
+    if base == 'eval':
+        # `eval <<< X` runs nothing (measured, #777): eval reads its OPERANDS. A dynamic
+        # operand (`eval "$(cat)"`, `eval "$l"`) may be the stdin; literal operands are a
+        # command line of their own (`eval 'bash'` reads stdin, `eval 'echo hi'` does not).
+        rest = words[k + 1:]
+        if any(d for _x, d in rest):
+            # the dynamic operand is what runs (`G=gdb; eval "$G" <<A`, `bash -c 'eval "$0"' gdb`),
+            # judged like a dynamic command word (#777 review 15)
+            return next(x for x, d in rest if d)
+        return _program_consumer(' '.join(x for x, _d in rest), w, depth) if rest else ''
+    if base in ('source', '.'):
+        # `source /dev/stdin <<< X` runs it, `source file <<< X` runs the FILE; a dynamic
+        # operand or a process substitution (`source <(cat)`) may be the stdin.
+        return w if any(d or _STDIN_PATH_RE.match(x) or x.startswith('<') for x, d in words[k + 1:]) else ''
     if base.startswith(('-S', '--split-string')):
-        return True                # env -S'python3 -': a parancs egy szoban
+        return base                # env -S'python3 -': a parancs egy szoban
     if base not in INTERPRETERS:
-        if base in _STDIN_WRAPPERS:
-            j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
-            if j is not None:
-                return _runs_words(words, j, depth + 1, loose)
-            return any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:])
-        if base in _ARGV_FEEDERS:
-            return any(os.path.basename(x) in INTERPRETERS for x, _ in words[k + 1:])
-        if base in _REMOTE_RUNNERS:
-            for j in range(k + 1, len(words)):
-                if os.path.basename(words[j][0]) in INTERPRETERS:
-                    return _runs_words(words, j, depth + 1, loose)
-            return False
-        return False
+        return _launcher_consumer(words, k, base, depth, loose) if base in _LAUNCHERS or _is_gdb(base) else ''
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
-    long_opts = base == 'bash'     # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
+    long_opts = base in ('bash', 'rbash')   # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
-        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x):
-            return True
+        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x) or x.startswith('<('):
+            return base            # `bash <(cat)`: the script file is a pipe, it may be the stdin (#777 review 8)
         if _REDIR_OP_RE.match(x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
             continue
@@ -475,12 +1026,30 @@ def _runs_words(words, k, depth, loose=False):
             lm = _BASH_LONG_OPT_RE.match(x)
             if lm:
                 if lm.group(1) in _BASH_LONG_OPT_NO_RUN:
-                    return False   # `bash --version <<EOF`: a torzs olvasatlan marad
+                    return ''   # `bash --version <<EOF`: a torzs olvasatlan marad
                 j += 1 + (lm.group(1) in _BASH_LONG_OPT_VALUE)   # `--rcfile F`, `-init-file F`
                 continue
             long_opts = False
-        if base == 'bash' and x.startswith('--') and len(x) > 2:
-            return False           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
+        if base in ('bash', 'rbash') and x.startswith('--') and len(x) > 2:
+            return ''           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
+        if shell and x == '--':
+            # `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE
+            # (even `-x`), only redirections may follow (#777 review 2). The file may be
+            # the stdin itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
+            j += 1
+            if j < len(words) and not words[j][1] and _STDIN_PATH_RE.match(words[j][0]):
+                return base
+            while j < len(words) and not words[j][1]:
+                y = words[j][0]
+                if _REDIR_OP_RE.match(y):
+                    j += 2
+                elif _REDIR_GLUED_RE.match(y):
+                    j += 1
+                else:
+                    return ''
+            return base
+        if shell and x.startswith(('-', '+')) and len(x) > 1 and x not in flags and not _OPT_CLUSTER_RE.match(x):
+            return ''           # `bash -c'rm ..'`, `bash -c-x`: egy nem betu-csoport kapcsolo ervenytelen, nem fut (#777)
         if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
             # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m); olvaso torzsben
             # dinamikus programszo = a torzs egy sora. A shell a -c utan meg olvas opciot
@@ -508,20 +1077,32 @@ def _runs_words(words, k, depth, loose=False):
                 elif _opt_values(y):
                     m += 1 + _opt_values(y)   # `-o pipefail`, `-xo pipefail`, `-xoo pipefail errexit`
                 elif y.startswith('--'):
-                    return False
+                    return ''
                 elif y.startswith(('-', '+')):
+                    if shell and not _OPT_CLUSTER_RE.match(y):
+                        return ''   # `bash -c -c'x'`: ervenytelen kapcsolo, nem fut
                     m += 1
                 else:
                     break
-            return bool(loose and m < len(words) and words[m][1])
+            if m >= len(words):
+                return ''
+            if words[m][1]:
+                # dinamikus program: olvaso torzsben a torzs egy sora; egy szo szerinti -c
+                # programon BELUL a `$(cat)` maga a betaplalt torzs (#777)
+                return base if loose or (depth >= 1 and words[m][0] == '$STDIN') else ''
+            # #777: a SZO SZERINTI -c program maga is olvashatja a stdin-t: `bash -c 'bash' <<EOF`,
+            # `sh -c 'cat | sh' <<< X`, `bash -c 'eval "$(cat)"' <<< X` futtatjak a torzset (bash-sal
+            # merve), `bash -c 'echo hi' <<EOF` nem. A program szovege egy parancssor: ugyanugy olvassuk.
+            # a gdb the program feeds the stdin to is the consumer (#777 review 13: `bash -c 'gdb -q' <<A`)
+            return _program_consumer(words[m][0], base, depth) if shell else ''
         if shell and _opt_values(x):
             j += 1 + _opt_values(x)   # `-o pipefail`, `+O extglob`, `-xo pipefail`: ertekszo(k) a csoport utan
             continue
         if x.startswith('-') or (shell and x.startswith('+')):
             j += 1
             continue
-        return False               # egy program-FAJL: a torzs annak a bemenete
-    return True
+        return ''               # egy program-FAJL: a torzs annak a bemenete
+    return base
 
 
 # Melyik kapcsolo utan all a PROGRAM (es igy a stdin adat), ertelmezonkent. A kozos
@@ -529,6 +1110,7 @@ def _runs_words(words, k, depth, loose=False):
 # torzse program), a python3 -m modult futtat (a torzs annak a bemenete).
 _STDIN_SCRIPT_FLAGS = {
     'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'), 'dash': ('-c',), 'ksh': ('-c',),
+    'rbash': ('-c', '--command'), 'ash': ('-c',), 'hush': ('-c',), 'mksh': ('-c',), 'yash': ('-c',),
     'python': ('-c', '-m'), 'python3': ('-c', '-m'),
     'node': ('-e', '-p', '--eval', '--print'), 'perl': ('-e', '-E'), 'ruby': ('-e',), 'php': ('-r',),
 }
@@ -536,11 +1118,17 @@ _STDIN_SCRIPT_FLAGS = {
 # Egyszeru parancsok hatarai egy osszetett parancson (ciklus-torzs, fuggveny-torzs) belul.
 # A `>&1`, `<&0`, `&>log` `&`-je atiranyitas, nem parancshatar (#748: `bash 2>&1 <<SH`);
 # a `>|` `|`-je sem az (#775: `bash >| log <<SH`).
-_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(')
+# `{` and `}` are reserved WORDS: a mid-word brace (`/dev/std{i..i}n`, `${x}`, `a}b`) is part of
+# the word, and splitting there hid a dynamic redirect target (#777 review 10).
+_BRACE_WORD = r'(?<![^\s;&|()])[{}](?![^\s;&|()<>])'
+_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>|])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\|&?|\$\(')
+# Ugyanaz, az elvalasztokat megtartva: [parancs, elvalaszto, parancs, ...] (#777 review 7: a
+# parancs UTANI `&` hatterbe teszi, akkor nem az orokolt stdin-t olvassa).
+_SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>|])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\|&?|\$\()')
 # A fej es a cso-tag hatarai a heredoc nyitojanak soran (lasd _heredoc_runs_body).
-_HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()')
-_TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>])&(?!>)')
-_PIPE_SPLIT = re.compile(r'(?<!>)\|')
+_HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>|])&(?!>)|[;(`]|(?<!>)\|&?|\$\()')
+_TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>|])&(?!>)')
+_PIPE_SPLIT = re.compile(r'(?<!>)\|&?')
 # `nev() { ... }`, `nev() ( ... )`, `function nev { ... }`: a nev es a nyito zarojel.
 _FUNC_DEF_RE = re.compile(
     r'(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*([{(])'
@@ -552,6 +1140,26 @@ _COMPOUND_TOKEN_RE = re.compile(r'(?<![\w$-])(while|until|for|select|done|if|fi|
 # A torzs-szoveg OLVASSA a stdin-t (`while read l`, `f(){ read l; ...}`): a benne allo
 # dinamikus -c program (`bash -c "$l"`) a torzs egy sora (#773).
 _READS_STDIN_RE = re.compile(r'(?<![\w$-])(read|mapfile|readarray)(?![\w-])')
+
+
+_STDIN_SUB_RE = re.compile(r'^\s*(?:<\s*/(?:dev/stdin|(?:dev|proc/self)/fd/0+)'
+                           r'|cat(?:\s+(?:-|/(?:dev/stdin|(?:dev|proc/self)/fd/0+)))?)\s*$')
+
+
+_BACKTICK_CLOSER_RE = re.compile(r'\\`|`')
+
+
+def _in_backticks(head):
+    """A fej egy LEZARATLAN backtick-helyettesitesben all (paratlan szamu nem escape-elt backtick)."""
+    return sum(1 for i, ch in enumerate(head) if ch == '`' and not _escaped(head, i)) % 2 == 1
+
+
+def _escaped(text, i):
+    """A text[i] elott paratlan szamu visszaper all (visszaper-backtick: nem nyito es nem zaro)."""
+    k = i
+    while k > 0 and text[k - 1] == '\\':
+        k -= 1
+    return (i - k) % 2 == 1
 
 
 def _sub_blanked(text):
@@ -574,14 +1182,22 @@ def _sub_blanked(text):
             if depth:
                 out.append(text[i:])
                 break
-            out.append('$SUB')
+            # `$(cat)`, `$(cat -)`, `$(</dev/stdin)`: the substitution IS the stdin; inside a
+            # literal -c program that stdin is the fed body (`bash -c 'bash -c "$(cat)"' <<< X`
+            # runs it, measured, #777). _runs_words reads the name.
+            out.append('$STDIN' if _STDIN_SUB_RE.match(text[i + 2:j - 1]) else '$SUB')
             i = j
-        elif ch == '`':
-            j = text.find('`', i + 1)
-            if j < 0:
+        elif ch == '`' and not _escaped(text, i):
+            # a `\`` is not a closer (inside backticks it is a NESTED substitution): the head
+            # `echo `echo \`bash ` stays unclosed, and _HEAD_SPLIT cuts it at the nested opener
+            # (#777 review 4: "echo `echo \`bash <<< 'x'\``" runs the word)
+            j = i + 1
+            while j < n and (text[j] != '`' or _escaped(text, j)):
+                j += 1
+            if j >= n:
                 out.append(text[i:])
                 break
-            out.append('$SUB')
+            out.append('$STDIN' if _STDIN_SUB_RE.match(text[i + 1:j]) else '$SUB')
             i = j + 1
         else:
             out.append(ch)
@@ -589,17 +1205,119 @@ def _sub_blanked(text):
     return ''.join(out)
 
 
-def _any_runs_stdin(text):
-    """Az osszetett szoveg (ciklus- vagy fuggveny-torzs) barmelyik egyszeru parancsa
-    a stdin-t programkent futtatja-e. `$l` parancsnevkent dinamikus, tehat igen.
-    Ketszer olvassuk: ahogy van (a helyettesites BELSEJEBEN allo `x=$(bash -c "$l")`
-    is fut), es a lezart helyettesitesekkel egy-egy dinamikus szova vonva
-    (`bash -c "$(echo "$l")"` programja a helyettesites, #775)."""
+def _any_runs_stdin(text, depth=0, funcs=None):
+    """Az osszetett szoveg (ciklus- vagy fuggveny-torzs) az OROKOLT stdin-t programkent
+    futtatja-e (a _body_consumer bool-ja). `$l` parancsnevkent dinamikus, tehat igen."""
+    return bool(_body_consumer(text, funcs, depth))
+
+
+# A stdin (fd 0) redirection at the start of a word: `<f`, `0<f`, `<<<x`, `<<T`, `<<-T`, `<>f`, `<&n`.
+# `<(..)` is a process substitution (an ARGUMENT), not a redirection.
+_STDIN_REDIR_RE = re.compile(r'^0?(<<<|<<-?|<>|<&|<)(?!\()')
+# A redirection target that is (or may be) the inherited stdin: /dev/stdin, //dev/./stdin, /dev/fd/N,
+# /proc/<anything>/fd/N (self, $$, thread-self, task/..).
+_INHERITED_TARGET_RE = re.compile(r'stdin|(?:^|/)fd(?:/|$)')
+# `set -m` / `set -o monitor`: job control on, a background job keeps the stdin.
+_JOB_CONTROL_RE = re.compile(r'(?<![\w-])set\s+(?:-[A-Za-z]*m|-o\s+monitor)')
+
+
+def _literal_target(raw):
+    """A redirection target that is a fixed file or text the shell does not expand, and that is
+    not the inherited stdin under another name."""
+    if not raw or raw[0] in '<>' or '$' in raw or '`' in raw:
+        return False
+    target, dyn = _word(raw)
+    # a glob or brace target may expand to /dev/stdin (`</dev/std[i]n`, #777 review 9)
+    return not dyn and not _INHERITED_TARGET_RE.search(target)
+
+
+def _own_stdin(piece, next_sep, loose=False, job_control=False):
+    """The simple command has its OWN stdin and does not read the inherited one (#777 review 8,
+    the effective_stdin rule). Stdin redirections are followed in bash order and the LAST one wins
+    (`bash </dev/null <&0` reads the inherited stdin). Own only when that last target is literal:
+    a file (not /dev/stdin, /dev/fd/N, /proc/*/fd/N under any spelling), a here-string or a
+    quoted-delimiter heredoc without expansion; `<&-` closes it. `<&n`, a process substitution and
+    anything with `$` or a backtick may be the inherited stdin. Without a stdin redirection a
+    background job (`&`) gets /dev/null, unless job control is on (`set -m`). Inside a read/mapfile
+    loop body nothing is exempt: the lines come from the stdin (`while read l; do bash <<< "$l"`)."""
+    if loose:
+        return False
+    toks = _SHELL_WORD_RE.findall(piece)
+    # the same comment cut as _cmd_word: `bash # <x` has no redirection (#777 review 9)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    own = None
+    i = 0
+    while i < len(toks):
+        m = _STDIN_REDIR_RE.match(toks[i])
+        if not m:
+            i += 1
+            continue
+        raw = toks[i][m.end():]
+        if not raw and i + 1 < len(toks):
+            i += 1
+            raw = toks[i]
+        op = m.group(1)
+        if op == '<&':
+            own = raw == '-'
+        elif op in ('<<', '<<-'):
+            # any quote or backslash in the delimiter quotes it: `<<\B`, `<<'B'`, `<<B"C"` (#777 review 9)
+            own = any(q in raw for q in '\'"\\') and '$' not in raw and '`' not in raw
+        else:
+            own = _literal_target(raw)
+        i += 1
+    if own is not None:
+        return own
+    return next_sep == '&' and not job_control
+
+
+def _body_consumer(text, funcs=None, depth=0):
+    """Az osszetett szoveg (fuggveny- vagy ciklus-torzs) melyik szava futtatja az OROKOLT
+    stdin-t programkent ('' ha egyik sem; 'nested' a melysegkorlaton: amit nem tudunk
+    vegigkovetni, azt nem engedjuk at). A torzs MINDEN egyszeru parancsat nezzuk (#777 review 7,
+    az ELSO fogyaszto nem eleg): a sajat stdin-u es a hatterbe tett parancs kimarad; egy
+    fuggveny-szo a sajat torzsevel oldodik fel, rekurzivan (a melysegkorlat zarja); ha
+    BARMELYIK fogyaszto shell, eval, source, dinamikus szo, zaro vagy a plafon, az a szo (a
+    torzs shell-olvasott); kulonben az elso ertelmezo-szo, ha minden fogyaszto kod-ertelmezo.
+    A cso jobb oldala az orokoltnek szamit (`cat | bash` a torzset futtatja): ez a konzervativ
+    oldal. Ketszer olvassuk: ahogy van (a helyettesites BELSEJEBEN allo `x=$(bash -c "$l")` is
+    fut, es a `$(cat)` az orokolt stdint olvassa), es a lezart helyettesitesekkel egy-egy
+    dinamikus szova vonva (`bash -c "$(echo "$l")"` programja a helyettesites, #775).
+    A JS iker anyRunsStdin alakja."""
+    if depth > _MAX_NEST:
+        return 'nested'
+    funcs = funcs or {}
     loose = bool(_READS_STDIN_RE.search(text))
+    job_control = bool(_JOB_CONTROL_RE.search(text))
     blanked = _sub_blanked(text)
-    return any(_cmd_runs_stdin(p, loose)
-               for t in ((text, blanked) if blanked != text else (text,))
-               for p in _SIMPLE_SPLIT.split(t) if p.strip())
+    interp = shell = ''
+    for t in ((text, blanked) if blanked != text else (text,)):
+        parts = _SIMPLE_SPLIT_KEEP.split(t)
+        for i in range(0, len(parts), 2):
+            p = parts[i]
+            if not p.strip():
+                continue
+            words, k = _cmd_word(p)
+            c = ''
+            if k < len(words) and not words[k][1] and words[k][0] in funcs and not _function_bypassed(words, k):
+                c = _body_consumer(funcs[words[k][0]], funcs, depth + 1)
+            c = c or _runs_words(words, k, depth, loose)
+            if not c or _own_stdin(p, parts[i + 1] if i + 1 < len(parts) else '', loose, job_control):
+                continue
+            if _strong_consumer(c):
+                return c           # a gdb or a dynamic word anywhere in the body wins (#777 review 13/14)
+            if not _code_consumer(c):
+                shell = shell or c
+            elif not interp:
+                interp = c
+    return shell or interp
+
+
+def _function_bypassed(words, k):
+    """A k-adik szo elott allo atlatszo elotag (command, builtin, exec, env, nohup) a shell-
+    fuggvenyt megkeruli, a PATH-beli parancs fut (bash-sal merve, #777 review 6); a `time`
+    kulcsszo a fuggvenyt futtatja."""
+    return any(os.path.basename(x) in _TRANSPARENT and os.path.basename(x) != 'time'
+               for x, _d in words[:k])
 
 
 def _function_bodies(cmd):
@@ -609,16 +1327,158 @@ def _function_bodies(cmd):
     for m in _FUNC_DEF_RE.finditer(cmd):
         name = m.group(1) or m.group(3)
         opener = m.group(2) or m.group(4)
-        closer = '}' if opener == '{' else ')'
-        depth, i = 1, m.end()
-        while i < len(cmd) and depth:
-            if cmd[i] == opener:
-                depth += 1
-            elif cmd[i] == closer:
-                depth -= 1
-            i += 1
-        out[name] = cmd[m.end():i - 1 if depth == 0 else i]
+        out[name] = cmd[m.end():_body_end(cmd, m.end(), opener)]
     return out
+
+
+def _body_end(cmd, start, opener):
+    """Where bash ends a function body opened by `opener` at `start` (len(cmd) when it does not):
+    the LATER of the parsed end and the old plain bracket count, so a parser error over-blocks
+    (#777 review 11: `f(){ echo ${x:- ; } ; bash; }` ended at the `}` inside ${...})."""
+    return max(_parsed_body_end(cmd, start, opener), _counted_body_end(cmd, start, opener))
+
+
+def _counted_body_end(cmd, start, opener):
+    """The pre-review-10 end: the bracket that balances `opener`, quotes not seen."""
+    closer = '}' if opener == '{' else ')'
+    depth = 1
+    for i in range(start, len(cmd)):
+        if cmd[i] == opener:
+            depth += 1
+        elif cmd[i] == closer:
+            depth -= 1
+            if not depth:
+                return i
+    return len(cmd)
+
+
+def _skip_quoted(cmd, i):
+    """The index after the escape, quote or expansion starting at `i` (`\\x`, '..', "..",
+    `..`, $'..', ${..}, $(..)), or -1 when none starts there."""
+    n = len(cmd)
+    c = cmd[i]
+    if c == '\\':
+        return i + 2
+    if c == "'":
+        j = cmd.find("'", i + 1)
+        return n if j < 0 else j + 1
+    if c in '"`':
+        i += 1
+        while i < n and cmd[i] != c:
+            j = _skip_quoted(cmd, i) if c == '"' and cmd[i] in '\\$`' else -1
+            i = j if j >= 0 else i + (2 if cmd[i] == '\\' else 1)
+        return i + 1
+    if c == '$' and i + 1 < n:
+        d = cmd[i + 1]
+        if d == "'":
+            i += 2
+            while i < n and cmd[i] != "'":
+                i += 2 if cmd[i] == '\\' else 1
+            return i + 1
+        if d == '(':
+            return _parsed_body_end(cmd, i + 2, '(') + 1
+        if d == '{':
+            depth, i = 1, i + 2
+            while i < n:
+                j = _skip_quoted(cmd, i)
+                if j >= 0:
+                    i = j
+                    continue
+                if cmd[i] == '{':
+                    depth += 1
+                elif cmd[i] == '}':
+                    depth -= 1
+                    if not depth:
+                        return i + 1
+                i += 1
+            return n
+    return -1
+
+
+_HEREDOC_OP_RE = re.compile(r'<<(-?)[ \t]*')
+
+
+def _heredoc_delimiter(cmd, i):
+    """(delimiter, end index) of the here-document word at `i`, quotes and escapes removed."""
+    out = []
+    n = len(cmd)
+    while i < n and cmd[i] not in ' \t\n;&|()<>':
+        c = cmd[i]
+        if c in '\'"':
+            j = cmd.find(c, i + 1)
+            j = n if j < 0 else j
+            out.append(cmd[i + 1:j])
+            i = j + 1
+        elif c == '\\':
+            out.append(cmd[i + 1:i + 2])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out), i
+
+
+def _parsed_body_end(cmd, start, opener):
+    """Where bash ends the body, parsed: quotes, escapes, expansions, comments and here-document
+    bodies are skipped. `)` closes a `( )` body. A `}` closes only as a reserved word in command
+    position, after `;`, `&`, a newline or a closed `)`/`}`, with a word end after it (measured in
+    probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`, `echo }` do not close). A `{` word
+    opens a nested group."""
+    depth, i, n = 1, start, len(cmd)
+    closed = -1                                  # index of the last closing `)`/`}`
+    pending = []                                 # here-documents whose body starts at the next newline
+    while i < n:
+        c = cmd[i]
+        j = _skip_quoted(cmd, i)
+        if j >= 0:
+            i = j
+            continue
+        if c == '#' and (i == start or cmd[i - 1] in ' \t\n;&|(){}'):
+            j = cmd.find('\n', i)
+            i = n if j < 0 else j
+            continue
+        if cmd.startswith('<<<', i):
+            i += 3
+            continue
+        if cmd.startswith('<<', i):
+            m = _HEREDOC_OP_RE.match(cmd, i)
+            word, i = _heredoc_delimiter(cmd, m.end())
+            pending.append((word, bool(m.group(1))))
+            continue
+        if c == '\n' and pending:
+            for word, strip in pending:
+                while i < n:
+                    j = cmd.find('\n', i + 1)
+                    j = n if j < 0 else j
+                    line = cmd[i + 1:j]
+                    i = j
+                    if (line.lstrip('\t') if strip else line) == word:
+                        break
+            pending = []
+            continue
+        if opener == '(':
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if not depth:
+                    return i
+        elif c in '{}' and (i == start or cmd[i - 1] in ' \t\n;&|()') and (i + 1 >= n or cmd[i + 1] in ' \t\n;&|()<>'):
+            if c == '{':
+                depth += 1
+            else:
+                p = i - 1
+                while p >= start and cmd[p] in ' \t':
+                    p -= 1
+                if p < start or cmd[p] in ';&\n' or (cmd[p] in ')}' and p == closed):
+                    depth -= 1
+                    closed = i
+                    if not depth:
+                        return i
+        elif c == ')':
+            closed = i
+        i += 1
+    return n
 
 
 def _compound_text(cmd, end, closer):
@@ -641,16 +1501,25 @@ def _simple_runs(seg, funcs, cmd=None, end=None):
     programkent futtatja-e: maga az ertelmezo, egy fuggveny, amelynek a torzseben
     ilyen all, vagy egy osszetett parancs (ciklus, if, { }) zaroja, amelynek a
     torzseben ilyen all. `cmd`/`end` csak a fejnel adott (a cso-tagnal a zaro nem
-    ertelmes)."""
-    if _cmd_runs_stdin(seg):
-        return True
+    ertelmes). Visszaad: a FOGYASZTO szo (ertelmezo, a fuggveny TORZSENEK fogyasztoja, zaro),
+    vagy '' (#777 review 5, 6)."""
     words, k = _cmd_word(seg)
-    if k < len(words) and words[k][0] in funcs and _any_runs_stdin(funcs[words[k][0]]):
-        return True
+    if k < len(words) and words[k][0] in funcs and not _function_bypassed(words, k):
+        # A fuggveny arnyekolja a PATH-ot (#777 review 6: `python3(){ bash; }; python3 <<A`
+        # torzset a bash olvassa), ezert a fuggveny ELOBB jon, es a TORZSENEK a fogyasztoja a
+        # szo: a nev (python3, f) nem mondja meg, kod vagy shell olvassa-e a torzset.
+        consumer = _body_consumer(funcs[words[k][0]], funcs)
+        if consumer:
+            return consumer
+    consumer = _cmd_runs_stdin(seg)
+    if consumer:
+        return consumer
     last = _last_operand(words)
     if cmd is not None and last in _CLOSERS:
-        return _any_runs_stdin(_compound_text(cmd, end, last))
-    return False
+        # a gdb inside the compound is the consumer, not the closer (#777 review 13: `{ gdb -q; } <<A`)
+        c = _body_consumer(_compound_text(cmd, end, last), funcs)
+        return c if _strong_consumer(c) else (last if c else '')
+    return ''
 
 
 def _enclosing_runs(parts, funcs):
@@ -660,44 +1529,48 @@ def _enclosing_runs(parts, funcs):
       . <(cat <<SH ...)            -> program     bash <(cat <<SH ...)        -> program
       bash -c "$(cat <<EOF ...)"   -> program     x=$(cat <<EOF ...)          -> adat
       echo "$(cat <<EOF ...)"      -> adat        diff <(cat <<A) <(cat <<B)  -> adat
-    `parts` a fej, a re.split megtartott elvalasztoival: [szoveg, elvalaszto, szoveg, ...]."""
+    `parts` a fej, a re.split megtartott elvalasztoival: [szoveg, elvalaszto, szoveg, ...].
+    Visszaad: a fogyaszto szo, vagy '' (#777 review 5)."""
     i = len(parts) - 1
     depth = 0
     while i >= 2 and depth < _MAX_NEST:
         sep, outer = parts[i - 1], parts[i - 2]
         if sep not in ('$(', '`', '('):
-            return False
+            return ''
         hs = sep != '(' and re.search(r'<<<\s*["\']?\s*$', outer)
         if hs:
             # `bash <<<"$(cat <<EOF)"`: a here-string a KULSO parancs stdin-je (#748 review)
-            if _simple_runs(outer[:hs.start()], funcs):
-                return True
+            c = _simple_runs(outer[:hs.start()], funcs)
+            if c:
+                return c
             i -= 2
             depth += 1
             continue
         procsub = sep == '(' and outer.rstrip()[-1:] in ('<', '>')
         if sep == '(' and not procsub:
-            return False           # alhej: `( cat <<EOF )` -- a torzs a cat-e
+            return ''              # alhej: `( cat <<EOF )` -- a torzs a cat-e
         outer = outer.rstrip()[:-1] if procsub else outer
         words, k = _cmd_word(outer)
         if k < len(words):
             w, dyn = words[k]
             base = os.path.basename(w)
             if dyn or base in ('source', '.', 'eval'):
-                return True
-            if base in funcs and _any_runs_stdin(funcs[base]):
-                return True
+                return w
+            if w in funcs:
+                c = _body_consumer(funcs[w], funcs)
+                if c:
+                    return c
             flags = _STDIN_SCRIPT_FLAGS.get(base, ())
             if base in INTERPRETERS and (procsub or any(x in flags for x, _ in words[k + 1:])):
-                return True
+                return base
             if base in INTERPRETERS and not procsub:
                 # `bash "$(cat <<EOF)"`: az elso operandus a helyettesites maga,
                 # a shell program-FAJLKENT nyitna meg -- nem a torzs fut. Ha viszont
                 # NINCS mas operandus es a helyettesites a `-c` erteke, fent mar igen.
-                return False
+                return ''
         i -= 2
         depth += 1
-    return False
+    return ''
 
 
 # Ennel hosszabb nyito sort a _heredoc_runs_body nem bont szavakra: 4000 heredoc egy
@@ -706,7 +1579,136 @@ _HEREDOC_LINE_CAP = 4096
 
 
 def _heredoc_runs_body(cmd, h, funcs=None):
-    """A torzs PROGRAM lesz, vagy egy program BEMENETE?
+    """The word that runs the body of heredoc/here-string h, or ''; see _heredoc_runs_split. A
+    quoted or escaped separator before the consumer (`env X='a;b' bash <<A`, `bash -s 'x(y' <<A`,
+    `env X=a\\;b bash <<A`) cut the opener line in the wrong place and the body passed as data
+    (#777 review 12). The quote-aware reading comes second and only adds a consumer: the opener
+    line alone does not show a quote opened on an earlier line."""
+    if funcs is None:
+        funcs = _function_bodies(cmd)
+    plain = _heredoc_runs_split(cmd, h, funcs, _plain_split)
+    if plain and not _code_consumer(plain):
+        # ...unless the quoted cut finds a gdb or a dynamic word (#777 review 14)
+        quoted = _heredoc_runs_split(cmd, h, funcs, _quoted_split)
+        return quoted if _strong_consumer(quoted) else plain
+    # a code consumer from the plain cut may be a word of a quoted value (#777 review 13:
+    # `timeout 5 bash -s 'a;python3' <<A` is read by bash): a shell from the quoted cut wins
+    quoted = _heredoc_runs_split(cmd, h, funcs, _quoted_split)
+    if plain and os.path.basename(quoted) not in _SHELLS and not _is_gdb(os.path.basename(quoted)):
+        return plain           # the quoted cut misreads a line that starts inside an earlier quote
+    return quoted or plain
+
+
+def _logical_line_start(cmd, pos):
+    """The index of the last newline before pos that ends a command line: not inside a quote,
+    an escape, a `$(`, `${` or backtick, and not in an earlier heredoc body; -1 when none."""
+    records, _certain = _heredoc_scan().find_all(cmd)
+    chars = list(cmd[:pos])
+    for r in records:
+        if r.kind == 'heredoc' and r.end <= pos:
+            for i in range(r.body_start, r.end):
+                if chars[i] != '\n':
+                    chars[i] = '_'
+    text = ''.join(chars)
+    state = _quote_map(text)
+    stack, last, i = [], -1, 0
+    while i < len(text):
+        ch = text[i]
+        if state[i]:
+            pass
+        elif ch == '\\':
+            i += 2
+            continue
+        elif text.startswith(('$(', '${'), i):
+            stack.append(')' if text[i + 1] == '(' else '}')
+            i += 2
+            continue
+        elif ch == '`':
+            if stack and stack[-1] == '`':
+                stack.pop()
+            else:
+                stack.append('`')
+        elif stack and ch in '({':
+            stack.append(')' if ch == '(' else '}')
+        elif stack and ch == stack[-1]:
+            stack.pop()
+        elif ch == '\n' and not stack:
+            last = i
+        i += 1
+    return last
+
+
+def _plain_split(rx, text):
+    return rx.split(text)
+
+
+def _quoted_split(rx, text):
+    """rx.split(text) at the matches outside quotes, backslash escapes and balanced `${...}`
+    only (#777 review 12, 13: `X=${Y:-a;b} bash <<A`)."""
+    state = _quote_map(text)
+    mask = list(text)
+    i = 0
+    while i < len(text):
+        if state[i]:
+            mask[i] = '_'
+        elif text[i] == '\\' and i + 1 < len(text):
+            mask[i] = mask[i + 1] = '_'
+            i += 2
+            continue
+        elif text.startswith('${', i):
+            end = _param_end(text, state, i)
+            if end:
+                mask[i:end] = '_' * (end - i)
+                i = end
+                continue
+        i += 1
+    out, pos = [], 0
+    for m in rx.finditer(''.join(mask)):
+        out.append(text[pos:m.start()])
+        if rx.groups:
+            out.append(text[m.start():m.end()])
+        pos = m.end()
+    out.append(text[pos:])
+    return out
+
+
+def _param_end(text, state, i):
+    """The index after the `}` closing the `${` at i (nested `${`/`{` counted, quoted text skipped),
+    or 0 when it is not closed on this text."""
+    depth, j = 0, i + 1
+    while j < len(text):
+        if not state[j]:
+            ch = text[j]
+            if ch == '\\':
+                j += 2
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if not depth:
+                    return j + 1
+        j += 1
+    return 0
+
+
+_PIPE_COMPOUND_RE = re.compile(r'\s*(?:(?:if|while|until|for|select|case)(?![\w-])|[({])')
+
+
+def _unbalanced(text):
+    """More compound openers or `(` than closers: the compound goes on after this line."""
+    toks = [m.group(0) for m in _COMPOUND_TOKEN_RE.finditer(text)]
+    opened = sum(t in ('while', 'until', 'for', 'select', 'if', 'case', '{') for t in toks)
+    closed = sum(t in ('done', 'fi', 'esac', '}') for t in toks)
+    return opened > closed or text.count('(') > text.count(')')
+
+
+def _heredoc_runs_split(cmd, h, funcs, split):
+    """A torzs PROGRAM lesz, vagy egy program BEMENETE? Visszaad: a FOGYASZTO szo (az
+    ertelmezo, a fuggveny, a zaro, `eval`/`source`, a dinamikus szo; 'unread' a tul hosszu
+    soron), vagy '' ha a torzs adat. Igaz/hamis helyett szo, mint a JS iker heredocRunsBody-ja,
+    mert a hivo a fogyaszto NEVEN dont (#777 review 5: `source /dev/stdin ruby <<A` fogyasztoja
+    a `source`, nem a ruby, hiaba all a soron a nev).
 
     A kulonbseg nem az, hogy szerepel-e ertelmezo-nev a soron, hanem az, hogy az
     ertelmezo HONNAN veszi a programjat (79d8b59c):
@@ -746,11 +1748,13 @@ def _heredoc_runs_body(cmd, h, funcs=None):
     A JS iker: scripts/hooks/lib/heredoc-program.mjs (child guard, egress-kapu); a kozos
     esetfajl scripts/__tests__/heredoc-program-cases.json, mindket oldal arra van pinelve.
     """
-    ls = cmd.rfind('\n', 0, h.start)
+    # the quoted cut starts at the logical line: a newline inside a quote or a `$(`/`${` before
+    # the opener does not end it (#777 review 14: `X="a<newline>b" bash <<A`)
+    ls = _logical_line_start(cmd, h.start) if split is _quoted_split else cmd.rfind('\n', 0, h.start)
     while ls > 0 and cmd[ls - 1] == '\\':
         ls = cmd.rfind('\n', 0, ls - 1)
     if h.start - ls > _HEREDOC_LINE_CAP or h.line_end - h.tail_start > _HEREDOC_LINE_CAP:
-        return True                # nem olvassuk vegig: kodkent marad (tultiltas, nem res)
+        return 'unread'            # nem olvassuk vegig: kodkent marad (tultiltas, nem res)
     if funcs is None:
         funcs = _function_bodies(cmd)
     head = cmd[ls + 1:h.start].replace('\\\n', '')
@@ -765,21 +1769,189 @@ def _heredoc_runs_body(cmd, h, funcs=None):
             n = fd.group(1).lstrip('0')
             path = r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n
             dup = r'(?:^|\s)0?<&\s*0*%s-?(?=\s|$)' % n
-            line = head + ' ' + _TAIL_SPLIT.split(cmd[h.tail_start:h.line_end])[0]
+            line = head + ' ' + split(_TAIL_SPLIT, _strip_comment(cmd[h.tail_start:h.line_end]))[0]
             if not re.search(path, line) and not re.search(dup, line):
-                return False
+                return ''
             line = re.sub(dup, ' ', re.sub(path, '-', line))
             # az utolso egyszeru parancs, a zarojaval egyutt (`{ bash; } 2>&1 3<<EOF <&3`,
             # #775): ugyanugy, mint a stdin-heredoc fejenel lent
-            return _simple_runs(_HEAD_SPLIT.split(_sub_blanked(line))[-1], funcs, cmd, h.start)
-    parts = _HEAD_SPLIT.split(_sub_blanked(head))
-    tail = _TAIL_SPLIT.split(cmd[h.tail_start:h.line_end])[0]
-    pipe = _PIPE_SPLIT.split(tail)
-    if _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start):
+            return _simple_runs(split(_HEAD_SPLIT, _sub_blanked(line))[-1], funcs, cmd, h.start)
+    parts = split(_HEAD_SPLIT, _sub_blanked(head))
+    tail = split(_TAIL_SPLIT, _strip_comment(cmd[h.tail_start:h.line_end]))[0]
+    if _in_backticks(head):
+        # inside a backtick substitution the next closer (`\`` of a nested one, or the bare
+        # backtick) ends the simple command: `echo `echo \`bash <<< 'x'\` tail`` runs `bash`,
+        # the ` tail` after the closer is the OUTER echo's (#777 review 4)
+        tail = _BACKTICK_CLOSER_RE.split(tail)[0]
+    pipe = split(_PIPE_SPLIT, tail)
+    first = _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start)
+    if first:
+        return first
+    full_tail = _strip_comment(cmd[h.tail_start:h.line_end])
+    off = len(pipe[0]) + 1
+    for p in pipe[1:]:
+        if _PIPE_COMPOUND_RE.match(p):
+            # a compound member is read whole, to its closer on a later line too (#777 review 13,
+            # 14: `cat <<A | (gdb -q)`, `cat <<A | if true; then bash; fi`)
+            text = full_tail[off:]
+            if _unbalanced(text):
+                text += '\n' + cmd[h.end:]
+            c = _body_consumer(text, funcs)
+        else:
+            c = _simple_runs(p, funcs)
+        if c:
+            return c
+        off += len(p) + 1
+    return _enclosing_runs(parts, funcs) or _closing_pipe_runs(cmd, h, parts, funcs)
+
+
+def _stdin_programs(text, depth=0):
+    """Az itt-string PROGRAMOK a szovegben, a VEGREHAJTOTT heredoc-torzsokbe is lemenve
+    (#777 review 3): `bash <<'A'\\nbash <<< 'rm -rf x'\\nA` -- a kulso find_all a torzsbe nem
+    lat, mert a torzs a scannernek adat. A lezaratlan szavu itt-string is program: a scanner
+    a sor nyers maradekat adja ra (dynamic=True), inkabb tultilt. Egy nem shell fogado
+    (`python3 - <<PY`) torzseben a `<<<` csak idezojelen es komment kivul szamit, amit a
+    scanner nem jegyez fel, ezert oda is lemenni artalmatlan."""
+    records, _certain = _heredoc_scan().find_all(text)
+    if not records:
+        return []
+    funcs = _function_bodies(text)
+    out = []
+    for h in records:
+        consumer = _heredoc_runs_body(text, h, funcs)
+        if not consumer:
+            continue
+        if os.path.basename(consumer) == 'gdb':
+            block('gdb olvas heredocot vagy itt-stringet: a parancsnyelve (shell/she/!, pipe, python, '
+                  'eval, interpreter-exec, guile, -x /dev/stdin) a torzset sokfelekeppen futtathatja, '
+                  'ezert a kapu egeszben nem engedi at (#777 review 12). A gdb-parancsokat irasd '
+                  'fajlba, es -x FAJL-lal add at.')
+        if _dynamic_gdb(consumer) and not _assigned_non_gdb(text, consumer, h.start):
+            block('A heredocot vagy itt-stringet futasidoben kifejtett parancsszo olvassa (%s): a '
+                  'kapu nem tudja, mi lesz belole (gdb is lehet), egeszben nem engedi at (#777 review 13).'
+                  % consumer[:40])
+        if h.kind == 'herestring':
+            if h.text.strip():
+                out.append(h.text)
+        elif depth < _MAX_NEST:
+            body = text[h.body_start:h.body_end]
+            # `<<` too: a gdb heredoc nested in a run body is blocked one level down (#777 review 12)
+            if '<<' in body and not _code_consumer(consumer):
+                out.extend(_stdin_programs(body, depth + 1))
+    return out
+
+
+# A consumer the shell expands at run time (`$G -q <<A`, `$(echo gdb)`, a backtick, `"$@"` or `$1`
+# in a function, a glob or brace name): it may be gdb, so it BLOCKs whole like gdb (#777 review 13).
+_DYNAMIC_CONSUMER_RE = re.compile(r'[$`*?\[{]')
+
+
+def _strong_consumer(c):
+    """A consumer that BLOCKs whole: gdb, or a word that may expand to gdb."""
+    return bool(c) and (os.path.basename(c) == 'gdb' or _dynamic_gdb(c))
+
+
+def _program_consumer(text, base, depth):
+    """The consumer of a command line run as a program (`bash -c P`, `su -c P`, `sg G P`,
+    `eval P`): a gdb or a dynamic word inside it, else the runner itself (#777 review 14:
+    `su -c 'gdb -q' <<A`, `bash -c '$0 -q' gdb <<A`)."""
+    c = _body_consumer(text, None, depth + 1)
+    return c if _strong_consumer(c) else (base if c else '')
+
+
+def _dynamic_gdb(consumer):
+    """An expanded word (`$..`, a backtick) or a glob/brace pattern that may name gdb."""
+    if consumer[:1] in ('$', '`'):
         return True
-    if any(_simple_runs(p, funcs) for p in pipe[1:]):
-        return True
-    return _enclosing_runs(parts, funcs)
+    if not _DYNAMIC_CONSUMER_RE.search(consumer):
+        return False
+    pattern = re.sub(r'\{[^{}]*\}', '*', os.path.basename(consumer))
+    return any(fnmatch.fnmatchcase(n, pattern) for n in _GDB_NAMES + ('x-gdb', 'gdb-x'))
+# ...unless it is a plain `$NAME` whose every assignment in the command before it is a literal
+# non-gdb word: `P=/x/venv/bin/python; $P - <<EOF` (30 real fleet commands in the replay).
+_VAR_CONSUMER_RE = re.compile(r'^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$')
+_LITERAL_VALUE_RE = r"""(?:'([^']*)'|"([^"$`\\]*)"|([^\s;&|()<>$`'"\\]*))(?=[\s;&|)]|$)"""
+
+
+def _assigned_non_gdb(text, consumer, end):
+    """Every occurrence of NAME before the consumer is a read (`$NAME`, `${NAME}`), a literal
+    `NAME=word` or a `for NAME in word..` at a statement start, all non-gdb. Any other write
+    (`read`, `+=`, `eval`, `printf -v`, `declare -n`, `NAME[0]=`, `mapfile`, `${NAME:=..}`,
+    `select`, `export`) is no exception: the consumer stays dynamic (#777 review 14)."""
+    m = _VAR_CONSUMER_RE.match(consumer)
+    if not m:
+        return False
+    name = m.group(1)
+    head = text[:end]
+    writes = 0
+    for occ in re.finditer(r'(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])' % re.escape(name), head):
+        i, j = occ.start(), occ.end()
+        if head[i - 1:i] == '$' or (head[i - 2:i] == '${' and head[j:j + 1] == '}'):
+            continue
+        if not _STATEMENT_START_RE.search(head[:i]):
+            pre = re.match(r'(?s)(.*?)for[ \t]+$', head[:i])
+            if not pre or not _STATEMENT_START_RE.search(pre.group(1)):
+                return False
+            words = re.match(r'[ \t]+in((?:[ \t]+[A-Za-z0-9_./-]+)+)[ \t]*(?:;|\n)', head[j:])
+            if not words or any(_is_gdb(os.path.basename(w)) for w in words.group(1).split()):
+                return False
+            writes += 1
+            continue
+        if head[j:j + 1] != '=':
+            return False
+        value = re.match(_LITERAL_VALUE_RE, head[j + 1:])
+        if not value:
+            return False
+        w = next(g for g in value.groups() if g is not None)
+        if not w or _DYNAMIC_CONSUMER_RE.search(w) or _is_gdb(os.path.basename(w.split()[0])):
+            return False
+        writes += 1
+    return writes > 0
+
+
+# What may stand before a word that starts a simple command: nothing, a separator or a keyword.
+_STATEMENT_START_RE = re.compile(r'(?:^|[;&|(){}\n]|(?<![\w-])(?:then|do|else|elif))[ \t]*$')
+
+
+def _code_consumer(consumer):
+    """A heredoc FOGYASZTOJA kod-ertelmezo (python/node/ruby/perl/php), nem shell? Ilyen
+    torzsbe nem megyunk le itt-stringert: a python/node idezojel-szerkezete nem a bashe, es a
+    sajat kapu-kommentjeit idezo szerkeszto-parancsot is megfogta volna (replay, 4 valodi
+    parancs); a torzset az interpreter_payloads nezi. MINDEN MAS futtato torzsebe lemegyunk:
+    eval, source, $SHELL, fuggveny, zaro, dinamikus szo, 'unread'. A fogyaszto a
+    _heredoc_runs_body SZAVA, nem a nyito soron talalt nev (#777 review 5: `source /dev/stdin
+    ruby <<A`, `$SHELL <<A; : python3`, `eval "$(cat <<A # node`, `node -v; \\<ujsor>source
+    /dev/stdin <<A` fogyasztoja source/$SHELL/eval, a torzs fut, a ruby/python3/node csak egy
+    szo a soron). Ugyanaz a szabaly, mint a JS iker nestedPrograms-e: INTERPRETERS es nem shell."""
+    base = os.path.basename(consumer)
+    return base in INTERPRETERS and base not in _SHELLS
+
+
+def _closing_pipe_runs(cmd, h, parts, funcs):
+    """A heredoc egy LEZARATLAN `$( )` vagy backtick belsejeben all, es a helyettesitest
+    zaro sor csovon adja tovabb: `echo $(cat <<EOF ... EOF\n) | bash` a torzset futtatja
+    (bash-sal merve, #777). A zaro `)` utani cso-tagokat ugyanugy olvassuk, mint a nyito
+    sor cso-tagjait."""
+    if h.kind != 'heredoc' or not any(sep in ('$(', '`') for sep in parts[1::2]):
+        return ''
+    rest = cmd[h.end + 1:]
+    nl = rest.find('\n')
+    line = rest if nl < 0 else rest[:nl]
+    close = re.search(r'[)`]', line)
+    if not close:
+        return ''
+    tail = _TAIL_SPLIT.split(_strip_comment(line[close.end():]))[0]
+    return next((c for c in (_simple_runs(p, funcs) for p in _PIPE_SPLIT.split(tail)[1:]) if c), '')
+
+
+def _heredoc_scan():
+    """A heredoc_scan modul (a kapu mellett all). Itt, es nem a fajl elejen toltodik be: ha
+    hianyzik, a hiba a main() kivetelkezelojebe fut (exit 2, BLOKK), nem exit 1-be (ATENGEDES)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import heredoc_scan
+    return heredoc_scan
 
 
 def _heredoc_split(cmd):
@@ -792,13 +1964,7 @@ def _heredoc_split(cmd):
     A heredocokat a heredoc_scan olvassa (idezojel- es komment-tudatosan, #729). Ha
     az olvasas nem biztos (lasd ott), semmi nem feherul ki: inkabb tultilt, mint atenged.
     """
-    # A modul a kapu mellett all. Itt, es nem a fajl elejen toltodik be: ha hianyzik,
-    # a hiba a main() kivetelkezelojebe fut (exit 2, BLOKK), nem exit 1-be (ATENGEDES).
-    here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
-    import heredoc_scan
-    heredocs, certain = heredoc_scan.find(cmd)
+    heredocs, certain = _heredoc_scan().find(cmd)
     funcs = _function_bodies(cmd) if heredocs else {}
     data, code, plain = [], [], []
     for h in heredocs:
@@ -885,35 +2051,59 @@ def _script_arg_ranges(text):
 
 def scannable(cmd):
     """A parancs azon resze, amely TENYLEG lefut. Lasd a modul-fejlec 1-4. pontjat."""
+    return _scannable_pair(cmd)[0]
+
+
+def _scannable_pair(cmd):
+    """(text, light): a prozatlanitott szoveg (parancsnev-kereses) es a CSAK adat-torzs es
+    komment nelkuli szoveg (#777: a `bash -c "rm -rf x"` programszava a prozaszuresben
+    kifeherul, a program-szot a light valtozatbol vesszuk). Mindketto offset-tarto."""
     data, code = _heredoc_body_ranges(cmd)
-    text = _blank_ranges(cmd, data)
-    text = _blank_ranges(text, _comment_ranges(text))
-    keep = _script_arg_ranges(text)
-    text = _blank_ranges(text, _prose_quote_ranges(text, keep, code))
-    return text
+    light = _blank_ranges(cmd, data)
+    light = _blank_ranges(light, _comment_ranges(light))
+    keep = _script_arg_ranges(light)
+    text = _blank_ranges(light, _prose_quote_ranges(light, keep, code))
+    return text, light
 
 
 def segments(text):
-    """Logikai szegmensek (&&, ||, ;, |, ujsor, $(, backtick) -- IDEZOJEL-TUDATOSAN.
+    """Logikai szegmensek (&&, ||, ;, |, &, ujsor, $(, backtick) -- IDEZOJEL-TUDATOSAN.
 
     A regi valtozat vakon vagott, ezert egy idezett grep-minta belsejeben levo '|'
     uj szegmenst nyitott, es a minta kovetkezo szava parancsnevnek latszott.
     """
+    return [text[a:b] for a, b in _segment_spans(text)]
+
+
+def _segment_spans(text):
+    """A segments() szegmensei (kezdo, veg) offsetkent, a szelso szokozok nelkul."""
     state = _quote_map(text)
-    parts, start, i = [], 0, 0
+    spans, start, i = [], 0, 0
     while i < len(text):
         if state[i]:
             i += 1
             continue
         hit = next((d for d in DELIMS if text.startswith(d, i)), None)
+        if hit is None and text[i] == '&' and text[i + 1:i + 2] != '>' and text[i - 1:i] not in ('<', '>'):
+            # Egy magaban allo `&` ugyanugy parancsot zar, mint a `;` (`sleep 1 & rm ..`):
+            # a masodik parancs a hatterbe tett elso UTAN fut. Nem `&&` (az a DELIMS-ben
+            # elobb talal), nem `&>`, `>&`, `<&` atiranyitas. Regi hezag, nem #777;
+            # a JS iker _SIMPLE_SPLIT-je es a child-claude kapu eddig is vagott rajta.
+            hit = '&'
         if hit:
-            parts.append(text[start:i])
+            spans.append((start, i))
             i += len(hit)
             start = i
             continue
         i += 1
-    parts.append(text[start:])
-    return [p.strip() for p in parts if p.strip()]
+    spans.append((start, len(text)))
+    out = []
+    for a, b in spans:
+        p = text[a:b]
+        left, right = len(p) - len(p.lstrip()), len(p.rstrip())
+        if right > left:
+            out.append((a + left, a + right))
+    return out
 
 
 def _tokens(seg):
@@ -929,9 +2119,33 @@ def _tokens(seg):
                 cur, had_space = [], False
             i += 1
             continue
+        if not state[i] and ch == '$' and seg.startswith("'", i + 1):
+            # $'..' ANSI-C szo (#777): a bash kifejti, a szo a KIFEJTETT szoveg
+            # (`bash -c $'rm\x20-rf x'`), `\'` benne nem zar.
+            j = i + 2
+            while j < len(seg) and seg[j] != "'":
+                j += 2 if seg[j] == '\\' else 1
+            dec = _heredoc_scan().ansi_c(seg[i + 2:j])
+            had_space = had_space or bool(re.search(r'\s', dec))
+            cur.extend(dec)
+            i = j + 1
+            continue
         if not state[i] and ch in ('"', "'"):
             i += 1
             continue
+        if ch == '\\' and state[i] != 1 and i + 1 < len(seg):
+            # idezetlen visszaperjel: a kovetkezo karakter szo szerint (`rm\ -rf`,
+            # `bash -c rm\ -rf\ x`); idezojelben csak a `\"` `\\` `\$` `\`` kerul ki.
+            nxt = seg[i + 1]
+            if not state[i] or nxt in '"\\$`':
+                if nxt == '\n' and not state[i]:
+                    i += 2         # sorfolytatas: a szo folytatodik
+                    continue
+                if nxt in ' \t':
+                    had_space = True
+                cur.append(nxt)
+                i += 2
+                continue
         if state[i] and ch in ' \t':
             had_space = True
         cur.append(ch)
@@ -973,7 +2187,7 @@ _TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')
-_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh')
+_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash')
 # A kapcsolok, amelyek KULON szoban hozzak az ertekuket (xargs -I {} / -n 1 / -P 4).
 _VALUE_FLAGS = ('-I', '-i', '-n', '-P', '-L', '-s', '-d', '-E', '-a',
                 '--max-args', '--max-procs', '--delimiter', '--replace', '--arg-file')
@@ -1033,13 +2247,88 @@ def command_index(toks):
     return None
 
 
-def _sub_scripts(toks, idx):
-    """A szegmens shell-parancsanak -c kapcsoloval atadott szkriptje(i)."""
-    if idx is None or os.path.basename(toks[idx][0]) not in _SHELLS:
+def shell_c_programs(cmd):
+    """A parancs minden szo szerinti `sh|bash|... -c PROGRAM` programszava, szegmensenkent
+    (#777). A check_bash ugyanezen az uton megy; a kozos esetfajl
+    (scripts/__tests__/shell-c-program-cases.json) erre es a JS iker shellCPrograms-ara van pinelve."""
+    _text, light = _scannable_pair(cmd)
+    return [p for a, b in _segment_spans(light) for p in _c_programs(light[a:b])]
+
+
+def _c_programs(seg):
+    """A szegmens shell-parancsanak -c kapcsoloval atadott PROGRAMSZAVA (#777), a bash
+    opcio-olvasasat kovetve, ugyanugy, mint _runs_words -c aga: kapcsolocsoportok, `-o val`,
+    hosszu opciok a lista elejen, `-c -- prog`, `-c -x prog`, atiranyitas kozben. Egy nem
+    betu-csoport kotojeles szo (`-c'x'`, `-c-x`) ervenytelen kapcsolo: nem fut program.
+    Ures lista, ha a parancs nem shell, vagy a programja egy FAJL / a stdin."""
+    bare = _bare_tokens(seg)
+    idx = command_index(bare)
+    if idx is None or bare[idx][1] or os.path.basename(bare[idx][0]) not in _SHELLS:
         return []
-    for k in range(idx + 1, len(toks)):
-        if toks[k][0] in ('-c', '--command') and k + 1 < len(toks):
-            return [toks[k + 1][0]]
+    full = _tokens(seg.replace(')', ' ) '))   # a zaro `)` kulon szo (`echo "$(bash -c 'x')"`), mint a JS ikerben
+    f = next((i for i, (t, _sp) in enumerate(full) if t.lstrip('(') == bare[idx][0]), None)
+    if f is None:
+        return []
+    base = os.path.basename(bare[idx][0])
+    flags = _STDIN_SCRIPT_FLAGS.get(base, ())
+    long_opts = base in ('bash', 'rbash')
+    j = f + 1
+    while j < len(full):
+        x, sp = full[j]
+        if _REDIR_OP_RE.match(x):
+            j += 2
+            continue
+        if _REDIR_GLUED_RE.match(x):
+            j += 1
+            continue
+        if sp:
+            return []              # szokozos idezett szo a -c elott: program-FAJL
+        if long_opts:
+            lm = _BASH_LONG_OPT_RE.match(x)
+            if lm:
+                if lm.group(1) in _BASH_LONG_OPT_NO_RUN:
+                    return []
+                j += 1 + (lm.group(1) in _BASH_LONG_OPT_VALUE)
+                continue
+            long_opts = False
+        if base in ('bash', 'rbash') and x.startswith('--') and len(x) > 2:
+            return []
+        if x in flags or (_OPT_CLUSTER_RE.match(x) and re.match(r'^-[A-Za-z]*c', x)):
+            m = j + 1 + _opt_values(x)
+            ended = False
+            while m < len(full):
+                y, ysp = full[m]
+                if _REDIR_OP_RE.match(y):
+                    m += 2
+                elif _REDIR_GLUED_RE.match(y):
+                    m += 1
+                elif ysp or ended:
+                    break
+                elif y in ('-', '--'):
+                    m += 1
+                    ended = True
+                elif _opt_values(y):
+                    m += 1 + _opt_values(y)
+                elif y.startswith('--'):
+                    return []
+                elif y.startswith(('-', '+')):
+                    if not _OPT_CLUSTER_RE.match(y):
+                        return []
+                    m += 1
+                else:
+                    break
+            if m >= len(full):
+                return []
+            return [full[m][0]]
+        if _opt_values(x):
+            j += 1 + _opt_values(x)
+            continue
+        if x.startswith(('-', '+')) and len(x) > 1:
+            if not _OPT_CLUSTER_RE.match(x):
+                return []
+            j += 1
+            continue
+        return []                  # `-` (stdin) vagy program-FAJL
     return []
 
 
@@ -1382,14 +2671,15 @@ def check_payload(payload, _depth=0, cwd=None):
 
 
 def check_bash(cmd, _depth=0, cwd=None):
-    text = scannable(cmd)
+    text, light = _scannable_pair(cmd)
     # A munkakonyvtar szegmensrol szegmensre valtozhat (`cd X && rm y`), ezert
     # vegigvisszuk. Ismeretlen (None) cwd eseten a relativ utak nem eldonthetok, es a
     # nem eldonthetot a kapu nem engedi at.
     if cwd is not None:
         cwd = os.path.normpath(os.path.expanduser(cwd))
     entry_cwd, saw_cd = cwd, False
-    for seg in segments(text):
+    for a, b in _segment_spans(text):
+        seg = text[a:b]
         toks = _bare_tokens(seg)
         idx = command_index(toks)
 
@@ -1437,13 +2727,39 @@ def check_bash(cmd, _depth=0, cwd=None):
             cwd = _cd_target(toks, idx + 1, cwd)
             saw_cd = True
 
-        for sub in _sub_scripts(toks, idx):
-            if not sub or sub == cmd:
+        gdb_ex = _gdb_ex_runs(light[a:b])
+        if gdb_ex:
+            block('gdb -ex/-iex shell-sort vagy kodot futtat ("%s"): a kapu nem latja, mit; '
+                  'egeszben nem engedi at (#777 review 13).' % gdb_ex[:80])
+        for prog in _gdb_args_programs(light[a:b]):
+            # `gdb -ex run --args sh -c X` runs the program (#777 review 14)
+            if _depth >= _MAX_NEST:
+                block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
+                      'vegigkovetni, ezert nem engedi at.' % _depth)
+            check_bash(prog, _depth + 1, cwd)
+
+        # A -c program a LIGHT szovegbol jon: a prozaszures a szokozos programszot
+        # kifeheritette volna (`bash -c "rm -rf x"` eddig csak a _script_arg_ranges
+        # idezojeles alakjaban maradt meg, #777).
+        for sub in _c_programs(light[a:b]):
+            if not sub.strip() or sub == cmd:
                 continue
             if _depth >= _MAX_NEST:
                 block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
                       'vegigkovetni, ezert nem engedi at.' % _depth)
             check_bash(sub, _depth + 1, cwd)
+
+    # #777: az itt-string (`bash <<< 'rm -rf x'`, `sh <<< "$(cat f)"`) szava PROGRAM, ha
+    # a fogado a stdin-jet futtatja (ugyanaz a kerdes, mint a heredocnal). A dinamikus szo
+    # (`bash <<< "$(echo ..)"`) a kifejtetlen szovegevel megy tovabb: amit a shell csak
+    # futaskor allit elo, azt a kapu nem latja (elfogadott res, a kartyan kimondva).
+    # A vegrehajtott heredoc-torzsben allo itt-string is ide jon (review 3, _stdin_programs).
+    for prog in _stdin_programs(cmd):
+        if _depth >= _MAX_NEST:
+            block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
+                  'vegigkovetni, ezert nem engedi at.' % _depth)
+        check_bash(prog, _depth + 1, None if saw_cd else entry_cwd)
+        check_payload(prog, _depth + 1, None if saw_cd else entry_cwd)
 
     # Az ertelmezo-burkon beluli payload (efccadab). A szegmens-ciklus UTAN fut,
     # mert nem a parancsnevrol szol: a burok parancsneve legitim (python3), a

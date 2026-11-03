@@ -55,8 +55,8 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { find as findHeredocs } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies } from './lib/heredoc-program.mjs'
+import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -305,8 +305,40 @@ function startsNoServer(args) {
   return SAFE_SUBCOMMANDS.some(([a, b]) => args[0] === a && args[1] === b)
 }
 
-export function decide(command, env = process.env) {
-  if (typeof command !== 'string' || !command.includes('claude')) return { allow: true }
+// #777: the here-string PROGRAMS (`bash <<< 'claude -p x'`) and the `-c` programs
+// (`bash -xc 'claude -p x'`, `bash -c $'cl\\141ude -p x'`, `bash -c claude\\ -p\\ x`) of a
+// command, each a command line of its own. The shared twin decodes the word the way
+// bash does, so an encoded `claude` is visible here even when the raw text has none.
+// A heredoc body a SHELL runs (`bash <<'A' ... A`) is a command line too (#777 review 3):
+// decide() recurses into it, so a here-string or `-c` program inside the body is found.
+function nestedPrograms(command) {
+  const out = []
+  if (command.includes('<<')) {
+    for (const { consumer, body } of programHeredocs(command)) {
+      // review 4: ANY consumer that is not a code interpreter (eval, source, $SHELL, a function,
+      // a brace group, the closing-line pipe): heredocRunsBody already said the body runs as
+      // shell text. Only a python/node/... body stays out, its quoting is not bash's.
+      if (body.trim() && !(INTERPRETERS.has(consumer) && !SHELLS.has(consumer))) out.push(body)
+    }
+  }
+  if (command.includes('<<<')) {
+    const { records } = findAll(command)
+    const funcs = functionBodies(command)
+    for (const h of records) {
+      if (h.kind === 'herestring' && h.text.trim() && heredocRunsBody(command, h, funcs)) out.push(h.text)
+    }
+  }
+  out.push(...shellCPrograms(command))
+  out.push(...gdbArgsPrograms(command))   // `gdb -ex run --args PROG` runs PROG (#777 review 14)
+  return out
+}
+
+export function decide(command, env = process.env, depth = 0) {
+  if (typeof command !== 'string') return { allow: true }
+  // A `claude` the raw text does not show can still be spelled by quotes, `$'..'` or
+  // backslashes (`'cl''aude'`, `$'cl\\141ude'`): only a text with none of those is skipped.
+  if (!command.includes('claude') && !/['"\\$]/.test(command)) return { allow: true }
+  if (depth > 16) return { allow: false, segment: 'nesting-too-deep' }
   for (const segment of stripInertText(command).split(SEGMENT_SPLIT)) {
     const hit = inspectSegment(segment)
     if (!hit) continue
@@ -316,6 +348,14 @@ export function decide(command, env = process.env) {
     if (!childOwnsChannel(child)) continue
     if (ownConfigDir(child, env) || tokenlessStateDir(child)) continue
     return { allow: false, segment: segment.trim().replaceAll(Q_SPACE, ' ').replaceAll(Q_SEP, '_').slice(0, 200) }
+  }
+  // #777 review 12: gdb's command language can run a heredoc/here-string many ways; blocked whole
+  if (gdbReadsStdin(command)) return { allow: false, segment: 'gdb reading a heredoc/here-string (#777 review 12)' }
+  // #777 review 13: a gdb -ex/-iex value that runs a shell line or code (`-ex 'shell X'`, `-ex '!X'`, python)
+  if (gdbExRuns(command)) return { allow: false, segment: 'gdb -ex running a shell line or code (#777 review 13)' }
+  for (const text of nestedPrograms(command)) {
+    const inner = decide(text, env, depth + 1)
+    if (!inner.allow) return inner
   }
   return { allow: true }
 }

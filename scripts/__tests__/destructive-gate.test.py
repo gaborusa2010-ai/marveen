@@ -824,6 +824,746 @@ check("sort -S 1M <<EOF: a -S nem az env-e", not blocks("sort -S 1M <<EOF" + PAY
 check("env -u HOME cat <<EOF", not blocks("env -u HOME cat <<EOF" + PAY + "EOF"))
 check("env -i <<EOF: parancs nelkul csak kiir", not blocks("env -i <<EOF" + PAY + "EOF"))
 
+# --- 10. HERE-STRING PROGRAM es LITERAL `bash -c` PROGRAM (#777) ----------------------
+# A bazison (f2fba696) minden MUST-BLOCK sor atment, es a bash lefuttatta a torzset
+# (orakulum: agents/cody/work/777/oracle-out.txt, a sorok a heredoc-program-cases.json-ban
+# 777_ nevvel). A negativ kontroll: ugyanaz a szoveg adatkent (grep, wc, jq, egy kartya-
+# komment), es a bash-sal mert "nem fut" alakok (ervenytelen -c szo, eval <<<).
+print()
+print("#777 here-string es -c program, MUST-BLOCK:")
+RMH = RM + " -rf ~/marveen"
+check("bash <<< 'RM'", blocks("bash <<< '" + RMH + "'"))
+check("bash <<< 'RM' #comment: a megjegyzes nem szkriptfajl", blocks("bash <<< '" + RMH + "' #comment"))
+check("bash <<EOF #c: a megjegyzes a heredoc fejen", blocks("bash <<EOF # note\n" + RMH + "\nEOF"))
+check("bash 3<<< 'RM' <&3", blocks("bash 3<<< '" + RMH + "' <&3"))
+check("bash <<< 'r''m ...': osszeragasztott idezet", blocks("bash <<< 'r''m -rf ~/marveen'"))
+check("bash -- /dev/stdin <<< 'RM'", blocks("bash -- /dev/stdin <<< '" + RMH + "'"))
+check("sh -c 'cat | sh' <<< 'RM'", blocks("sh -c 'cat | sh' <<< '" + RMH + "'"))
+check("bash -c 'bash' <<EOF", blocks("bash -c 'bash' <<EOF\n" + RMH + "\nEOF"))
+check("bash -c 'bash -c \"source /dev/stdin\"' <<< 'RM'", blocks("bash -c 'bash -c \"source /dev/stdin\"' <<< '" + RMH + "'"))
+check("bash -c 'bash -c \"$(cat)\"' <<< 'RM'", blocks("bash -c 'bash -c \"$(cat)\"' <<< '" + RMH + "'"))
+check("bash -xc 'RM'", blocks("bash -xc '" + RMH + "'"))
+check("bash -o pipefail -c 'RM'", blocks("bash -o pipefail -c '" + RMH + "'"))
+check("bash -c -- 'RM'", blocks("bash -c -- '" + RMH + "'"))
+check("nice bash -c 'RM'", blocks("nice bash -c '" + RMH + "'"))
+check("bash -c $'r\\x6d -rf ~/marveen': ANSI-C szo", blocks("bash -c $'r\\x6d -rf ~/marveen'"))
+check("bash -c rm\\ -rf\\ ~/marveen: visszaperjeles szo", blocks("bash -c r" + "m\\ -rf\\ ~/marveen"))
+check("bash -c 'ec'\"ho hi; RM\": osszeragasztott program", blocks("bash -c 'ec'\"ho hi; " + RMH + "\""))
+check('echo "$(bash -c \'RM\')"', blocks('echo "$(bash -c \'' + RMH + '\')"'))
+check("bash -c 'bash -c \"RM\"': ketszintu", blocks("bash -c 'bash -c \"" + RMH + "\"'"))
+print("#777 negativ kontroll (adat, nem program):")
+check("grep -c rm <<< 'RM' adat", not blocks("grep -c rm <<< '" + RMH + "'"))
+check("wc -l <<< 'RM' adat", not blocks("wc -l <<< '" + RMH + "'"))
+check("jq . <<< json adat", not blocks("jq . <<< '{\"cmd\":\"" + RMH + "\"}'"))
+check("cat <<< 'RM' > notes.txt adat", not blocks("cat <<< '" + RMH + "' > notes.txt"))
+check("tabla.py komment <<< 'bash -c RM' adat", not blocks("python3 scripts/tabla.py komment 777 <<< 'bash -c " + RMH + "'"))
+check("eval <<< 'RM': az eval nem olvas stdin-t (merve)", not blocks("eval <<< '" + RMH + "'"))
+check("bash -c'RM': ervenytelen kapcsolo, nem fut (merve)", not blocks("bash -c'" + RMH + "'"))
+check("bash x.sh <<< 'RM': a szkript a fajl", not blocks("bash x.sh <<< '" + RMH + "'"))
+
+# --- 13. Egy magaban allo `&` parancsot zar (regi hezag, nem #777) ----------------------
+# `sleep 1 & RM` a bazison (f2fba696) ATMENT: a `&` nem volt szegmenshatar, a `rm` a
+# `sleep` argumentumanak latszott. bash lefuttatja (a hatterbe tett elso utan a masodik fut).
+print()
+print("magaban allo `&` mint szegmenshatar, MUST-BLOCK:")
+check("sleep 1 & RM", blocks("sleep 1 & " + RMH))
+check("sleep 1 &RM (szokoz nelkul)", blocks("sleep 1 &" + RMH))
+check("x & y & RM", blocks("x & y & " + RMH))
+check("true & bash -c 'RM'", blocks("true & bash -c '" + RMH + "'"))
+check("python3 x.py 2>&1 & RM", blocks("python3 x.py 2>&1 & " + RMH))
+print("negativ kontroll (atiranyitas es idezett `&`, nem hatar):")
+check("echo a 2>&1 | cat", not blocks("echo a 2>&1 | cat"))
+check("echo a &> /dev/null", not blocks("echo a &> /dev/null"))
+check("echo a &>> log", not blocks("echo a &>> log"))
+check("echo a >&2", not blocks("echo a >&2"))
+check("cat <&3", not blocks("cat <&3"))
+check("echo 'a & b'", not blocks("echo 'a & " + RM + "'"))
+check('echo "a & b"', not blocks('echo "a & ' + RM + '"'))
+check("sed 's/&/and/' f", not blocks("sed 's/&/and/' f"))
+check("setsid nohup x >> log 2>&1 < /dev/null & disown", not blocks("setsid nohup x >> log 2>&1 < /dev/null & disown"))
+
+# --- 14. #777 review 3: itt-string vegrehajtott heredoc-torzsben, backtickben, `<&0` ------
+# A review harom alakja: (1) a vegrehajtott heredoc-torzsben allo `<<<` szot a kulso find_all
+# nem latta; (2) backtickben a zaro backtick nem zarta a szot, a rekord elveszett, es a
+# certain=False-t senki nem olvasta; (3) a JS iker a `<&0`-nal szegmenst vagott (itt a
+# python oldal kontrollja). A lezaratlan szo nyers sor-maradekkent megy tovabb (tultilt).
+print()
+print("#777 review 3, MUST-BLOCK:")
+check("bash <<'A' / bash <<< 'RM' / A", blocks("bash <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("bash <<A / sh <<< 'RM' / A (idezetlen tag)", blocks("bash <<A\nsh <<< '" + RMH + "'\nA"))
+check("bash <<'A' / bash <<'B' / bash <<< 'RM' / B / A (ket szint)", blocks("bash <<'A'\nbash <<'B'\nbash <<< '" + RMH + "'\nB\nA"))
+check("echo `bash <<< 'RM'`", blocks("echo `bash <<< '" + RMH + "'`"))
+check("x=`bash <<< 'RM'`", blocks("x=`bash <<< '" + RMH + "'`"))
+check("echo \"`bash <<< 'RM'`\"", blocks("echo \"`bash <<< '" + RMH + "'`\""))
+check("bash <&0 -c 'RM'", blocks("bash <&0 -c '" + RMH + "'"))
+check("bash <<< 'RM (lezaratlan szo, tultilt)", blocks("bash <<< '" + RMH))
+print("negativ kontroll (adat, nem program):")
+check("cat <<'A' / bash <<< 'RM' / A: a cat nem futtat", not blocks("cat <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `grep rm <<< 'RM'`: a grep nem futtat", not blocks("echo `grep rm <<< '" + RMH + "'`"))
+check("python3 - <<PY / x = \"bash <<< 'RM'\" / PY: idezojelben", not blocks("python3 - <<'PY'\nx = \"bash <<< '" + RMH + "'\"\nPY"))
+check("bash <<'A' / wc -l <<< 'RM' / A: a wc nem futtat", not blocks("bash <<'A'\nwc -l <<< '" + RMH + "'\nA"))
+
+# --- 15. #777 review 4: nem shell-nevu futtato torzse, beagyazott escape-elt backtick --------
+# (1) a _shell_opener csak shell-NEVET nezett a nyito soron, pedig a _heredoc_runs_body mar
+# tudta, hogy a torzs fut: eval "$(cat <<A)", source /dev/stdin <<A, $SHELL <<A, a zaro soron
+# allo cso, sorfolytatas, while read ... done <<A, fuggveny, { bash; } <<A. Most csak a
+# kod-ertelmezo (python/node/...) torzse marad ki (_code_opener). (2) backtickben a
+# visszaper-backtick BEAGYAZOTT helyettesites: a zaro a szo vegere ragadt, es a fej $SUB-ba
+# olvadt. Mind bash-sal merve (homokozo, probe-bash.sh): a szo lefut.
+print()
+print("#777 review 4, MUST-BLOCK:")
+check("source /dev/stdin <<'A' / bash <<< 'RM' / A", blocks("source /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+check(". /dev/stdin <<'A' / bash <<< 'RM' / A", blocks(". /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("eval \"$(cat <<'A' / bash <<< 'RM' / A / )\"", blocks("eval \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\""))
+check("echo \"$(cat <<'A' ... A )\" | bash (zaro soron cso)", blocks("echo \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\" | bash"))
+check("$SHELL <<'A' / bash <<< 'RM' / A", blocks("$SHELL <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("bash \\ (ujsor) <<'A' / bash <<< 'RM' / A (sorfolytatas)", blocks("bash \\\n<<'A'\nbash <<< '" + RMH + "'\nA"))
+check("while read l; do eval \"$l\"; done <<'A' / bash <<< 'RM' / A", blocks("while read l; do eval \"$l\"; done <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("source <(cat <<'A' / bash <<< 'RM' / A / )", blocks("source <(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)"))
+check("cat <<'A' | source /dev/stdin / bash <<< 'RM' / A", blocks("cat <<'A' | source /dev/stdin\nbash <<< '" + RMH + "'\nA"))
+check("cat <<'A' | eval \"$(cat)\" / bash <<< 'RM' / A", blocks("cat <<'A' | eval \"$(cat)\"\nbash <<< '" + RMH + "'\nA"))
+check("bash <<'A' / eval \"$(cat <<'B' / bash <<< 'RM' / B / )\" / A (ket szint)", blocks("bash <<'A'\neval \"$(cat <<'B'\nbash <<< '" + RMH + "'\nB\n)\"\nA"))
+check("f(){ bash; }; f <<'A' / bash <<< 'RM' / A", blocks("f(){ bash; }; f <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("{ bash; } <<'A' / bash <<< 'RM' / A", blocks("{ bash; } <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `echo \\`bash <<< 'RM'\\`` (beagyazott escape-elt backtick)", blocks("echo `echo \\`bash <<< '" + RMH + "'\\``"))
+check("echo `echo \"\\`bash <<< 'RM'\\`\"` (idezojelben)", blocks("echo `echo \"\\`bash <<< '" + RMH + "'\\`\"`"))
+check("echo `echo \\`bash <<< 'RM'\\` tail`", blocks("echo `echo \\`bash <<< '" + RMH + "'\\` tail`"))
+print("negativ kontroll (adat, nem program):")
+check("git commit -m \"$(cat <<'A' / bash <<< 'RM' / A / )\": a git nem futtat", not blocks("git commit -m \"$(cat <<'A'\nbash <<< '" + RMH + "'\nA\n)\""))
+check("echo 'x <<< y' && cat <<'A' / bash <<< 'RM' / A: a cat nem futtat", not blocks("echo 'x <<< y' && cat <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("echo `echo hi` 'bash <<< RM': idezett szoveg", not blocks("echo `echo hi` 'bash <<< " + RMH + "'"))
+check("echo `bash <<< \\`echo x\\``: dinamikus szo, nincs RM", not blocks("echo `bash <<< \\`echo x\\``"))
+
+
+# --- 16. #777 review 5: a fogyaszto SZAVA dont, nem a nyito soron talalt nev -------------------
+# A _code_opener az ertelmezo-nevet (python/node/ruby/perl/php) BARHOL a nyito soron (es a
+# folytatosoron) kereste, es ha talalt, nem ment le a torzsbe itt-stringert: `source /dev/stdin
+# ruby <<A` fogyasztoja a `source`, a ruby csak egy operandus, a torzs fut. Most a
+# _heredoc_runs_body a FOGYASZTO SZOT adja vissza (mint a JS heredocRunsBody), es a
+# _code_consumer azon dont: INTERPRETERS-ben van es nem shell. Marveen merte (artalmatlan
+# helyettesitovel, eldobhato HOME-mal): mind a 8 alak futtatja a szot.
+print()
+print("#777 review 5, MUST-BLOCK (ertelmezo-nev a soron, de a fogyaszto shell/eval/source):")
+check("source /dev/stdin ruby <<'A' / bash <<< 'RM' / A", blocks("source /dev/stdin ruby <<'A'\nbash <<< '" + RMH + "'\nA"))
+check(". /dev/stdin perl <<'A' / bash <<< 'RM' / A", blocks(". /dev/stdin perl <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("eval \"$(cat <<'A' # node / bash <<< 'RM' / A / )\"", blocks("eval \"$(cat <<'A' # node\nbash <<< '" + RMH + "'\nA\n)\""))
+check("$SHELL <<'A'; : python3 / bash <<< 'RM' / A", blocks("$SHELL <<'A'; : python3\nbash <<< '" + RMH + "'\nA"))
+check("f(){ eval \"$(cat)\"; }; f php <<'A' / bash <<< 'RM' / A", blocks("f(){ eval \"$(cat)\"; }; f php <<'A'\nbash <<< '" + RMH + "'\nA"))
+check("while read l; do eval \"$l\"; done <<'A' # node / bash <<< 'RM' / A", blocks("while read l; do eval \"$l\"; done <<'A' # node\nbash <<< '" + RMH + "'\nA"))
+check("cat <<'A' | source /dev/stdin node / bash <<< 'RM' / A", blocks("cat <<'A' | source /dev/stdin node\nbash <<< '" + RMH + "'\nA"))
+check("node -v; \\ (ujsor) source /dev/stdin <<'A' / bash <<< 'RM' / A", blocks("node -v; \\\nsource /dev/stdin <<'A'\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (kod-ertelmezo fogyaszto: a torzs nem bash-szoveg, a szo idezojelben adat):")
+check("ruby - <<'A' / puts \"bash <<< 'RM'\" / A", not blocks("ruby - <<'A'\nputs \"bash <<< '" + RMH + "'\"\nA"))
+check("cat <<'A' | node - / console.log(\"bash <<< 'RM'\") / A", not blocks("cat <<'A' | node -\nconsole.log(\"bash <<< '" + RMH + "'\")\nA"))
+check("f(){ python3 -; }; f <<'A' / x = \"bash <<< 'RM'\" / A: a fuggveny a fogyaszto, lemegyunk, de a szo idezett",
+      not blocks("f(){ python3 -; }; f <<'A'\nx = \"bash <<< '" + RMH + "'\"\nA"))
+print("a fogyaszto szo (a _heredoc_runs_body visszaadja, a JS iker alakja):")
+
+
+def _consumer(cmd):
+    recs, _certain = gate._heredoc_scan().find_all(cmd)
+    return [os.path.basename(gate._heredoc_runs_body(cmd, h) or '') for h in recs]
+
+
+check("source /dev/stdin ruby <<'A' -> source", _consumer("source /dev/stdin ruby <<'A'\nx\nA") == ["source"])
+check("python3 - <<'PY' -> python3", _consumer("python3 - <<'PY'\nx\nPY") == ["python3"])
+check("cat <<'A' > f -> '' (adat)", _consumer("cat <<'A' > f\nx\nA") == [""])
+check("f(){ eval \"$(cat)\"; }; f php <<'A' -> $STDIN (review 6: a fuggveny TORZSENEK fogyasztoja; review 15: az eval dinamikus operandusa)",
+      _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["$STDIN"])
+check("while read l; do eval \"$l\"; done <<'A' -> $l (review 15)", _consumer("while read l; do eval \"$l\"; done <<'A'\nx\nA") == ["$l"])
+check("cat <<'A' | node - -> node", _consumer("cat <<'A' | node -\nx\nA") == ["node"])
+check("bash <<< 'x' -> bash", _consumer("bash <<< 'x'") == ["bash"])
+
+# --- 17. #777 review 6: a fuggveny a nev elott, a torzs fogyasztoja a szo; opcio-ertek nem parancs ---
+# (1) `python3(){ bash; }; python3 <<A`: a fuggveny arnyekolja a PATH-ot, a torzset a bash olvassa.
+# A _cmd_runs_stdin a funcs ELOTT futott, 'python3'-at adott, a _code_consumer kodnak vette, a
+# torzs itt-stringje kimaradt. Most a fuggveny jon elobb, es a TORZSENEK a fogyasztoja a szo (bash),
+# mert a nev (python3, f) nem mondja meg, kod vagy shell olvassa-e. Kivetel: command/builtin/exec/
+# env/nohup elotag megkeruli a fuggvenyt (bash-sal merve, probe-sandbox: `python3(){ echo FN; };
+# command python3 <<<"print(7)"` 7-et ir; `time f` a fuggvenyt futtatja).
+# (2) `xargs -a python3 sh <<A`: az -a erteke volt az elso ertelmezo-nevu szo. Most a kapcsolok
+# ertekei kimaradnak, es a shell-szo nyer az ertelmezo-szo elott (ssh/docker host-nev is; az
+# unshare --map-user es a systemd-run --uid erteke a burkolo-tablaban).
+print()
+print("#777 review 6, MUST-BLOCK (fuggveny ertelmezo-nevvel, opcio-ertek ertelmezo-nevvel):")
+for label, cmd in [
+    ("python3(){ bash; }; python3 <<'A'", "python3(){ bash; }; python3 <<'A'"),
+    ("node(){ eval \"$(cat)\"; }; node <<'A'", "node(){ eval \"$(cat)\"; }; node <<'A'"),
+    ("python3(){ sh; } / python3 <<'A' (kulon soron)", "python3(){ sh; }\npython3 <<'A'"),
+    ("python3(){ bash; }; time python3 <<'A' (a time a fuggvenyt futtatja)", "python3(){ bash; }; time python3 <<'A'"),
+    ("xargs -a python3 sh <<'A'", "xargs -a python3 sh <<'A'"),
+    ("xargs -a /dev/null -E python3 sh <<'A'", "xargs -a /dev/null -E python3 sh <<'A'"),
+    ("parallel -a python3 sh <<'A'", "parallel -a python3 sh <<'A'"),
+    ("docker exec -i python3 bash <<'A'", "docker exec -i python3 bash <<'A'"),
+    ("ssh python3 bash <<'A'", "ssh python3 bash <<'A'"),
+    ("systemd-run --uid python3 bash <<'A'", "systemd-run --uid python3 bash <<'A'"),
+    ("unshare --map-user python3 bash <<'A'", "unshare --map-user python3 bash <<'A'"),
+    ("xargs -I{} sh -c {} <<'A' (valtozatlan)", "xargs -I{} sh -c {} <<'A'"),
+    ("f(){ bash; }; f <<'A' (valtozatlan)", "f(){ bash; }; f <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (a torzs kod, a szo idezojelben adat):")
+for label, cmd, body in [
+    ("python3(){ /usr/bin/python3 \"$@\"; }; python3 - <<'PY' (a torzs fogyasztoja python)",
+     "python3(){ /usr/bin/python3 \"$@\"; }; python3 - <<'PY'", "x = \"bash <<< 'RM'\""),
+    ("python3(){ bash; }; command python3 - <<'PY' (a command megkeruli a fuggvenyt)",
+     "python3(){ bash; }; command python3 - <<'PY'", "x = \"bash <<< 'RM'\""),
+    ("ssh host python3 - <<'PY'", "ssh host python3 - <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("docker exec -i c python3 - <<'PY'", "docker exec -i c python3 - <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("xargs python3 <<'PY'", "xargs python3 <<'PY'", "print(\"bash <<< 'RM'\")"),
+    ("xargs -n 1 python3 <<'PY' (a -n erteke kimarad, a python a program)", "xargs -n 1 python3 <<'PY'",
+     "print(\"bash <<< 'RM'\")"),
+]:
+    check(label, not blocks(cmd + "\n" + body.replace('RM', RMH) + "\nPY"))
+print("a fogyaszto szo (a fuggvenye a torzse fogyasztoja):")
+check("python3(){ bash; }; python3 <<'A' -> bash", _consumer("python3(){ bash; }; python3 <<'A'\nx\nA") == ["bash"])
+check("python3(){ bash; }; command python3 <<'A' -> python3", _consumer("python3(){ bash; }; command python3 <<'A'\nx\nA") == ["python3"])
+check("f(){ python3 -; }; f <<'A' -> python3", _consumer("f(){ python3 -; }; f <<'A'\nx\nA") == ["python3"])
+check("xargs -a python3 sh <<'A' -> sh", _consumer("xargs -a python3 sh <<'A'\nx\nA") == ["sh"])
+check("ssh python3 bash <<'A' -> bash", _consumer("ssh python3 bash <<'A'\nx\nA") == ["bash"])
+check("ssh host python3 - <<'A' -> python3", _consumer("ssh host python3 - <<'A'\nx\nA") == ["python3"])
+
+
+# --- 18. #777 review 7: a torzs MINDEN parancsa; a futtato programja a kapcsolok es a host utan ---
+# (1) `g(){ bash; }; f(){ g; }; f <<A`: a torzs fogyasztoja az ELSO fogyaszto-szo volt. Most a
+# torzs minden egyszeru parancsat nezzuk: a fuggveny-szo a sajat torzsevel oldodik fel rekurzivan,
+# a sajat stdin-u (`<f`, `<<<x`, `<<T`) es a hatterbe tett (`&`) parancs kimarad (bash-sal merve,
+# probe-sandbox: `f(){ cat & wait; }; f <<<B` semmit nem ir, `f(){ cat </dev/null; cat; }; f <<<B`
+# B-t ir), es ha BARMELYIK fogyaszto shell, az a szo. A `</dev/stdin` es a `<<< "$(cat)"` NEM sajat
+# stdin: az orokolt maga, illetve a tartalma.
+# (2) `ssh -l python3 host bash <<A`: az "elso shell-szo nyer" az ertelmezo ARGUMENTUMAT is
+# programnak vette (`ssh host python3 - bash`). Most a futtato kapcsolo-ertekei es a host kimaradnak,
+# es a kovetkezo szo a program; `ssh host <<A` parancs nelkul a tavoli login shell olvassa a torzset.
+print()
+print("#777 review 7, MUST-BLOCK (a torzs kesobbi parancsa shell; a futtato programja a host utan):")
+for label, cmd in [
+    ("g(){ bash; }; f(){ g; }; f <<'A' (fuggveny a fuggvenyben)", "g(){ bash; }; f(){ g; }; f <<'A'"),
+    ("f(){ cat </dev/null; bash; }; f <<'A' (sajat stdin, aztan shell)", "f(){ cat </dev/null; bash; }; f <<'A'"),
+    ("f(){ sleep 1 & bash; }; f <<'A' (hatterben, aztan shell)", "f(){ sleep 1 & bash; }; f <<'A'"),
+    ("f(){ python3 - <<<''; bash; }; f <<'A' (sajat itt-string, aztan shell)", "f(){ python3 - <<<''; bash; }; f <<'A'"),
+    ("f(){ python3 -; bash; }; f <<'A' (a shell nyer az ertelmezo utan is)", "f(){ python3 -; bash; }; f <<'A'"),
+    ("f(){ bash </dev/stdin; }; f <<'A' (az orokolt stdin utvonalon)", "f(){ bash </dev/stdin; }; f <<'A'"),
+    ("ssh -l python3 host bash <<'A'", "ssh -l python3 host bash <<'A'"),
+    ("ssh host <<'A' (parancs nelkul: a login shell)", "ssh host <<'A'"),
+    ("ssh -p 22 host <<'A'", "ssh -p 22 host <<'A'"),
+    ("kubectl exec -i python3 -- bash <<'A'", "kubectl exec -i python3 -- bash <<'A'"),
+    ("sshpass -p python3 ssh host bash <<'A'", "sshpass -p python3 ssh host bash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (a program az ertelmezo, a shell-nevu szo az argumentuma; nyers torzs):")
+for label, cmd in [
+    ("ssh host python3 - bash <<'A'", "ssh host python3 - bash <<'A'"),
+    ("docker exec -i c python3 - bash <<'A'", "docker exec -i c python3 - bash <<'A'"),
+    ("docker exec -i c python3 script.py bash <<'A'", "docker exec -i c python3 script.py bash <<'A'"),
+    ("xargs python3 tool.py sh <<'A'", "xargs python3 tool.py sh <<'A'"),
+    ("kubectl exec -i pod -- python3 - <<'A'", "kubectl exec -i pod -- python3 - <<'A'"),
+    ("f(){ python3 - <<<''; }; f <<'A' (a torzs semmit nem olvas az orokoltbol)", "f(){ python3 - <<<''; }; f <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (a torzs barmelyik shellje; a futtato programja):")
+check("g(){ bash; }; f(){ g; }; f <<'A' -> bash", _consumer("g(){ bash; }; f(){ g; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ cat </dev/null; bash; }; f <<'A' -> bash", _consumer("f(){ cat </dev/null; bash; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ python3 -; bash; }; f <<'A' -> bash", _consumer("f(){ python3 -; bash; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ bash </dev/stdin; }; f <<'A' -> bash", _consumer("f(){ bash </dev/stdin; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ python3 - <<<''; }; f <<'A' -> [python3 (az itt-string), '' (a heredoc adat)]",
+      _consumer("f(){ python3 - <<<''; }; f <<'A'\nx\nA") == ["python3", ""])
+check("ssh -l python3 host bash <<'A' -> bash", _consumer("ssh -l python3 host bash <<'A'\nx\nA") == ["bash"])
+check("ssh host <<'A' -> ssh", _consumer("ssh host <<'A'\nx\nA") == ["ssh"])
+check("ssh host python3 - bash <<'A' -> python3", _consumer("ssh host python3 - bash <<'A'\nx\nA") == ["python3"])
+check("kubectl exec -i python3 -- bash <<'A' -> bash", _consumer("kubectl exec -i python3 -- bash <<'A'\nx\nA") == ["bash"])
+check("xargs python3 tool.py sh <<'A' -> python3", _consumer("xargs python3 tool.py sh <<'A'\nx\nA") == ["python3"])
+check("sshpass -p python3 ssh host bash <<'A' -> bash", _consumer("sshpass -p python3 ssh host bash <<'A'\nx\nA") == ["bash"])
+
+
+# --- 19. #777 review 8: EGY futtato-feloldo es a TENYLEGES stdin ------------------------------
+# (1) Burkolo, xargs/parallel, ssh/docker/kubectl futtato, su/runuser/script: egyetlen feloldo
+# adja a program szavat, a kapcsolo-ertekekkel egyutt (opcio-csoport, aminek az UTOLSO betuje
+# erteket var, a kovetkezo szot is elnyeli: `-tl`). Ismeretlen program futtato mogott: barmelyik
+# kesobbi shell-szo a fogyaszto; parancs nelkuli parallel/xargs-argv-mod is fogyaszto.
+# (2) A sajat stdin a TENYLEGES: az atiranyitasok sorrendben, az UTOLSO nyer; csak literal cel
+# (nincs $, backtick, `<(`, nem /dev/stdin-szeru), `<&-` sajat, `<&n` nem, `<<` csak idezett
+# hatarolóval, `&` csak atiranyitas es `set -m` nelkul; a `2<` nem a stdin.
+# (3) A `#`-tel kezdodo szo komment: utana nincs parancs-szo.
+print()
+print("#777 review 8, MUST-BLOCK (futtato-feloldo, tenyleges stdin):")
+for label, cmd in [
+    ("taskset 1 bash <<'A'", "taskset 1 bash <<'A'"),
+    ("chrt -f 1 bash <<'A'", "chrt -f 1 bash <<'A'"),
+    ("runuser -u x -- bash <<'A'", "runuser -u x -- bash <<'A'"),
+    ("su <<'A' (a login shell olvas)", "su <<'A'"),
+    ("su -c 'bash' <<'A'", "su -c 'bash' <<'A'"),
+    ("script -q /dev/null <<'A'", "script -q /dev/null <<'A'"),
+    ("busybox sh <<'A'", "busybox sh <<'A'"),
+    ("xargs -0 nice <<'A' (argv-mod, a burkolo parancs nelkul)", "xargs -0 nice <<'A'"),
+    ("parallel <<'A' (parancs nelkul a sorok parancsok)", "parallel <<'A'"),
+    ("ssh host \"bash -s\" <<'A' (a tavoli szavak ujraolvasva)", "ssh host \"bash -s\" <<'A'"),
+    ("xargs ssh host <<'A'", "xargs ssh host <<'A'"),
+    ("xargs su -c <<'A'", "xargs su -c <<'A'"),
+    ("xargs script -qc <<'A'", "xargs script -qc <<'A'"),
+    ("f(){ bash 2</dev/null; }; f <<'A' (a 2< nem a stdin)", "f(){ bash 2</dev/null; }; f <<'A'"),
+    ("f(){ bash </dev/null <&0; }; f <<'A' (az utolso atiranyitas nyer)", "f(){ bash </dev/null <&0; }; f <<'A'"),
+    ("f(){ set -m; bash & wait; }; f <<'A' (job control: a hatter orokol)", "f(){ set -m; bash & wait; }; f <<'A'"),
+    ("f(){ bash < \"$F\"; }; f <<'A' (nem literal cel)", "f(){ bash < \"$F\"; }; f <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (sajat stdin, komment, adat-olvaso a futtato mogott):")
+for label, cmd in [
+    ("f(){ bash </dev/null; }; f <<'A'", "f(){ bash </dev/null; }; f <<'A'"),
+    ("f(){ bash 0</dev/null; }; f <<'A'", "f(){ bash 0</dev/null; }; f <<'A'"),
+    ("f(){ bash <<< 'echo hi'; }; f <<'A'", "f(){ bash <<< 'echo hi'; }; f <<'A'"),
+    ("f(){ bash & wait; }; f <<'A'", "f(){ bash & wait; }; f <<'A'"),
+    ("f(){ bash <&-; }; f <<'A'", "f(){ bash <&-; }; f <<'A'"),
+    ("f(){ cat #bash; }; f <<'A' (komment)", "f(){ cat #bash\n}; f <<'A'"),
+    ("xargs grep -l pattern <<'A'", "xargs grep -l pattern <<'A'"),
+    ("docker run -i --rm alpine cat <<'A'", "docker run -i --rm alpine cat <<'A'"),
+    ("chrt 1 cat <<'A'", "chrt 1 cat <<'A'"),
+    ("su -c 'echo hi' <<'A'", "su -c 'echo hi' <<'A'"),
+    ("ssh -n host true <<'A'", "ssh -n host true <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 8):")
+check("taskset 1 bash <<'A' -> bash", _consumer("taskset 1 bash <<'A'\nx\nA") == ["bash"])
+check("busybox sh <<'A' -> sh", _consumer("busybox sh <<'A'\nx\nA") == ["sh"])
+check("ssh host \"bash -s\" <<'A' -> bash", _consumer("ssh host \"bash -s\" <<'A'\nx\nA") == ["bash"])
+check("f(){ bash </dev/null; }; f <<'A' -> '' (adat)", _consumer("f(){ bash </dev/null; }; f <<'A'\nx\nA") == [""])
+check("chrt 1 cat <<'A' -> '' (adat)", _consumer("chrt 1 cat <<'A'\nx\nA") == [""])
+
+# --- 20. #777 review 9: dinamikus atiranyitas-cel, komment a stdin-szabalyban, futtato-tabla ----------
+# (1) Glob/kapcsos cel nem literal (`</dev/std[i]n` a stdin). (2) A `#` utani szo a stdin-szabalyban
+# sem atiranyitas. (3) xargs mogott a puszta atlatszo elotag (env, nohup, time) a program.
+# (4) xargs mogott az ssh-csalad minden szava a tavoli shell-sorba megy. (5) su --session-command.
+# (6) Parancs nelkul shellt indito futtatok. (7) busybox ash/hush. (8) Barhol idezett heredoc-hatarolo.
+# (9) Tovabbi futtatok a tablaban.
+print()
+print("#777 review 9, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ bash </dev/std[i]n; }; f <<'A'", "f(){ bash </dev/std[i]n; }; f <<'A'"),
+    ("f(){ bash </proc/self/f[d]/0; }; f <<'A'", "f(){ bash </proc/self/f[d]/0; }; f <<'A'"),
+    ("while :; do bash </dev/std?n; break; done <<'A'", "while :; do bash </dev/std?n; break; done <<'A'"),
+    ("f(){ bash # <x / }; f <<'A'", "f(){ bash # <x\n}; f <<'A'"),
+    ("xargs env <<'A'", "xargs env <<'A'"),
+    ("xargs -n9 nohup <<'A'", "xargs -n9 nohup <<'A'"),
+    ("xargs env -i <<'A'", "xargs env -i <<'A'"),
+    ("xargs ssh host echo <<'A'", "xargs ssh host echo <<'A'"),
+    ("xargs sshpass -p pw ssh host echo <<'A'", "xargs sshpass -p pw ssh host echo <<'A'"),
+    ("xargs -0 su root --session-command <<'A'", "xargs -0 su root --session-command <<'A'"),
+    ("su --session-command=bash <<'A'", "su --session-command=bash <<'A'"),
+    ("pkexec <<'A'", "pkexec <<'A'"),
+    ("firejail <<'A'", "firejail <<'A'"),
+    ("newgrp grp <<'A'", "newgrp grp <<'A'"),
+    ("busybox ash <<'A'", "busybox ash <<'A'"),
+    ("xargs -0 busybox hush -c <<'A'", "xargs -0 busybox hush -c <<'A'"),
+    ("fakeroot <<'A'", "fakeroot <<'A'"),
+    ("proot -r / bash <<'A'", "proot -r / bash <<'A'"),
+    ("gdb -batch -ex r --args bash <<'A'", "gdb -batch -ex r --args bash <<'A'"),
+    ("distrobox enter box -- bash <<'A'", "distrobox enter box -- bash <<'A'"),
+    ("toolbox run -c box bash <<'A'", "toolbox run -c box bash <<'A'"),
+    ("machinectl shell host <<'A'", "machinectl shell host <<'A'"),
+    ("prlimit --nofile=10 bash <<'A'", "prlimit --nofile=10 bash <<'A'"),
+    ("numactl -C 0 bash <<'A'", "numactl -C 0 bash <<'A'"),
+    ("cgexec -g cpu:x bash <<'A'", "cgexec -g cpu:x bash <<'A'"),
+    ("sg grp -c bash <<'A'", "sg grp -c bash <<'A'"),
+    ("setarch x86_64 <<'A'", "setarch x86_64 <<'A'"),
+    ("chpst -u x bash <<'A'", "chpst -u x bash <<'A'"),
+    ("faketime now bash <<'A'", "faketime now bash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (review 9):")
+for label, cmd in [
+    ("f(){ bash <<\\B / exit / B / }; f <<'A' (visszaperjeles hatarolo: sajat stdin)", "f(){ bash <<\\B\nexit\nB\n}; f <<'A'"),
+    ("f(){ bash <<B\"C\" / BC / }; f <<'A' (idezojel a hatarolo kozepen)", "f(){ bash <<B\"C\"\nexit\nBC\n}; f <<'A'"),
+    ("f(){ bash </dev/null; }; f <<'A' (literal cel)", "f(){ bash </dev/null; }; f <<'A'"),
+    ("f(){ bash <\"a*b\"; }; f <<'A' (idezett csillag: literal)", "f(){ bash <\"a*b\"; }; f <<'A'"),
+    ("xargs <<'A' (parancs nelkul: echo)", "xargs <<'A'"),
+    ("grep bash <<'A'", "grep bash <<'A'"),
+    ("numactl -C 0 cat <<'A'", "numactl -C 0 cat <<'A'"),
+    ("toolbox run cat <<'A'", "toolbox run cat <<'A'"),
+    ("su -c 'cat' root <<'A'", "su -c 'cat' root <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 9):")
+check("xargs env <<'A' -> env", _consumer("xargs env <<'A'\nx\nA") == ["env"])
+check("busybox ash <<'A' -> ash", _consumer("busybox ash <<'A'\nx\nA") == ["ash"])
+check("gdb -batch -ex r --args bash <<'A' -> gdb (review 12: a gdb egeszben)", _consumer("gdb -batch -ex r --args bash <<'A'\nx\nA") == ["gdb"])
+check("xargs <<'A' -> '' (adat)", _consumer("xargs <<'A'\nx\nA") == [""])
+
+
+# --- 21. #777 review 10: kapcsos tartomany, a fuggvenytorzs vege, gdb stdin, tulblokk, futtato-tabla ---
+# (1) `{i..i}` kapcsos tartomany a celban: nem literal. (2) A `}` csak `;`/`&`/ujsor/`)`/`}` utan zar,
+# idezojelben, szo kozepen es kommentben nem. (3) gdb -batch nelkul a stdinrol olvas parancsot:
+# MERVE gdb 17.1-gyel a homokozoban (2026-11-03), `shell echo PWNED` LEFUTOTT -q -nx, -ex, --args,
+# -n mellett is; -batch/--batch/-batch-silent es --version mellett NEM. (4) Info-kapcsolo es nem
+# shellt indito alparancs nem blokkol (machinectl list, distrobox create, sg grp cat). (5) rsh,
+# dbclient, autossh tavoli futtato; mksh, yash shell.
+print()
+print("#777 review 10, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ bash </dev/std{i..i}n; }; f <<'A'", "f(){ bash </dev/std{i..i}n; }; f <<'A'"),
+    ("while :; do bash </dev/std{i..i}n; break; done <<'A'", "while :; do bash </dev/std{i..i}n; break; done <<'A'"),
+    ("f(){ echo a}b; bash; }; f <<'A'", "f(){ echo a}b; bash; }; f <<'A'"),
+    ("f(){ echo '}'; bash; }; f <<'A'", "f(){ echo '}'; bash; }; f <<'A'"),
+    ("f(){ bash </dev/null; echo }; bash; }; f <<'A'", "f(){ bash </dev/null; echo }; bash; }; f <<'A'"),
+    ("f(){ if true; then { :; }; fi; bash; }; f <<'A'", "f(){ if true; then { :; }; fi; bash; }; f <<'A'"),
+    ("f(){ # a; } / bash; }; f <<'A'", "f(){ # a; }\nbash; }; f <<'A'"),
+    ("gdb -q -nx prog <<'A' (gdb 17.1: lefutott)", "gdb -q -nx prog <<'A'"),
+    ("gdb -q -nx -ex r --args prog <<'A' (gdb 17.1: lefutott)", "gdb -q -nx -ex r --args prog <<'A'"),
+    ("gdb -batch -ex r --args bash <<'A'", "gdb -batch -ex r --args bash <<'A'"),
+    ("machinectl shell box <<'A'", "machinectl shell box <<'A'"),
+    ("setarch x86_64 <<'A'", "setarch x86_64 <<'A'"),
+    ("distrobox enter box <<'A'", "distrobox enter box <<'A'"),
+    ("toolbox enter <<'A'", "toolbox enter <<'A'"),
+    ("sg grp bash <<'A'", "sg grp bash <<'A'"),
+    ("sg grp -c bash <<'A'", "sg grp -c bash <<'A'"),
+    ("sg grp <<'A'", "sg grp <<'A'"),
+    ("xargs rsh host echo <<'A'", "xargs rsh host echo <<'A'"),
+    ("xargs dbclient host echo <<'A'", "xargs dbclient host echo <<'A'"),
+    ("autossh -M 0 host bash <<'A'", "autossh -M 0 host bash <<'A'"),
+    ("autossh -M 0 host <<'A'", "autossh -M 0 host <<'A'"),
+    ("mksh <<'A'", "mksh <<'A'"),
+    ("yash <<'A'", "yash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (review 10):")
+for label, cmd in [
+    ("machinectl list <<'A'", "machinectl list <<'A'"),
+    ("machinectl status box <<'A'", "machinectl status box <<'A'"),
+    ("setarch --list <<'A'", "setarch --list <<'A'"),
+    ("distrobox create box <<'A'", "distrobox create box <<'A'"),
+    ("toolbox list <<'A'", "toolbox list <<'A'"),
+    ("sg grp cat <<'A'", "sg grp cat <<'A'"),
+    ("f(){ cat; }; f <<'A'", "f(){ cat; }; f <<'A'"),
+    ("f(){ echo {a,b}; cat; }; f <<'A' (kapcsos szo, nem csoport)", "f(){ echo {a,b}; cat; }; f <<'A'"),
+    ("f(){ echo }; }; cat <<'A' (a `}` argumentum, a cat olvas)", "f(){ echo }; }; cat <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 10):")
+check("gdb -q -nx prog <<'A' -> gdb", _consumer("gdb -q -nx prog <<'A'\nx\nA") == ["gdb"])
+check("xargs rsh host echo <<'A' -> rsh", _consumer("xargs rsh host echo <<'A'\nx\nA") == ["rsh"])
+check("mksh <<'A' -> mksh", _consumer("mksh <<'A'\nx\nA") == ["mksh"])
+
+# --- 22. #777 review 11: a fuggvenytorzs vege kifejtesben, heredocban; gdb -ex/-x/source ---------------
+# (1) A torzs vege a parse-olt es a regi zarojel-szamlalo KOZUL a kesobbi: a parser hibaja tultilt.
+# A parser atugorja a ${..}, $(..), $'..', backtick szoveget es a fuggvenyben allo heredoc-torzset
+# (`f(){ cat <<'X'\n}\nX\nbash; }`): probe-sandbox bash-sal merve, mind futtatja a `bash`-t.
+# (2) gdb -batch mellett az -ex/-iex `shell X`, `!X`, `pipe ..| X`, `| ..| X` erteke shell-sor, ami a
+# gdb stdinjet orokli; `python ..` tetszoleges kod. `-x /dev/stdin` es `source /dev/stdin`: a torzs
+# gdb-szkript. A stdinrol olvasott gdb-szkript `shell`/`!`/pipe sorai shell-sorok (`shell rm -rf x`).
+# gdb nincs telepitve: a gdb-szabalyok a gdb-dokumentaciora epulnek, nem mertuk.
+print()
+print("#777 review 11, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ echo ${x:- ; } ; bash; }; f <<'A'", "f(){ echo ${x:- ; } ; bash; }; f <<'A'"),
+    ("f(){ cat <<'X' / } / X / bash; }; f <<'A'", "f(){ cat <<'X'\n}\nX\nbash; }; f <<'A'"),
+    ("f(){ cat <<-X / <tab>} / <tab>X / bash; }; f <<'A'", "f(){ cat <<-X\n\t}\n\tX\nbash; }; f <<'A'"),
+    ("f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'", "f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'"),
+    ("f(){ echo \"${x:-; }}\"; bash; }; f <<'A'", "f(){ echo \"${x:-; }}\"; bash; }; f <<'A'"),
+    ("f(){ echo `echo ; }` ; bash; }; f <<'A'", "f(){ echo `echo ; }` ; bash; }; f <<'A'"),
+    ("gdb -batch -ex 'shell bash' <<'A'", "gdb -batch -ex 'shell bash' <<'A'"),
+    ("gdb -batch -ex '!bash' <<'A'", "gdb -batch -ex '!bash' <<'A'"),
+    ("gdb -batch --eval-command='shell bash' <<'A'", "gdb -batch --eval-command='shell bash' <<'A'"),
+    ("gdb -batch -iex 'shell sh -s' <<'A'", "gdb -batch -iex 'shell sh -s' <<'A'"),
+    ("gdb -batch -ex 'pipe info frame | bash' <<'A'", "gdb -batch -ex 'pipe info frame | bash' <<'A'"),
+    ("gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'",
+     "gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+for label, cmd in [
+    ("gdb -batch -x /dev/stdin <<'A' / shell RM", "gdb -batch -x /dev/stdin <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -batch --command=/dev/stdin <<'A' / !RM", "gdb -batch --command=/dev/stdin <<'A'\n!" + RMH + "\nA"),
+    ("gdb -batch -ex 'source /dev/stdin' <<'A' / shell RM",
+     "gdb -batch -ex 'source /dev/stdin' <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -q -nx prog <<'A' / shell RM", "gdb -q -nx prog <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -q -nx prog <<'A' / pipe info frame | RM", "gdb -q -nx prog <<'A'\npipe info frame | " + RMH + "\nA"),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 11):")
+for label, cmd in [
+    ("f(){ echo ${x:-a}; cat; }; f <<'A'", "f(){ echo ${x:-a}; cat; }; f <<'A'"),
+    ("f(){ cat <<'X' / } / X / }; f <<'A'", "f(){ cat <<'X'\n}\nX\n}; f <<'A'"),
+    ("f(){ echo $'a\\'b'; cat; }; f <<'A'", "f(){ echo $'a\\'b'; cat; }; f <<'A'"),
+    ("f(){ echo $((1+2)); cat; }; f <<'A'", "f(){ echo $((1+2)); cat; }; f <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+check("cat <<'A' / shell RM (adat)", not blocks("cat <<'A'\nshell " + RMH + "\nA"))
+print("a fogyaszto szo (review 11):")
+check("gdb -batch -ex 'shell bash' <<'A' -> gdb", _consumer("gdb -batch -ex 'shell bash' <<'A'\nx\nA") == ["gdb"])
+check("gdb -batch -x /dev/stdin <<'A' -> gdb", _consumer("gdb -batch -x /dev/stdin <<'A'\nx\nA") == ["gdb"])
+
+# --- 23. #777 review 12: a gdb heredoc/itt-string stdinnel EGESZBEN tilos; idezett elvalaszto a fejben ---
+# (1) A gdb parancsnyelve tul sok uton futtatja a torzset (`she`, `eval "shell %s"`, interpreter-exec,
+# `python exec(sys.stdin.read())`, guile, define, -x /dev/stdin): a review 10-11 negativ kontrolljai
+# (gdb -batch prog, --version, -nx, -ex 'print 1', -x cmds.gdb, shell echo hi) MOST BLOKKOLNAK, ez
+# vallalt tultiltas (Marveen review 12 javaslata). A gdb-szabaly a torzstol fuggetlenul blokkol.
+# (2) A heredoc-nyito sor fejeben idezett vagy escape-elt `;`/`(`/`|`/`&` a fogyaszto elott a fejet rossz
+# helyen vagta, a torzs adatnak latszott: `env X='a;b' bash <<A` (a bazison, ae20f75a-n is ALLOW).
+# probe-sandbox bash-sal merve: mind a 10 must-block futtatja a torzset, a 3 negativ kontroll nem.
+# Az idezett szoveg csak MASODIK olvasat (csak hozzaad fogyasztot): `grep 'a;bash' <<A` mar
+# ca246eac-n is blokkolt (a sima vagas `bash'`-t lat), ez a regi tultiltas marad.
+print()
+print("#777 review 12, MUST-BLOCK (gdb, a torzstol fuggetlenul):")
+for label, cmd in [
+    ("gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'",
+     "gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'",
+     "gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'she bash' <<'A'", "gdb -batch -ex 'she bash' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'shel bash' <<'A'", "gdb -batch -ex 'shel bash' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'", "gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'",
+     "gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'pi' <<'A'", "gdb -batch -ex 'pi' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'python-interactive' <<'A'", "gdb -batch -ex 'python-interactive' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'so /dev/stdin' <<'A'", "gdb -batch -ex 'so /dev/stdin' <<'A'\nbt\nA"),
+    ("gdb -batch prog <<'A' (review 9-10: adat volt)", "gdb -batch prog <<'A'\nbt\nA"),
+    ("gdb --version <<'A'", "gdb --version <<'A'\nbt\nA"),
+    ("gdb -batch -nx <<'A'", "gdb -batch -nx <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'print 1' prog <<'A'", "gdb -batch -ex 'print 1' prog <<'A'\nbt\nA"),
+    ("gdb -batch -x cmds.gdb prog <<'A'", "gdb -batch -x cmds.gdb prog <<'A'\nbt\nA"),
+    ("gdb-multiarch -batch <<'A'", "gdb-multiarch -batch <<'A'\nbt\nA"),
+    ("/usr/bin/gdb -q <<'A'", "/usr/bin/gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'py exec(input())' <<< 'import os'", "gdb -batch -ex 'py exec(input())' <<< 'import os'"),
+    ("sudo gdb -batch <<'A'", "sudo gdb -batch <<'A'\nbt\nA"),
+    ("f(){ gdb -batch; }; f <<'A'", "f(){ gdb -batch; }; f <<'A'\nbt\nA"),
+    ("cat <<'A' | gdb -batch", "cat <<'A' | gdb -batch\nbt\nA"),
+    ("bash <<'A' / gdb -batch <<'B' (egymasba agyazva)", "bash <<'A'\ngdb -batch -ex 'py exec(open(0).read())' <<'B'\nimport os\nB\nA"),
+    ("bash -c \"gdb -batch <<< 'bt'\"", "bash -c \"gdb -batch <<< 'bt'\""),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 12):")
+for label, cmd in [
+    ("gdb -batch -ex bt ./core (heredoc nelkul)", "gdb -batch -ex bt ./prog ./core"),
+    ("cat <<'A' / gdb -batch (a gdb szo a torzsben, adat)", "cat <<'A'\ngdb -batch <<'B'\nbt\nB\nA"),
+    ("echo gdb <<'A' (a gdb argumentum)", "echo gdb <<'A'\nbt\nA"),
+]:
+    check(label, not blocks(cmd))
+print("#777 review 12, MUST-BLOCK (idezett/escape-elt elvalaszto a fejben):")
+for label, cmd in [
+    ("env X='a;b' bash <<'A'", "env X='a;b' bash <<'A'"),
+    ("X='a;b' bash <<'A'", "X='a;b' bash <<'A'"),
+    ("env X=\"a;b\" bash <<'A'", "env X=\"a;b\" bash <<'A'"),
+    ("env X=a\\;b bash <<'A'", "env X=a\\;b bash <<'A'"),
+    ("timeout 5 bash -s 'a;b' <<'A'", "timeout 5 bash -s 'a;b' <<'A'"),
+    ("bash -s 'x(y' <<'A'", "bash -s 'x(y' <<'A'"),
+    ("env X='a|b' bash <<'A'", "env X='a|b' bash <<'A'"),
+    ("env X='a&b' bash <<'A'", "env X='a&b' bash <<'A'"),
+    ("cat <<'A' - 'x;y' | bash", "cat <<'A' - 'x;y' | bash"),
+    ("bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'RM' (eddig ismert res)",
+     "bash -c 'IFS= read -r l; bash -c \"$l\"' <<< '" + RMH + "'"),
+]:
+    check(label + " / RM / A", blocks(cmd + ("" if "<<<" in cmd else "\n" + RMH + "\nA")))
+print("negativ kontroll (review 12, idezett elvalaszto):")
+for label, cmd in [
+    ("echo 'a;b' <<'A' / RM (adat)", "echo 'a;b' <<'A'\n" + RMH + "\nA"),
+    ("env X='a;b' cat <<'A' / RM (adat)", "env X='a;b' cat <<'A'\n" + RMH + "\nA"),
+    ("sort -t';' <<'A' / RM (adat)", "sort -t';' <<'A'\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+print("a fogyaszto szo (review 12):")
+check("gdb -batch -nx <<'A' -> gdb", _consumer("gdb -batch -nx <<'A'\nx\nA") == ["gdb"])
+check("env X='a;b' bash <<'A' -> bash", _consumer("env X='a;b' bash <<'A'\nx\nA") == ["bash"])
+check("echo 'a;b' <<'A' -> '' (adat)", _consumer("echo 'a;b' <<'A'\nx\nA") == [""])
+
+# --- 24. #777 review 13: gdb a csoportban/-c programban, dinamikus parancsszo, ${...} a vagasban,
+# a shell nyer a rossz fogyaszto ellen, gdb -ex stdin nelkul -----------------------------------------
+# Marveen review 13 (komment 3759), f3bd3615-on mind ALLOW volt. A gdb-sorok torzse arthatatlan (`bt`):
+# a gdb-szabaly a torzstol fuggetlenul blokkol (review 12). A dinamikus parancsszo is egeszben tilos,
+# kiveve a csak literalis, nem-gdb ertekkel beallitott `$NAME`-et (Roxy `P=.../python; $P - <<EOF`
+# alakja, 30 valodi flotta-parancs a visszajatszasban).
+print()
+print("#777 review 13, MUST-BLOCK:")
+for label, cmd in [
+    ("{ gdb -q; } <<'A'", "{ gdb -q; } <<'A'\nbt\nA"),
+    ("{ gdb -batch -x /dev/stdin; } <<< 'bt'", "{ gdb -batch -x /dev/stdin; } <<< 'bt'"),
+    ("if true; then gdb -q; fi <<'A'", "if true; then gdb -q; fi <<'A'\nbt\nA"),
+    ("while gdb -q; do :; done <<'A'", "while gdb -q; do :; done <<'A'\nbt\nA"),
+    ("{ bash -c true; gdb -q; } <<'A' (a gdb nyer a shell ellen)", "{ bash -c true; gdb -q; } <<'A'\nbt\nA"),
+    ("cat <<'A' | (gdb -q)", "cat <<'A' | (gdb -q)\nbt\nA"),
+    ("G=gdb; $G -q <<'A'", "G=gdb; $G -q <<'A'\nbt\nA"),
+    ("$(echo gdb) -q <<'A'", "$(echo gdb) -q <<'A'\nbt\nA"),
+    ("`echo gdb` -q <<'A'", "`echo gdb` -q <<'A'\nbt\nA"),
+    ("f(){ \"$@\"; }; f gdb -q <<'A'", "f(){ \"$@\"; }; f gdb -q <<'A'\nbt\nA"),
+    ("f(){ $1 -q; }; f gdb <<'A'", "f(){ $1 -q; }; f gdb <<'A'\nbt\nA"),
+    ("$G -q <<< 'bt' (beallitas nelkul)", "$G -q <<< 'bt'"),
+    ("P=/x/python; P=gdb; $P -q <<'A' (egy gdb ertek eleg)", "P=/x/python; P=gdb; $P -q <<'A'\nbt\nA"),
+    ("P=$(which gdb); $P -q <<'A' (nem literalis ertek)", "P=$(which gdb); $P -q <<'A'\nbt\nA"),
+    ("/usr/bin/gd? -q <<'A' (glob)", "/usr/bin/gd? -q <<'A'\nbt\nA"),
+    ("g{d,x}b -q <<'A' (kapcsos)", "g{d,x}b -q <<'A'\nbt\nA"),
+    ("bash -c 'gdb -q' <<'A'", "bash -c 'gdb -q' <<'A'\nbt\nA"),
+    ("sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'", "sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'"),
+    ("X=${Y:-a;b} gdb -q <<'A'", "X=${Y:-a;b} gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'shell id' ./prog", "gdb -batch -ex 'shell id' ./prog"),
+    ("gdb -batch -ex '!id'", "gdb -batch -ex '!id'"),
+    ("gdb -batch -iex 'shell id'", "gdb -batch -iex 'shell id'"),
+    ("gdb -batch -ex 'pipe p 1 | sh'", "gdb -batch -ex 'pipe p 1 | sh'"),
+    ("gdb -batch -ex 'python import os'", "gdb -batch -ex 'python import os'"),
+    ("gdb -batch -ex 'pi'", "gdb -batch -ex 'pi'"),
+    ("gdb -batch -ex 'gu (system \"id\")'", "gdb -batch -ex 'gu (system \"id\")'"),
+    ("gdb -batch --eval-command='shell id'", "gdb -batch --eval-command='shell id'"),
+    ("gdb -batch --init-eval-command 'compile code 1'", "gdb -batch --init-eval-command 'compile code 1'"),
+    ("gdb -batch -ex \"$C\" (dinamikus ertek)", "gdb -batch -ex \"$C\""),
+    ("sudo gdb -batch -ex 'she id'", "sudo gdb -batch -ex 'she id'"),
+    ("bash -c \"gdb -batch -ex 'shell id'\"", "bash -c \"gdb -batch -ex 'shell id'\""),
+]:
+    check(label, blocks(cmd))
+for label, cmd in [
+    ("X=${Y:-a;b} bash <<'A'", "X=${Y:-a;b} bash <<'A'"),
+    ("env X=${Y:-a;b} bash <<'A'", "env X=${Y:-a;b} bash <<'A'"),
+    ("timeout 5 bash -s ${Y:-a;b} <<'A'", "timeout 5 bash -s ${Y:-a;b} <<'A'"),
+    ("X=${Y:-a|b} bash <<'A'", "X=${Y:-a|b} bash <<'A'"),
+    ("X=${Y:-a&b} bash <<'A'", "X=${Y:-a&b} bash <<'A'"),
+    ("X=${Y/;/x} bash <<'A'", "X=${Y/;/x} bash <<'A'"),
+    ("X=${Y//[;]/x} bash <<'A'", "X=${Y//[;]/x} bash <<'A'"),
+    ("timeout 5 bash -s 'a;python3' <<'A' (a bash olvassa, nem a python3)", "timeout 5 bash -s 'a;python3' <<'A'"),
+    ("env X='a; python3 -' bash <<'A'", "env X='a; python3 -' bash <<'A'"),
+]:
+    check(label + " / RM / A", blocks(cmd + "\n" + RMH + "\nA"))
+print("negativ kontroll (review 13):")
+for label, cmd in [
+    ("gdb --version", "gdb --version"),
+    ("gdb -batch -ex bt ./prog core", "gdb -batch -ex bt ./prog core"),
+    ("gdb -batch -ex 'info functions' ./p", "gdb -batch -ex 'info functions' ./p"),
+    ("gdb -batch -ex 'print 1' -ex 'pt x' ./p", "gdb -batch -ex 'print 1' -ex 'pt x' ./p"),
+    ("P=/x/venv/bin/python; $P - <<'EOF' (literalis, nem-gdb ertek)", "P=/x/venv/bin/python; $P - <<'EOF'\nprint(1)\nEOF"),
+    ("P='/x/venv/bin/python3'; $P <<'EOF'", "P='/x/venv/bin/python3'; $P <<'EOF'\nprint(1)\nEOF"),
+    ("while read l; do echo \"$l\"; done <<'A'", "while read l; do echo \"$l\"; done <<'A'\nbt\nA"),
+    ("X=${Y:-a;b} cat <<'A' / RM (adat)", "X=${Y:-a;b} cat <<'A'\n" + RMH + "\nA"),
+    ("git commit -m 'gdb -ex shell' (a gdb szo idezett ertek)", "git commit -m 'gdb -ex shell x'"),
+]:
+    check(label, not blocks(cmd))
+print("a fogyaszto szo (review 13):")
+check("{ gdb -q; } <<'A' -> gdb", _consumer("{ gdb -q; } <<'A'\nx\nA") == ["gdb"])
+check("bash -c 'gdb -q' <<'A' -> gdb", _consumer("bash -c 'gdb -q' <<'A'\nx\nA") == ["gdb"])
+check("bash -c 'bash' <<'A' -> bash (a regi alak)", _consumer("bash -c 'bash' <<'A'\nx\nA") == ["bash"])
+check("timeout 5 bash -s 'a;python3' <<'A' -> bash", _consumer("timeout 5 bash -s 'a;python3' <<'A'\nx\nA") == ["bash"])
+check("{ echo x; bash; } <<'A' -> } (a zaro marad)", _consumer("{ echo x; bash; } <<'A'\nx\nA") == ["}"])
+
+# --- 25. #777 review 14: szigoru $NAME kivetel, csoport/cso-tag/-c program erős fogyasztoja,
+# logikai sor az idezett vagasban, ${...} egy szo, gdb -ex ALLOWLIST, --args program --------------
+# Marveen review 14 (komment 3762), 5da38445-on mind ALLOW volt. Osztaly-szabalyok: a $NAME csak
+# akkor kivetel, ha MINDEN elofordulasa olvasas, literalis `NAME=szo` vagy `for NAME in szo..`
+# utasitas-elejen; a gdb -ex erteke csak olvaso parancs lehet (bt, info, print, list, ...).
+print()
+print("#777 review 14, MUST-BLOCK:")
+for label, cmd in [
+    ("G=cat; read G <<< gdb; $G -q <<'A'", "G=cat; read G <<< gdb; $G -q <<'A'\nbt\nA"),
+    ("G=g; G+=db; $G -q <<'A'", "G=g; G+=db; $G -q <<'A'\nbt\nA"),
+    ("G=cat; eval 'G=gdb'; $G -q <<'A'", "G=cat; eval 'G=gdb'; $G -q <<'A'\nbt\nA"),
+    ("G=cat; printf -v G %s gdb; $G -q <<'A'", "G=cat; printf -v G %s gdb; $G -q <<'A'\nbt\nA"),
+    ("H=gdb; declare -n G=H; $G -q <<'A'", "H=gdb; declare -n G=H; $G -q <<'A'\nbt\nA"),
+    ("G=cat; for G in gdb; do $G -q <<'A'", "G=cat; for G in gdb; do $G -q <<'A'\nbt\nA\ndone"),
+    ("G=cat; G[0]=gdb; $G -q <<'A'", "G=cat; G[0]=gdb; $G -q <<'A'\nbt\nA"),
+    ("G=cat; mapfile -t G <<< gdb; $G -q <<'A'", "G=cat; mapfile -t G <<< gdb; $G -q <<'A'\nbt\nA"),
+    ("G=cat; : ${G:=gdb}; $G -q <<'A'", "G=cat; : ${G:=gdb}; $G -q <<'A'\nbt\nA"),
+    ("G=cat; select G in gdb; do break; done; $G -q <<'A'", "G=cat; select G in gdb; do break; done; $G -q <<'A'\nbt\nA"),
+    ("{ G=gdb; $G -q; } <<'A'", "{ G=gdb; $G -q; } <<'A'\nbt\nA"),
+    ("{ $(echo gdb) -q; } <<'A'", "{ $(echo gdb) -q; } <<'A'\nbt\nA"),
+    ("bash -c '$0 -q' gdb <<'A'", "bash -c '$0 -q' gdb <<'A'\nbt\nA"),
+    ("bash -c '\"$@\"' _ gdb -q <<'A'", "bash -c '\"$@\"' _ gdb -q <<'A'\nbt\nA"),
+    ("su -c 'gdb -q' <<'A'", "su -c 'gdb -q' <<'A'\nbt\nA"),
+    ("cat <<'A' | if true; then gdb -q; fi", "cat <<'A' | if true; then gdb -q; fi\nbt\nA"),
+    ("X=${Y:-a<ujsor>b} gdb -q <<'A'", "X=${Y:-a\nb} gdb -q <<'A'\nbt\nA"),
+    ("X='a<ujsor>b' gdb -q <<'A'", "X='a\nb' gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'with confirm off -- shell id'", "gdb -batch -ex 'with confirm off -- shell id' ./p"),
+    ("gdb -batch -ex 'alias s=shell' -ex 's id'", "gdb -batch -ex 'alias s=shell' -ex 's id' ./p"),
+    ("gdb -batch -ex 'target remote | id'", "gdb -batch -ex 'target remote | id' ./p"),
+    ("gdb -batch -ex 'print $_shell(\"id\")'", "gdb -batch -ex 'print $_shell(\"id\")' ./p"),
+    ("gdb -batch -ex 'set exec-wrapper sh -c id' -ex run", "gdb -batch -ex 'set exec-wrapper sh -c id' -ex run ./p"),
+    ("gdb -batch -ex 'frame apply all -q shell id'", "gdb -batch -ex 'frame apply all -q shell id' ./p"),
+    ("gdb -batch -ex 'echo hi<ujsor>shell id'", "gdb -batch -ex 'echo hi\nshell id' ./p"),
+    ("gdb -batch -ex 'SHELL id' (nagybetu)", "gdb -batch -ex 'SHELL id' ./p"),
+    ("(gdb -batch -ex 'shell id')", "(gdb -batch -ex 'shell id')"),
+    ("gdb -batch -ex run --args sh -c 'rm -rf /tmp/x'", "gdb -batch -ex run --args sh -c 'rm -rf /tmp/x'"),
+]:
+    check(label, blocks(cmd))
+for label, cmd in [
+    ("cat <<'A' | if true; then bash; fi", "cat <<'A' | if true; then bash; fi"),
+    ("cat <<'A' | for i in 1; do bash; done", "cat <<'A' | for i in 1; do bash; done"),
+    ("cat <<'A' | case x in x) bash;; esac", "cat <<'A' | case x in x) bash;; esac"),
+    ("X=\"a<ujsor>b\" bash <<'A'", "X=\"a\nb\" bash <<'A'"),
+    ("X=$(echo a<ujsor>echo b) bash <<'A'", "X=$(echo a\necho b) bash <<'A'"),
+    ("X=${Y:-a<ujsor>b} bash <<'A'", "X=${Y:-a\nb} bash <<'A'"),
+    ("X=${Y:-a b} bash <<'A' (a ${...} egy szo)", "X=${Y:-a b} bash <<'A'"),
+]:
+    check(label + " / RM / A", blocks(cmd + "\n" + RMH + "\nA"))
+print("negativ kontroll (review 14):")
+for label, cmd in [
+    ("G=cat; $G -q <<'A' (literalis, nem-gdb)", "G=cat; $G -q <<'A'\nbt\nA"),
+    ("G=cat; ${G} -q <<'A'", "G=cat; ${G} -q <<'A'\nbt\nA"),
+    ("for f in a b; do $f --version; done <<< x", "for f in a b; do $f --version; done <<< x"),
+    ("gdb -batch -ex 'x/10i $pc' ./p", "gdb -batch -ex 'x/10i $pc' ./p"),
+    ("gdb -batch -ex 'set pagination off' -ex 'info registers' ./p", "gdb -batch -ex 'set pagination off' -ex 'info registers' ./p"),
+    ("gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p", "gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p"),
+    ("gdb -batch -ex run --args ./prog -v", "gdb -batch -ex run --args ./prog -v"),
+    ("cat <<'A' | while read l; do echo \"$l\"; done / RM (adat)", "cat <<'A' | while read l; do echo \"$l\"; done\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+
+
+# --- 26. #777 review 15: gdb hivas minden `(`-re, --args alakok, $'..' a nevben, eval dinamikus
+# operandusa, quit + thread apply, `|&` cso, *-gdb nevek -------------------------------------------
+# Marveen review 15 (komment 3765), e9352d5d-n mind ALLOW volt (a negativ kontroll ott BLOCK).
+print()
+print("#777 review 15, MUST-BLOCK:")
+for label, cmd in [
+    ("gdb -batch -ex 'p 0+($_shell)(\"id\")'", "gdb -batch -ex 'p 0+($_shell)(\"id\")' ./p"),
+    ("gdb -batch -ex 'print -- ($_shell)(\"id\")'", "gdb -batch -ex 'print -- ($_shell)(\"id\")' ./p"),
+    ("gdb -batch -ex 'p -($_shell)(\"id\")'", "gdb -batch -ex 'p -($_shell)(\"id\")' ./p"),
+    ("gdb -ex start -ex 'p 1,(system)(\"id\")'", "gdb -batch -ex start -ex 'p 1,(system)(\"id\")' ./p"),
+    ("gdb -ex start -ex \"p 'system'(\\\"id\\\")\"", "gdb -batch -ex start -ex \"p 'system'(\\\"id\\\")\" ./p"),
+    ("gdb -ex start -ex 'p arr[0](\"id\")'", "gdb -batch -ex start -ex 'p arr[0](\"id\")' ./p"),
+    ("gdb -ex 'thread apply all shell id'", "gdb -batch -ex 'thread apply all shell id' ./p"),
+    ("gdb -ex 'thread apply 1 2 -q shell id'", "gdb -batch -ex 'thread apply 1 2 -q shell id' ./p"),
+    ("gdb -ex 'taas shell id'", "gdb -batch -ex 'taas shell id' ./p"),
+    ("gdb -ex 'quit system(\"id\")'", "gdb -batch -ex 'quit system(\"id\")' ./p"),
+    ("gdb -ex run -args sh -c RM", "gdb -batch -ex run -args sh -c '" + RMH + "'"),
+    ("gdb -ex run --arg sh -c RM", "gdb -batch -ex run --arg sh -c '" + RMH + "'"),
+    ("gdb -ex run '--args' sh -c RM", "gdb -batch -ex run '--args' sh -c '" + RMH + "'"),
+    ("g$'d'b -batch -ex 'shell RM'", "g$'d'b -batch -ex 'shell " + RMH + "'"),
+    ("g$'\\x64'b -batch -ex 'shell RM'", "g$'\\x64'b -batch -ex 'shell " + RMH + "'"),
+    ("aarch64-linux-gnu-gdb -batch -ex 'shell RM'", "aarch64-linux-gnu-gdb -batch -ex 'shell " + RMH + "'"),
+    ("cuda-gdb -batch -ex 'shell RM'", "cuda-gdb -batch -ex 'shell " + RMH + "'"),
+    ("g$'d'b -q <<'A' / shell RM", "g$'d'b -q <<'A'\nshell " + RMH + "\nA"),
+    ("rust-gdb -q <<'A' / shell RM", "rust-gdb -q <<'A'\nshell " + RMH + "\nA"),
+    ("G=gdb; eval \"$G\" <<'A' / shell RM", "G=gdb; eval \"$G\" <<'A'\nshell " + RMH + "\nA"),
+    ("bash -c 'eval \"$0\"' gdb <<'A' / shell RM", "bash -c 'eval \"$0\"' gdb <<'A'\nshell " + RMH + "\nA"),
+    ("bash -c 'eval $0' bash <<'A' / RM", "bash -c 'eval $0' bash <<'A'\n" + RMH + "\nA"),
+    ("while read l; do eval \"$l\"; done <<'A' / RM", "while read l; do eval \"$l\"; done <<'A'\n" + RMH + "\nA"),
+    ("cat <<'A' |& bash / RM", "cat <<'A' |& bash\n" + RMH + "\nA"),
+    ("cat <<'A' |& sh / RM", "cat <<'A' |& sh\n" + RMH + "\nA"),
+    ("cat <<'A' |& if true; then bash; fi / RM", "cat <<'A' |& if true; then bash; fi\n" + RMH + "\nA"),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 15):")
+for label, cmd in [
+    ("gdb -batch -ex 'p (int)x'", "gdb -batch -ex 'p (int)x' ./p core"),
+    ("gdb -batch -ex 'p/x (char)c'", "gdb -batch -ex 'p/x (char)c' ./p core"),
+    ("gdb -batch -ex 'p sizeof(struct s)'", "gdb -batch -ex 'p sizeof(struct s)' ./p core"),
+    ("gdb -batch -ex 'p *(int *)ptr'", "gdb -batch -ex 'p *(int *)ptr' ./p core"),
+    ("gdb -batch -ex 'thread apply all bt full'", "gdb -batch -ex 'thread apply all bt full' ./p core"),
+    ("gdb -batch -ex 'info threads' -ex 'thread apply all bt' -p 123", "gdb -batch -ex 'info threads' -ex 'thread apply all bt' -p 123"),
+    ("gdb -batch -ex 'frame apply all -q p $pc'", "gdb -batch -ex 'frame apply all -q p $pc' ./p core"),
+    ("gdb -batch -ex bt -ex quit", "gdb -batch -ex 'bt' -ex 'quit' ./p core"),
+    ("gdb -batch -ex bt -ex q", "gdb -batch -ex bt -ex q ./p core"),
+    ("gdb -batch -ex run -args ./prog -v", "gdb -batch -ex run -args ./prog -v"),
+    ("G=cat; eval \"$G\" <<'A' (literalis, nem-gdb)", "G=cat; eval \"$G\" <<'A'\nbt\nA"),
+    ("make 2>&1 |& tee log", "make 2>&1 |& tee log"),
+    ("cat <<'A' |& grep x / RM (adat)", "cat <<'A' |& grep x\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+
+# --- 27. #777 review 16: --args idezojellel szetvagva ------------------------------------------
+# Marveen review 16 (komment 3768): a py kapu mar 0d5791e2-n is BLOCK, a JS iker nem (nyers-szoveg
+# elofilter); itt a py oldalt rogzitjuk, hogy a ket kapu egyutt maradjon.
+print()
+print("#777 review 16, MUST-BLOCK:")
+for label, cmd in [
+    ("gdb -ex run -'a'rgs sh -c RM", "gdb -batch -ex run -'a'rgs sh -c '" + RMH + "'"),
+    ("gdb -ex run --a''rgs sh -c RM", "gdb -batch -ex run --a''rgs sh -c '" + RMH + "'"),
+    ("gdb -ex run \"--\"args sh -c RM", "gdb -batch -ex run \"--\"args sh -c '" + RMH + "'"),
+    ("gdb -ex run -$'a'rgs sh -c RM", "gdb -batch -ex run -$'a'rgs sh -c '" + RMH + "'"),
+]:
+    check(label, blocks(cmd))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

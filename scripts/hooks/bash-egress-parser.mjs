@@ -942,7 +942,7 @@ export function wgetDestinations(args) {
 // `node <<EOF`, `bash <<< 'curl ...'`), and for a `while read u` loop it is the list of values `u`
 // takes. maskInertLiterals blanks both (rightly: to the OUTER shell they are text), so before this
 // neither reading was ever judged.
-const SHELL = /^(?:bash|sh|zsh|dash|ksh)$/
+const SHELL = /^(?:bash|sh|zsh|dash|ksh|rbash)$/
 // `read` options that take a value; -a's value is itself a variable name (an array).
 const READ_OPT_WITH_VALUE = new Set('adnNptui'.split(''))
 // The word after `<<<`, raw (quotes kept), ending at unquoted whitespace or a shell operator.

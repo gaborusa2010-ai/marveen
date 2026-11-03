@@ -19,6 +19,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CASES = os.path.join(HERE, "heredoc-program-cases.json")
+C_CASES = os.path.join(HERE, "shell-c-program-cases.json")
 
 
 def load(name, path):
@@ -39,19 +40,30 @@ def main():
     failed = []
     for c in cases:
         cmd = c["cmd"].replace("X", PAYLOAD)
-        heredocs, _certain = scan.find(cmd)
-        got = [bool(gate._heredoc_runs_body(cmd, h)) for h in heredocs]
+        records, _certain = scan.find_all(cmd)          # heredocs and here-strings (#777)
+        got = [bool(gate._heredoc_runs_body(cmd, h)) for h in records]
         if got != c["expect"]:
             failed.append("%s: expected %s, got %s" % (c["name"], c["expect"], got))
         # The file's own consistency: where bash was asked, it must agree with the intent.
-        if c.get("bash_runs") is not None and c["bash_runs"] != any(c["expect"]):
+        # bash_note: the disagreement is explained in the file (oracle artefact, accepted over-block, known gap)
+        if c.get("bash_runs") is not None and not c.get("bash_note") and c["bash_runs"] != any(c["expect"]):
             failed.append("%s: expect %s disagrees with bash_runs=%s" % (c["name"], c["expect"], c["bash_runs"]))
+    # #777: the literal `sh -c PROGRAM` words, the same file pins the JS shellCPrograms
+    c_cases = json.load(open(C_CASES, encoding="utf-8"))["cases"]
+    for c in c_cases:
+        got = gate.shell_c_programs(c["cmd"])
+        if got != c["programs"]:
+            failed.append("-c program %r: expected %s, got %s" % (c["cmd"], c["programs"], got))
+    if len(c_cases) < 30 or sum(1 for c in c_cases if c["programs"]) < 20:
+        failed.append("shell-c-program case file too small: %d" % len(c_cases))
+    print("shell -c program cases: %d" % len(c_cases))
     must_run = sum(1 for c in cases if any(c["expect"]))
-    print("heredoc-program cases: %d (%d must-run, %d data), failures: %d"
-          % (len(cases), must_run, len(cases) - must_run, len(failed)))
+    noted = sum(1 for c in cases if c.get("bash_note"))
+    print("heredoc-program cases: %d (%d must-run, %d data, %d with a bash_note), failures: %d"
+          % (len(cases), must_run, len(cases) - must_run, noted, len(failed)))
     for f in failed:
         print("  FAIL", f)
-    if len(cases) < 80 or must_run < 40:
+    if len(cases) < 400 or must_run < 200:
         print("  FAIL case file too small: %d cases / %d must-run" % (len(cases), must_run))
         failed.append("size")
     return 1 if failed else 0

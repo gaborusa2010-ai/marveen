@@ -427,3 +427,235 @@ describe('child-claude guard: where it lands', () => {
     expect(fn.slice(0, 200)).toMatch(/return name !== MAIN_AGENT_ID/)
   })
 })
+
+describe('#777: a here-string program and a literal `bash -c` program reach the child claude', () => {
+  // bash runs every shape below (oracle: agents/cody/work/777/oracle-out.txt); on the base
+  // (f2fba696) each one passed the guard.
+  it.each([
+    ["bash <<< 'claude -p x'"],
+    ["bash <<< 'claude -p x' #comment"],
+    ["bash 3<<< 'claude -p x' <&3"],
+    ["bash -- /dev/stdin <<< 'claude -p x'"],
+    ["sh -c 'cat | sh' <<< 'claude -p x'"],
+    ["bash -c 'bash' <<EOF\nclaude -p x\nEOF"],
+    ["bash -c 'bash -c \"source /dev/stdin\"' <<< 'claude -p x'"],
+    ["bash -c 'bash -c \"$(cat)\"' <<< 'claude -p x'"],
+    ["bash -xc 'claude -p x'"],
+    ["bash -o pipefail -c 'claude -p x'"],
+    ["nice bash -c 'claude -p x'"],
+    ["bash -c $'cl\\141ude -p x'"],
+    ["bash -c 'cl''aude -p x'"],
+    ["bash -c 'bash -c \"bash -c \\\"claude -p x\\\"\"'"],
+    // review 3: a here-string inside an executed heredoc body, inside backticks, `<&0` before -c
+    ["bash <<'A'\nsh <<< $'claude -p x'\nA"],
+    ["bash <<A\nbash <<< 'claude -p x'\nA"],
+    ["echo `bash <<< 'claude -p x'`"],
+    ["x=`bash <<< 'claude -p x'`"],
+    ["bash <&0 -c $'cl\\x61ude -p x'"],
+    ["bash <<< 'claude -p x"],
+    // review 4: ANY non-code-interpreter consumer runs the body (eval, source, $SHELL, a
+    // function, a brace group, the closing-line pipe); nested escaped backticks
+    ["source /dev/stdin <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["eval \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\""],
+    ["echo \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\" | bash"],
+    ["$SHELL <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["bash \\\n<<'A'\nbash <<< 'claude -p x'\nA"],
+    ["while read l; do eval \"$l\"; done <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["f(){ bash; }; f <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["{ bash; } <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["cat <<'A' | eval \"$(cat)\"\nbash <<< 'claude -p x'\nA"],
+    ["echo `echo \\`bash <<< 'claude -p x'\\``"],
+    ["echo `echo \"\\`bash <<< 'claude -p x'\\`\"`"],
+    ["echo `echo \\`bash <<< 'claude -p x'\\` tail`"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["wc -l <<< 'claude -p x'"],
+    ["grep -c claude <<< 'claude -p x'"],
+    ["echo \"bash -c 'claude -p x'\""],
+    ["bash -c'claude -p x'"],
+    ["cat <<< 'claude -p x' > notes.txt"],
+    ["cat <<'A'\nbash <<< 'claude -p x'\nA"],
+    ["echo `grep -c claude <<< 'claude -p x'`"],
+    ["python3 - <<'PY'\nx = \"bash <<< 'claude -p x'\"\nPY"],
+    ["git commit -m \"$(cat <<'A'\nbash <<< 'claude -p x'\nA\n)\""],
+    ["echo `echo hi` 'bash <<< claude -p x'"],
+  ])('allows the data shape %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
+describe('#777 review 12: gdb reading a heredoc/here-string is denied whole; quoted separators in the opener line', () => {
+  // gdb's command language runs the stdin many ways (abbreviations, eval, python, interpreter-exec):
+  // the guard denies any gdb that reads one, whatever the body. The destructive gate's twin:
+  // scripts/__tests__/destructive-gate.test.py section 23. Quoted shapes: probe-sandbox bash runs each.
+  it.each([
+    ["gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"],
+    ["gdb -batch -ex 'she bash' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'pi' <<'A'\nimport os\nA"],
+    ["gdb -batch prog <<'A'\nbt\nA"],
+    ["gdb-multiarch -batch <<'A'\nbt\nA"],
+    ["gdb -batch -ex 'py exec(input())' <<< 'import os'"],
+    ["bash <<'A'\ngdb -batch <<'B'\nbt\nB\nA"],
+    ["env X='a;b' bash <<'A'\nclaude -p x\nA"],
+    ["env X=a\\;b bash <<'A'\nclaude -p x\nA"],
+    ["bash -s 'x(y' <<'A'\nclaude -p x\nA"],
+    ["cat <<'A' - 'x;y' | bash\nclaude -p x\nA"],
+    ["bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'claude -p x'"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['gdb -batch -ex bt ./prog ./core'],
+    ["cat <<'A'\ngdb -batch <<'B'\nbt\nB\nA"],
+    ["echo 'a;b' <<'A'\nclaude -p x\nA"],
+    ["env X='a;b' cat <<'A'\nclaude -p x\nA"],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
+describe('#777 review 13: gdb in a group or -c program, a dynamic command word, ${...} in the cut, gdb -ex without stdin', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 24. The `${...}` and
+  // quoted-python3 shapes: probe-sandbox bash runs each body.
+  it.each([
+    ["{ gdb -q; } <<'A'\nbt\nA"],
+    ["if true; then gdb -q; fi <<'A'\nbt\nA"],
+    ["while gdb -q; do :; done <<'A'\nbt\nA"],
+    ["cat <<'A' | (gdb -q)\nbt\nA"],
+    ["G=gdb; $G -q <<'A'\nbt\nA"],
+    ["$(echo gdb) -q <<'A'\nbt\nA"],
+    ["f(){ \"$@\"; }; f gdb -q <<'A'\nbt\nA"],
+    ["bash -c 'gdb -q' <<'A'\nbt\nA"],
+    ["sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'"],
+    ["gdb -batch -ex 'shell id' ./prog"],
+    ["gdb -batch -ex '!id'"],
+    ["gdb -batch -iex 'shell id'"],
+    ["gdb -batch -ex 'pipe p 1 | sh'"],
+    ["gdb -batch -ex 'python import os'"],
+    ["gdb -batch --eval-command='shell id'"],
+    ["bash -c \"gdb -batch -ex 'shell id'\""],
+    ["X=${Y:-a;b} bash <<'A'\nclaude -p x\nA"],
+    ["env X=${Y:-a|b} bash <<'A'\nclaude -p x\nA"],
+    ["timeout 5 bash -s 'a;python3' <<'A'\nclaude -p x\nA"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['gdb -batch -ex bt ./prog core'],
+    ["gdb -batch -ex 'info functions' ./p"],
+    ["P=/x/venv/bin/python; $P - <<'EOF'\nprint(1)\nEOF"],
+    ["X=${Y:-a;b} cat <<'A'\nclaude -p x\nA"],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
+describe('#777 review 14: strict $NAME exception, strong consumer in a group/pipe/-c program, the logical line, gdb -ex allowlist, --args', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 25; the shell-consumer
+  // shapes are pinned in heredoc-program-cases.json (777r14_*), probe-sandbox bash runs each body.
+  it.each([
+    ["G=cat; read G <<< gdb; $G -q <<'A'\nbt\nA"],
+    ["G=g; G+=db; $G -q <<'A'\nbt\nA"],
+    ["G=cat; eval 'G=gdb'; $G -q <<'A'\nbt\nA"],
+    ["G=cat; printf -v G %s gdb; $G -q <<'A'\nbt\nA"],
+    ["H=gdb; declare -n G=H; $G -q <<'A'\nbt\nA"],
+    ["G=cat; G[0]=gdb; $G -q <<'A'\nbt\nA"],
+    ["G=cat; : ${G:=gdb}; $G -q <<'A'\nbt\nA"],
+    ["G=cat; select G in gdb; do break; done; $G -q <<'A'\nbt\nA"],
+    ["{ G=gdb; $G -q; } <<'A'\nbt\nA"],
+    ["bash -c '$0 -q' gdb <<'A'\nbt\nA"],
+    ["su -c 'gdb -q' <<'A'\nbt\nA"],
+    ["cat <<'A' | if true; then gdb -q; fi\nbt\nA"],
+    ["V=${Y:-a\nb} gdb -q <<'A'\nbt\nA"],
+    ["gdb -batch -ex 'with confirm off -- shell id' ./p"],
+    ["gdb -batch -ex 'alias s=shell' -ex 's id' ./p"],
+    ["gdb -batch -ex 'target remote | id' ./p"],
+    ["gdb -batch -ex 'print $_shell(\"id\")' ./p"],
+    ["gdb -batch -ex 'frame apply all -q shell id' ./p"],
+    ["gdb -batch -ex 'run $(id)' ./p"],
+    ["(gdb -batch -ex 'shell id')"],
+    ["g''db -batch -ex 'shell id' ./p"],
+    ["cat <<'A' | if true; then bash; fi\nclaude -p x\nA"],
+    ["cat <<'A' | case x in x) bash;; esac\nclaude -p x\nA"],
+    ["V=\"a\nb\" bash <<'A'\nclaude -p x\nA"],
+    ["V=$(echo a\necho b) bash <<'A'\nclaude -p x\nA"],
+    ["V=${Y:-a b} bash <<'A'\nclaude -p x\nA"],
+    ["gdb -batch -ex run --args sh -c 'claude -p x'"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["G=cat; $G -q <<'A'\nbt\nA"],
+    ["for f in a b; do $f --version; done <<< x"],
+    ["gdb -batch -ex 'x/10i $pc' -ex 'set pagination off' -ex 'info registers' ./p"],
+    ["gdb -batch -ex run --args ./prog -v"],
+    ["cat <<'A' | while read l; do echo \"$l\"; done\nclaude -p x\nA"],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+
+const P15 = 'claude -p x'
+
+describe('#777 review 15: gdb call on any `(`, --args spellings, ANSI-C quotes in a name, eval of a dynamic operand, quit/thread apply, `|&`, *-gdb names', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 26; the shell-consumer
+  // shapes are pinned in heredoc-program-cases.json (777r15_*).
+  it.each([
+    ["gdb -batch -ex 'p 0+($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex 'print -- ($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex 'p -($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex start -ex 'p 1,(system)(\"id\")' ./p"],
+    ["gdb -batch -ex start -ex \"p 'system'(\\\"id\\\")\" ./p"],
+    ["gdb -batch -ex start -ex 'p arr[0](\"id\")' ./p"],
+    ["gdb -batch -ex 'thread apply all shell id' ./p"],
+    ["gdb -batch -ex 'taas shell id' ./p"],
+    ["gdb -batch -ex run -args sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run --arg sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run '--args' sh -c 'PAYLOAD'"],
+    ["g$'d'b -batch -ex 'shell PAYLOAD'"],
+    ["g$'\\x64'b -batch -ex 'shell PAYLOAD'"],
+    ["cuda-gdb -batch -ex 'shell PAYLOAD' ./p"],
+    ["g$'d'b -q <<'A'\nshell PAYLOAD\nA"],
+    ["rust-gdb -q <<'A'\nshell PAYLOAD\nA"],
+    ["G=gdb; eval \"$G\" <<'A'\nshell PAYLOAD\nA"],
+    ["bash -c 'eval \"$0\"' gdb <<'A'\nshell PAYLOAD\nA"],
+    ["while read l; do eval \"$l\"; done <<'A'\nPAYLOAD\nA"],
+    ["cat <<'A' |& bash\nPAYLOAD\nA"],
+    ["cat <<'A' |& if true; then bash; fi\nPAYLOAD\nA"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ["gdb -batch -ex 'p (int)x' ./p core"],
+    ["gdb -batch -ex 'p/x (char)c' ./p core"],
+    ["gdb -batch -ex 'p sizeof(struct s)' ./p core"],
+    ["gdb -batch -ex 'thread apply all bt full' ./p core"],
+    ["gdb -batch -ex 'bt' -ex 'quit' ./p core"],
+    ["gdb -batch -ex run -args ./prog -v"],
+    ["G=cat; eval \"$G\" <<'A'\nbt\nA"],
+    ["make 2>&1 |& tee log"],
+    ["cat <<'A' |& grep x\nPAYLOAD\nA"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})
+describe('#777 review 16: --args split by quotes', () => {
+  // Quote removal comes before the --args match (no raw-text prefilter); py twin: destructive-gate.test.py section 27.
+  it.each([
+    ["gdb -batch -ex run -'a'rgs sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run --a''rgs sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run \"--\"args sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run -$'a'rgs sh -c 'PAYLOAD'"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+})

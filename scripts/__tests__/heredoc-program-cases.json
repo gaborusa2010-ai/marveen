@@ -1,5 +1,5 @@
 {
- "_comment": "Shared case file of the heredoc-program twins (#748): scripts/hooks/destructive-gate.py _heredoc_runs_body and scripts/hooks/lib/heredoc-program.mjs heredocRunsBody. cmd carries X where the payload goes; expect has one bool per heredoc (does the shell RUN that body?); bash_runs is what bash itself did with X=echo PWNED_MARK when the file was built. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "_comment": "Shared case file of the heredoc-program twins (#748, #777): scripts/hooks/destructive-gate.py _heredoc_runs_body and scripts/hooks/lib/heredoc-program.mjs heredocRunsBody. cmd carries X where the payload goes; expect has one bool per record of find_all/findAll (heredocs AND here-strings, sorted by start: does the shell RUN that body?); bash_runs is what bash itself did with X=echo PWNED_MARK(_777) when the row was built. bash_note (#777) explains a row where bash_runs and expect differ on purpose: an oracle artefact of the payload framing, an accepted over-block, or a KNOWN GAP; the consistency check skips such rows, the expect check does not. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
  "cases": [
   {
    "name": "sq_tag_data",
@@ -857,6 +857,7 @@
    "name": "herestring_sub",
    "cmd": "bash <<<\"$(cat <<SH\nX\nSH\n)\"",
    "expect": [
+    true,
     true
    ],
    "bash_runs": true
@@ -865,6 +866,7 @@
    "name": "herestring_py",
    "cmd": "python3 - <<< \"$(cat <<PY\nimport os; os.system(\"X\")\nPY\n)\"",
    "expect": [
+    true,
     true
    ],
    "bash_runs": true
@@ -996,6 +998,7 @@
    "name": "data_echo_herestr",
    "cmd": "echo <<<\"$(cat <<EOF\nX\nEOF\n)\" >/dev/null",
    "expect": [
+    false,
     false
    ],
    "bash_runs": false
@@ -1816,9 +1819,10 @@
   {
    "name": "775_herestring_not_heredoc",
    "cmd": "bash <<< 'X'",
-   "expect": [],
-   "bash_runs": null,
-   "note": "a here-string is not a heredoc: no scan result, and all 3 live gates allowed the payload (measured 2026-11-03); its own card"
+   "expect": [
+    true
+   ],
+   "bash_runs": true
   },
   {
    "name": "775r2_top_bash_rcfile",
@@ -2297,6 +2301,2795 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "777_bash_x_2",
+   "cmd": "bash <<< \"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_3",
+   "cmd": "bash <<< X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_sh_x",
+   "cmd": "sh <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_dash_x",
+   "cmd": "dash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_rbash_x",
+   "cmd": "rbash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_eval_x",
+   "cmd": "eval <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_eval_cat_x",
+   "cmd": "eval \"$(cat)\" <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash expands $(cat) before the redirection, cat reads the OUTER stdin; the gate reads it as fed (over-block, accepted)"
+  },
+  {
+   "name": "777_source_dev_stdin_x",
+   "cmd": "source /dev/stdin <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_dev_stdin_x",
+   "cmd": ". /dev/stdin <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x",
+   "cmd": "bash -c 'bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_sh_x",
+   "cmd": "bash -c 'cat | sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_echo_hi_x",
+   "cmd": "bash -c 'echo hi' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_cd_tmp_nx",
+   "cmd": "bash <<< $'cd /tmp\\nX'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_170_170_170_x",
+   "cmd": "bash <<< $'\\170\\170\\170; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ec_ho_a_x",
+   "cmd": "bash <<< 'ec''ho a; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ec_ho_a_x_2",
+   "cmd": "bash <<< ec\\ho\\ a\\;\\ X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_3_x_3",
+   "cmd": "bash 3<<< 'X' <&3",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_3_x",
+   "cmd": "bash 3<<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_0_x",
+   "cmd": "bash 0<<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_pipefail_x",
+   "cmd": "bash -o pipefail <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_extglob_x",
+   "cmd": "bash -O extglob <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_o_posix_x",
+   "cmd": "bash +o posix <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_a_x",
+   "cmd": "bash <<< 'echo a' <<< 'X'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_echo_a",
+   "cmd": "bash <<< 'X' <<< 'echo a'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_eof_x_echo_a_eof",
+   "cmd": "bash <<EOF <<< 'X'\necho a\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_eof_echo_a_eof",
+   "cmd": "bash <<< 'X' <<EOF\necho a\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_xargs_0_bash_c_x",
+   "cmd": "xargs -0 bash -c <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_xargs_i_bash_c_x",
+   "cmd": "xargs -I{} bash -c {} <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_xargs_bash_c_x",
+   "cmd": "xargs bash -c <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "xargs splits the body into words and runs `bash -c echo PWNED_MARK_777` (echo with the marker as $0): the body IS run, the marker is not printed (oracle artefact)"
+  },
+  {
+   "name": "777_env_bash_x",
+   "cmd": "env bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_env_i_path_path_bash_x",
+   "cmd": "env -i PATH=$PATH bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_command_bash_x",
+   "cmd": "command bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_nice_bash_x",
+   "cmd": "nice bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_sh_x",
+   "cmd": "sh -c 'cat | sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_eof_x_eof",
+   "cmd": "bash -c 'bash' <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_s_x",
+   "cmd": "bash -c 'bash -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_s_x",
+   "cmd": "bash -s <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_4",
+   "cmd": "bash - <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_x",
+   "cmd": "bash -c \"$(cat)\" <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_cat_x_bash",
+   "cmd": "cat <<< 'X' | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_grep_x_x",
+   "cmd": "grep x <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_read_r_a_x",
+   "cmd": "read -r a <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_echo_x",
+   "cmd": "echo <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_python3_import_os_os_system_x",
+   "cmd": "python3 <<< 'import os; os.system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_python3_import_os_os_system_x_2",
+   "cmd": "python3 - <<< 'import os; os.system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_perl_system_x",
+   "cmd": "perl <<< 'system(\"X\")'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_5",
+   "cmd": "bash <<< \"\\$(X)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_x",
+   "cmd": "bash <<< \"$(echo X)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_a_x_echo_b",
+   "cmd": "bash <<< 'a'\"; X; echo \"'b'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_6",
+   "cmd": "bash <<< \"\\`X\\`\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x58_x59_x",
+   "cmd": "bash <<< $'\\x58\\x59; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_u0041_x",
+   "cmd": "bash <<< $'\\u0041; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_ca_x",
+   "cmd": "bash <<< $'\\cA; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_e_x",
+   "cmd": "bash <<< $'\\e; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_7",
+   "cmd": "bash <<< $'\\\\; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_x_8",
+   "cmd": "bash <<< $'\\\"; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_a_b_x",
+   "cmd": "bash <<< \"a\\\\b; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_9",
+   "cmd": "bash <<< \"\\\\; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the body is fed to bash as a program, but the payload's own syntax is broken (a \\; command or an unbalanced quote), so the marker did not print"
+  },
+  {
+   "name": "777_bash_a_x",
+   "cmd": "bash <<< a\\\\; X",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_10",
+   "cmd": "bash <<<'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_11",
+   "cmd": "bash <<<\"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_12",
+   "cmd": "bash<<<'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sudo_n_true_2_dev_null_bash_x",
+   "cmd": "sudo -n true 2>/dev/null; bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_bash_x",
+   "cmd": "bash <<< 'bash' <<< 'X'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_a_bash_eof_x_eof",
+   "cmd": "bash <<< 'echo a; bash' <<EOF\nX\nEOF",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_cat",
+   "cmd": "bash <<< 'X' | cat",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true",
+   "cmd": "bash <<< $'X' | true",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_13",
+   "cmd": "bash <<< ''\"X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_14",
+   "cmd": "bash <<< 'X'\"\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_15",
+   "cmd": "bash <<< \"\"'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_notcomment",
+   "cmd": "bash <<< 'X'#notcomment",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_comment",
+   "cmd": "bash <<< 'X' #comment",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_stillword",
+   "cmd": "bash <<< X#stillword",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_0_x_2",
+   "cmd": "bash <<< $'\\0; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash cuts the word at the NUL, the fed body is empty: the shell reads it, nothing runs (the gate has nothing to inspect)"
+  },
+  {
+   "name": "777_bash_x_16",
+   "cmd": "bash <<< X\\",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_x_17",
+   "cmd": "bash <<< $X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_x_1_bash_x",
+   "cmd": "X=1; bash <<< \"$X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_x_2",
+   "cmd": "bash <<< 'echo $X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_echo_home_x",
+   "cmd": "bash <<< \"echo \\$HOME; X\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_18",
+   "cmd": "bash <<< ~/X",
+   "expect": [
+    false
+   ],
+   "bash_runs": true,
+   "bash_note": "oracle artefact: the unquoted word splits, the marker becomes a script FILE name and only appears in bash's error text; bash runs the file, not the fed word"
+  },
+  {
+   "name": "777_bash_cd_x",
+   "cmd": "bash <<< 'cd ~; X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_printf_x",
+   "cmd": "bash <<< \"$(printf 'X')\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_2_1",
+   "cmd": "bash <<< 'X' 2>&1",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_2_1_x",
+   "cmd": "bash 2>&1 <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_dev_null_x",
+   "cmd": "bash >/dev/null <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_dev_null",
+   "cmd": "bash <<< 'X' >/dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_bash_x_dev_null_2",
+   "cmd": "bash <<< 'X' > /dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the payload ran, its stdout was discarded (>/dev/null or | true)"
+  },
+  {
+   "name": "777_sh_s_x",
+   "cmd": "sh -s <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_s_x_2",
+   "cmd": "sh -s -- <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_s_a_b_x",
+   "cmd": "bash -s -- a b <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_2",
+   "cmd": "bash -c '\"$@\"' _ bash <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_true_x",
+   "cmd": "bash -c 'true' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_sh_s_x",
+   "cmd": "bash -c 'sh -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_exec_bash_x",
+   "cmd": "bash -c 'exec bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_dev_stdin_x",
+   "cmd": "bash -c 'source /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_cat_x",
+   "cmd": "bash -c 'eval \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_x",
+   "cmd": "bash -c 'eval' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_xargs_i_bash_c_x",
+   "cmd": "bash -c 'xargs -I{} bash -c {}' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_cat_x",
+   "cmd": "bash -c 'bash <<< \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_version_x",
+   "cmd": "bash --version <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_v_x",
+   "cmd": "bash -v <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_n_x",
+   "cmd": "bash -n <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "`bash -n` only parses the body; the gate does not model -n (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_help_x",
+   "cmd": "bash --help <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_eof_x_eof",
+   "cmd": "bash <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_x_eof_2",
+   "cmd": "bash <<'EOF'\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_x_eof_3",
+   "cmd": "bash <<-EOF\n\tX\n\tEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_eof_eof2_echo_a_eof_x_eof2",
+   "cmd": "bash <<EOF <<EOF2\necho a\nEOF\nX\nEOF2",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_dev_null_3",
+   "cmd": "bash <<< 'X' < /dev/null",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_dev_null_x_2",
+   "cmd": "bash < /dev/null <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_19",
+   "cmd": "bash <<< 'X' <<< ''",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "bash: the last stdin redirection wins and replaces this body; the gate reads every fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_true_x_bash",
+   "cmd": "true <<< 'X'; bash",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_f_bash_f_x",
+   "cmd": "f() { bash; }; f <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_20",
+   "cmd": "bash <<< 'X' &",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true_2",
+   "cmd": "bash <<< 'X' || true",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_true_3",
+   "cmd": "bash <<< 'X' && true",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_echo_done",
+   "cmd": "bash <<< \"X\"; echo done",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_x_bash_echo_b",
+   "cmd": "bash <<< 'X'; bash <<< 'echo b'",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof_bash",
+   "cmd": "echo $(cat <<EOF\nX\nEOF\n) | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof_bash_2",
+   "cmd": "echo \"$(cat <<EOF\nX\nEOF\n)\" | bash",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_cat_eof_x_eof",
+   "cmd": "bash <<< \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_echo_cat_eof_x_eof",
+   "cmd": "echo <<< \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_cat_eof_echo_a_eof_x",
+   "cmd": "bash <<< \"$(cat <<EOF\necho a\nEOF\n)\" <<< 'X'",
+   "expect": [
+    true,
+    true,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_cat_x_sh_s",
+   "cmd": "cat <<< 'X' | sh -s",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_eof_x_eof",
+   "cmd": "sh -c \"$(cat <<EOF\nX\nEOF\n)\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_sh_c_cat_x",
+   "cmd": "sh -c \"$(cat <<< 'X')\"",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_sh_x",
+   "cmd": "bash -c 'sh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_dash_x",
+   "cmd": "bash -c 'dash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_rbash_x",
+   "cmd": "bash -c 'rbash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_ksh_x",
+   "cmd": "bash -c 'ksh' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "ksh is not installed on the measuring host; the gate reads the shape (over-block in this environment)"
+  },
+  {
+   "name": "777_bash_c_bin_bash_x",
+   "cmd": "bash -c '/bin/bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bin_sh_s_x",
+   "cmd": "bash -c '/bin/sh -s' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_command_bash_x",
+   "cmd": "bash -c 'command bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_env_bash_x",
+   "cmd": "bash -c 'env bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_nice_bash_x",
+   "cmd": "bash -c 'nice bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_bash_x",
+   "cmd": "bash -c 'cat - | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_cat_dev_stdin_bash_x",
+   "cmd": "bash -c 'cat /dev/stdin | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_tee_dev_null_bash_x",
+   "cmd": "bash -c 'tee /dev/null | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_head_1_bash_x",
+   "cmd": "bash -c 'head -1 | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x",
+   "cmd": "bash -c 'bash -c \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x",
+   "cmd": "bash -c 'bash /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_3",
+   "cmd": "bash -c 'bash -' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_s_a_x",
+   "cmd": "bash -c 'bash -s -- a' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x_2",
+   "cmd": "bash -c 'bash -- /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_dev_fd_0_x",
+   "cmd": "bash -c 'source /dev/fd/0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_dev_stdin_x",
+   "cmd": "bash -c '. /dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_source_cat_x",
+   "cmd": "bash -c 'source <(cat)' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_dev_stdin_x",
+   "cmd": "bash -c 'eval \"$(</dev/stdin)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_eval_0_x",
+   "cmd": "bash -c 'eval \"$(<&0)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "`$(<&0)` expands to nothing (a redirect without a command); the gate reads the stdin-dup as fed (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_eval_cat_x_2",
+   "cmd": "bash -c 'eval $(cat)' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_read_r_l_eval_l_x",
+   "cmd": "bash -c 'read -r l; eval \"$l\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_read_r_l_l_x",
+   "cmd": "bash -c 'read -r l; $l' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_while_read_r_l_do_eval_l_done_x",
+   "cmd": "bash -c 'while read -r l; do eval \"$l\"; done' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_mapfile_a_eval_a_0_x",
+   "cmd": "bash -c 'mapfile a; eval \"${a[0]}\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_ifs_read_r_l_bash_c_l_x",
+   "cmd": "bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "#777 review 12: the head splitter reads quoted separators too now (quote-aware second pass); bash runs the body"
+  },
+  {
+   "name": "777_bash_c_cat_dev_null_x",
+   "cmd": "bash -c 'cat > /dev/null' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_wc_l_x",
+   "cmd": "bash -c 'wc -l' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_true_bash_x",
+   "cmd": "bash -c 'true; bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_false_bash_x",
+   "cmd": "bash -c 'false || bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_if_true_then_bash_fi_x",
+   "cmd": "bash -c 'if true; then bash; fi' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_4",
+   "cmd": "bash -c '{ bash; }' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_5",
+   "cmd": "bash -c '( bash )' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_x_sleep_0_2",
+   "cmd": "bash -c 'bash &' <<< 'X'; sleep 0.2",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_x_1_bash_x",
+   "cmd": "bash -c 'x=1 bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_exec_3_0_bash_3_x",
+   "cmd": "bash -c 'exec 3<&0; bash <&3' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_0_x",
+   "cmd": "bash -c 'bash <&0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_0_0_x",
+   "cmd": "bash -c 'bash 0<&0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_stdin_x_3",
+   "cmd": "bash -c 'bash </dev/stdin' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_fd_0_x",
+   "cmd": "bash -c 'bash < /dev/fd/0' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_dev_null_x",
+   "cmd": "bash -c 'bash </dev/null' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "#777 review 7: an own redirect/here-string inside the -c program is skipped, matches bash"
+  },
+  {
+   "name": "777_bash_c_bash_echo_a_x",
+   "cmd": "bash -c 'bash <<< \"echo a\"' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "#777 review 7: an own redirect/here-string inside the -c program is skipped, matches bash"
+  },
+  {
+   "name": "777_bash_c_bash_eof_echo_a_eof_x",
+   "cmd": "bash -c 'bash <<EOF\necho a\nEOF' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "the inner bash reads its own unquoted heredoc, not X; the gate takes only a quoted-delimiter heredoc as own stdin and now reads the whole multi-line -c program (#777 review 14), so it over-blocks (accepted)"
+  },
+  {
+   "name": "777_bash_c_echo_a_bash_x",
+   "cmd": "bash -c 'echo a | bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell reads a pipe of its own, not the fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_echo_echo_a_x",
+   "cmd": "bash -c 'bash <(echo \"echo a\")' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "inside the -c program the shell runs a process-substitution FILE, not the fed body (over-block, accepted)"
+  },
+  {
+   "name": "777_bash_c_bash_c_bash_x",
+   "cmd": "bash -c 'bash -c bash' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_bash_c_bash_x",
+   "cmd": "bash -c 'bash -c \"bash -c bash\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_sh_x",
+   "cmd": "bash -c 'bash -c \"cat | sh\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_echo_hi_x",
+   "cmd": "bash -c 'bash -c \"echo hi\"' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_sh_c_cat_x",
+   "cmd": "bash -c 'sh -c \"\\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_sh_c_cat_x_2",
+   "cmd": "bash -c 'sh -c \"$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x_2",
+   "cmd": "bash -c 'bash -c \"$(cat)\" -' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_cat_x_3",
+   "cmd": "bash -c 'bash -c \"\\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_eval_x",
+   "cmd": "bash -c 'bash -c eval' <<< 'X'",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777_bash_c_bash_c_eval_cat_x",
+   "cmd": "bash -c 'bash -c \"eval \\$(cat)\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777_bash_c_bash_c_source_dev_stdin_x",
+   "cmd": "bash -c 'bash -c \"source /dev/stdin\"' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r8_taskset_bash",
+   "cmd": "taskset 1 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_chrt_flag_bash",
+   "cmd": "chrt -f 1 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_runuser_bash",
+   "cmd": "runuser -u x -- bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_login_shell",
+   "cmd": "su <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_c_bash",
+   "cmd": "su -c 'bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_script_q",
+   "cmd": "script -q /dev/null <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_busybox_sh",
+   "cmd": "busybox sh <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_0_nice",
+   "cmd": "xargs -0 nice <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_parallel_no_cmd",
+   "cmd": "parallel <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_ssh_quoted_bash_s",
+   "cmd": "ssh host \"bash -s\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_ssh",
+   "cmd": "xargs ssh host <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_fd2_not_stdin",
+   "cmd": "f(){ bash 2</dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_last_redirect_wins",
+   "cmd": "f(){ bash </dev/null <&0; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_set_m_background",
+   "cmd": "f(){ set -m; bash & wait; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_var_target",
+   "cmd": "f(){ bash < \"$F\"; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_own_devnull",
+   "cmd": "f(){ bash </dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_own_fd0",
+   "cmd": "f(){ bash 0</dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_background",
+   "cmd": "f(){ bash & wait; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_closed_stdin",
+   "cmd": "f(){ bash <&-; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_comment",
+   "cmd": "f(){ cat #bash\n}; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_grep",
+   "cmd": "xargs grep -l pattern <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_docker_run_cat",
+   "cmd": "docker run -i --rm alpine cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_chrt_cat",
+   "cmd": "chrt 1 cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_c_echo",
+   "cmd": "su -c 'echo hi' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_ssh_n_true",
+   "cmd": "ssh -n host true <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_glob_stdin",
+   "cmd": "f(){ bash </dev/std[i]n; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_glob_proc_fd",
+   "cmd": "f(){ bash </proc/self/f[d]/0; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_glob_while",
+   "cmd": "while :; do bash </dev/std?n; break; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_comment_redirect",
+   "cmd": "f(){ bash # <x\n}; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_env",
+   "cmd": "xargs env <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_nohup",
+   "cmd": "xargs -n9 nohup <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_fakeroot_bare",
+   "cmd": "fakeroot <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_prlimit",
+   "cmd": "prlimit --nofile=10 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_setarch_bare",
+   "cmd": "setarch x86_64 <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_ssh_echo",
+   "cmd": "xargs ssh host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_su_session_command",
+   "cmd": "xargs -0 su root --session-command <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_pkexec_bare",
+   "cmd": "pkexec <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_busybox_ash",
+   "cmd": "busybox ash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_gdb_args",
+   "cmd": "gdb -batch -ex r --args bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_toolbox_run",
+   "cmd": "toolbox run -c box bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_newgrp",
+   "cmd": "newgrp grp <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_backslash_delim",
+   "cmd": "f(){ bash <<\\B\nexit\nB\n}; f <<'A'\nX\nA",
+   "expect": [
+    true,
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the first record is the inner quoted heredoc (`exit`), which the inner bash runs; the marker sits in the outer body, which nothing reads (bash agrees with the outer record)"
+  },
+  {
+   "name": "777r9_midquote_delim",
+   "cmd": "f(){ bash <<B\"C\"\nexit\nBC\n}; f <<'A'\nX\nA",
+   "expect": [
+    true,
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the first record is the inner quoted heredoc (`exit`), which the inner bash runs; the marker sits in the outer body, which nothing reads (bash agrees with the outer record)"
+  },
+  {
+   "name": "777r9_quoted_star_target",
+   "cmd": "f(){ bash <\"a*b\"; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r9_gdb_no_args",
+   "cmd": "gdb -batch prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r9_toolbox_cat",
+   "cmd": "toolbox run cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_brace_range_stdin",
+   "cmd": "f(){ bash </dev/std{i..i}n; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_range_while",
+   "cmd": "while :; do bash </dev/std{i..i}n; break; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_midword",
+   "cmd": "f(){ echo a}b; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_quoted",
+   "cmd": "f(){ echo '}'; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_arg",
+   "cmd": "f(){ bash </dev/null; echo }; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_group_in_if",
+   "cmd": "f(){ if true; then { :; }; fi; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_in_comment",
+   "cmd": "f(){ # a; }\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_gdb_no_batch",
+   "cmd": "gdb -q -nx prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_gdb_ex_args",
+   "cmd": "gdb -q -nx -ex r --args prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_machinectl_shell",
+   "cmd": "machinectl shell box <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_distrobox_enter",
+   "cmd": "distrobox enter box <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_toolbox_enter",
+   "cmd": "toolbox enter <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_bash",
+   "cmd": "sg grp bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_bare",
+   "cmd": "sg grp <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_xargs_rsh",
+   "cmd": "xargs rsh host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_xargs_dbclient",
+   "cmd": "xargs dbclient host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_autossh_bare",
+   "cmd": "autossh -M 0 host <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_mksh",
+   "cmd": "mksh <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_yash",
+   "cmd": "yash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_gdb_version",
+   "cmd": "gdb --version <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r10_machinectl_list",
+   "cmd": "machinectl list <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_setarch_list",
+   "cmd": "setarch --list <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r10_distrobox_create",
+   "cmd": "distrobox create box <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_cat",
+   "cmd": "sg grp cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_func_brace_word",
+   "cmd": "f(){ echo {a,b}; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r10_func_echo_brace_cat",
+   "cmd": "f(){ echo }; }; cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_param_exp",
+   "cmd": "f(){ echo ${x:- ; } ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_heredoc_brace",
+   "cmd": "f(){ cat <<'Z'\n}\nZ\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_heredoc_dash_brace",
+   "cmd": "f(){ cat <<-Z\n\t}\n\tZ\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_ansi_c_quote",
+   "cmd": "f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_cmdsub",
+   "cmd": "f(){ echo $(echo ; }) ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "accepted over-block: bash rejects the line (syntax error near `}` inside $( )), nothing runs; the gate reads the body as run"
+  },
+  {
+   "name": "777r11_func_dq_param",
+   "cmd": "f(){ echo \"${x:-; }}\"; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_backtick",
+   "cmd": "f(){ echo `echo ; }` ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_param_ok",
+   "cmd": "f(){ echo ${x:-a}; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_heredoc_ok",
+   "cmd": "f(){ cat <<'Z'\n}\nZ\n}; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_ansi_c_ok",
+   "cmd": "f(){ echo $'a\\'b'; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_arith_ok",
+   "cmd": "f(){ echo $((1+2)); cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_gdb_batch_ex_shell",
+   "cmd": "gdb -batch -ex 'shell bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_ex_bang",
+   "cmd": "gdb -batch -ex '!bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_eval_eq",
+   "cmd": "gdb -batch --eval-command='shell bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_iex_sh",
+   "cmd": "gdb -batch -iex 'shell sh -s' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_pipe",
+   "cmd": "gdb -batch -ex 'pipe info frame | bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_bar",
+   "cmd": "gdb -batch -ex '| info frame | bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_python",
+   "cmd": "gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_x_stdin",
+   "cmd": "gdb -batch -x /dev/stdin <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_source_stdin",
+   "cmd": "gdb -batch -ex 'source /dev/stdin' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_nx",
+   "cmd": "gdb -batch -nx <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r11_gdb_batch_ex_echo",
+   "cmd": "gdb -batch -ex 'shell echo hi' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r11_gdb_batch_ex_print",
+   "cmd": "gdb -batch -ex 'print 1' prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r11_gdb_batch_x_file",
+   "cmd": "gdb -batch -x cmds.gdb prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r12_gdb_py_exec_stdin",
+   "cmd": "gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale (review 12); Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_py_abbrev",
+   "cmd": "gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale"
+  },
+  {
+   "name": "777r12_gdb_she",
+   "cmd": "gdb -batch -ex 'she bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_eval_shell",
+   "cmd": "gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_interpreter_exec",
+   "cmd": "gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_multiarch",
+   "cmd": "gdb-multiarch -batch <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale"
+  },
+  {
+   "name": "777r12_gdb_herestring",
+   "cmd": "gdb -batch -ex 'py exec(input())' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale, here-string"
+  },
+  {
+   "name": "777r12_gdb_pipe_member",
+   "cmd": "cat <<'A' | gdb -batch\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale, pipe member"
+  },
+  {
+   "name": "777r12_q_env_semicolon",
+   "cmd": "env V='a;b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_assign_semicolon",
+   "cmd": "V='a;b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_dquote_semicolon",
+   "cmd": "env V=\"a;b\" bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_escaped_semicolon",
+   "cmd": "env V=a\\;b bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_timeout_s",
+   "cmd": "timeout 5 bash -s 'a;b' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_paren",
+   "cmd": "bash -s 'x(y' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_pipe_char",
+   "cmd": "env V='a|b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_amp_char",
+   "cmd": "env V='a&b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_tail_semicolon",
+   "cmd": "cat <<'A' - 'x;y' | bash\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_echo_data",
+   "cmd": "echo 'a;b' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r12_q_env_cat_data",
+   "cmd": "env V='a;b' cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r12_q_sort_data",
+   "cmd": "sort -t';' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r13_param_semicolon",
+   "cmd": "V=${Y:-a;b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_env_param_semicolon",
+   "cmd": "env V=${Y:-a;b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_operand",
+   "cmd": "timeout 5 bash -s ${Y:-a;b} <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_pipe",
+   "cmd": "V=${Y:-a|b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_amp",
+   "cmd": "V=${Y:-a&b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_subst",
+   "cmd": "V=${Y/;/x} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_subst_class",
+   "cmd": "V=${Y//[;]/x} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_quoted_python3_word",
+   "cmd": "timeout 5 bash -s 'a;python3' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_env_quoted_python3",
+   "cmd": "env V='a; python3 -' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_cat_data",
+   "cmd": "V=${Y:-a;b} cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r13_c_cat_data",
+   "cmd": "bash -c 'cat' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r13_group_gdb",
+   "cmd": "{ gdb -q; } <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_if_gdb",
+   "cmd": "if true; then gdb -q; fi <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_pipe_subshell_gdb",
+   "cmd": "cat <<'A' | (gdb -q)\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_c_gdb",
+   "cmd": "bash -c 'gdb -q' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_dynamic_word",
+   "cmd": "G=gdb; $G -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r14_cat_a_if_true_then_bash_fi",
+   "cmd": "cat <<'A' | if true; then bash; fi\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_for_i_in_1_do_bash_done",
+   "cmd": "cat <<'A' | for i in 1; do bash; done\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_case_x_in_x_bash_esac",
+   "cmd": "cat <<'A' | case x in x) bash;; esac\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_dquote_newline_bash",
+   "cmd": "V=\"a\nb\" bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_squote_newline_bash",
+   "cmd": "V='a\nb' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_subst_newline_bash",
+   "cmd": "V=$(echo a\necho b) bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_param_newline_bash",
+   "cmd": "V=${Y:-a\nb} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_param_space_bash",
+   "cmd": "V=${Y:-a b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_g_cat_g_x_g_bash_g_a",
+   "cmd": "G=cat; G+=x; G=bash; $G <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_bash_c_0_bash_a",
+   "cmd": "bash -c '$0' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r14_cat_a_while_read_l_do_echo_l_done",
+   "cmd": "cat <<'A' | while read l; do echo \"$l\"; done\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r14_param_space_cat",
+   "cmd": "V=${Y:-a b} cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_bash",
+   "cmd": "cat <<'A' |& bash\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_if_bash",
+   "cmd": "cat <<'A' |& if true; then bash; fi\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_g_eval_dq_g_bash",
+   "cmd": "G=bash; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_bash_c_eval_0_bash",
+   "cmd": "bash -c 'eval \"$0\"' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_while_read_eval_l",
+   "cmd": "while read l; do eval \"$l\"; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_g_ansi_d_b",
+   "cmd": "g$'d'b -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_rust_gdb",
+   "cmd": "rust-gdb -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_g_eval_dq_g_gdb",
+   "cmd": "G=gdb; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_grep",
+   "cmd": "cat <<'A' |& grep x\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r15_g_cat_eval_dq_g",
+   "cmd": "G=cat; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "dynamic consumer word $G: the body counts as run, like `G=cat; $G <<A`; the gdb gate exception for a literal non-gdb $NAME is separate (review 15)"
   }
  ]
 }
