@@ -15,13 +15,15 @@ so nothing vanishes silently.
 
 Usage:
     python3 scripts/jegyzetek.py lista [--kinek NAME]
-    python3 scripts/jegyzetek.py uj KINEK "what" --ki NAME [--hatarido YYYY-MM-DD]
-    python3 scripts/jegyzetek.py torol ID --ki NAME [--ok "why"]
+    python3 scripts/jegyzetek.py uj KINEK "what" [--ki NAME] [--hatarido YYYY-MM-DD]
+    python3 scripts/jegyzetek.py torol ID [--ki NAME] [--ok "why"]
     python3 scripts/jegyzetek.py lejart            # due today or earlier
     python3 scripts/jegyzetek.py ertesit reggel|este [--dry-run]
 
-`--ki` names who writes or deletes the line. It is required: the row records it, and a
-default would put a guessed name on it.
+`--ki` names who writes or deletes the line. Without it the identity comes from the
+working directory like scripts/tabla.py (`.../agents/<name>/...` -> `<name>`), else
+`marveen`, the pre-merge default. Local divergence from upstream (#728), which makes
+`--ki` required: existing docs, skills and a scheduled task call `uj`/`torol` without it.
 
 `ertesit` (morning / evening) sends each RUNNING agent that has lines (its own or
 `mindenki`) one inter-agent message with the line ids and the commands to read and
@@ -133,6 +135,17 @@ def arg(args, name, default=None):
     return default
 
 
+def identity_from_cwd():
+    """tabla.py's rule: the first `agents/<name>` in the real cwd. Where tabla.py
+    raises outside the install root, this falls back to `marveen`, the old
+    jegyzetek.py default, so a caller that never passed --ki keeps working (#728)."""
+    parts = os.path.realpath(os.getcwd()).split(os.sep)
+    for index, part in enumerate(parts[:-1]):
+        if part == "agents" and index + 1 < len(parts):
+            return parts[index + 1]
+    return "marveen"
+
+
 def note_id(raw):
     nid = raw.lstrip("#").lower()
     if not ID_RE.fullmatch(nid):
@@ -162,10 +175,10 @@ def run(argv):
         return 0
 
     if cmd == "uj":
-        ki = arg(args, "--ki")
+        ki = arg(args, "--ki") or identity_from_cwd()
         hatarido = arg(args, "--hatarido", "-")
-        if len(args) != 2 or not ki:
-            raise CliError('usage: uj KINEK "what" --ki NAME [--hatarido YYYY-MM-DD]')
+        if len(args) != 2:
+            raise CliError('usage: uj KINEK "what" [--ki NAME] [--hatarido YYYY-MM-DD]')
         if hatarido != "-" and not DATE_RE.fullmatch(hatarido):
             raise CliError("--hatarido must be YYYY-MM-DD or -")
         payload = {"assignee": args[0].strip().lower(), "content": args[1].strip(), "created_by": ki}
@@ -180,10 +193,10 @@ def run(argv):
         return 0
 
     if cmd == "torol":
-        ki = arg(args, "--ki")
+        ki = arg(args, "--ki") or identity_from_cwd()
         ok = arg(args, "--ok", "done")
-        if len(args) != 1 or not ki:
-            raise CliError('usage: torol ID --ki NAME [--ok "why"]')
+        if len(args) != 1:
+            raise CliError('usage: torol ID [--ki NAME] [--ok "why"]')
         nid = note_id(args[0])
         api("DELETE", "/api/notes/" + urllib.parse.quote(nid, safe=""), {"by": ki, "reason": ok})
         if any(n["id"] == nid for n in load()):

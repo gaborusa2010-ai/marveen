@@ -5,8 +5,10 @@ Pins the review fixes:
   - a note id that is not 6 hex characters is refused BEFORE any request
     (`torol ../agents/cody` used to become DELETE /api/agents/cody once the
     server normalised the path);
-  - --ki is required on `uj` and `torol` (no guessed author), and a flag
-    without a value is a clean error, not an IndexError;
+  - without --ki, `uj` and `torol` take the identity from the cwd
+    (agents/<name>), else `marveen` (LOCAL divergence #728: upstream refuses
+    with exit 1; old local callers pass no --ki), and a flag without a value
+    is a clean error, not an IndexError;
   - an unreachable dashboard or a missing token file is one FAIL line and
     exit 1, never a traceback;
   - the port follows the agent-msg.sh chain (WEB_PORT works without
@@ -104,7 +106,7 @@ def check(name, cond, detail=""):
         FAILS.append(name)
 
 
-def cli(*args, env_extra=None, base=True):
+def cli(*args, env_extra=None, base=True, cwd=None):
     env = {k: v for k, v in os.environ.items() if k not in ("MARVEEN_WEB_PORT", "WEB_PORT", "MARVEEN_API_BASE")}
     env["MARVEEN_TOKEN_FILE"] = TOKEN
     env["MAIN_AGENT_ID"] = "boss"
@@ -112,7 +114,7 @@ def cli(*args, env_extra=None, base=True):
         env["MARVEEN_API_BASE"] = "http://127.0.0.1:%d" % PORT
     env.update(env_extra or {})
     Fake.calls = []
-    r = subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env, timeout=60)
+    r = subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env, timeout=60, cwd=cwd)
     return r, list(Fake.calls)
 
 
@@ -124,11 +126,34 @@ for bad in ("../agents/cody", "abc12", "abc1234", "xyz123", "%2e%2e"):
 r, calls = cli("torol", "#ABC123", "--ki", "cody", "--ok", "done")
 check("torol #ABC123 deletes /api/notes/abc123", ("DELETE", "/api/notes/abc123", {"by": "cody", "reason": "done"}) in calls, str(calls))
 
-# --- required --ki, flag without value -----------------------------------------------------------
-r, calls = cli("uj", "cody", "text")
-check("uj without --ki is refused, no request", r.returncode == 1 and "--ki NAME" in r.stderr and calls == [], r.stderr)
-r, calls = cli("torol", "abc123")
-check("torol without --ki is refused, no request", r.returncode == 1 and calls == [], r.stderr)
+# --- --ki defaults from the cwd, flag without value ----------------------------------------------
+# DELIBERATE LOCAL DIVERGENCE (#728): upstream makes --ki required and expects exit 1
+# here. Locally the old callers (CLAUDE.md, docs, a scheduled task) pass no --ki, so the
+# identity defaults like scripts/tabla.py: agents/<name> in the cwd, else `marveen`.
+AGENT_CWD = os.path.join(SANDBOX, "agents", "cody")
+OTHER_CWD = os.path.join(SANDBOX, "elsewhere")
+os.makedirs(AGENT_CWD)
+os.makedirs(OTHER_CWD)
+r, calls = cli("uj", "margo", "text", cwd=AGENT_CWD)
+check("uj without --ki in agents/cody writes as cody",
+      r.returncode == 0 and ("POST", "/api/notes", {"assignee": "margo", "content": "text", "created_by": "cody"}) in calls,
+      r.stderr + str(calls))
+r, calls = cli("uj", "margo", "text", cwd=OTHER_CWD)
+check("uj without --ki outside agents/ writes as marveen",
+      r.returncode == 0 and ("POST", "/api/notes", {"assignee": "margo", "content": "text", "created_by": "marveen"}) in calls,
+      r.stderr + str(calls))
+r, calls = cli("torol", "abc123", cwd=AGENT_CWD)
+# (the fake keeps the row, so the read-back exits 1; the DELETE body is what is pinned)
+check("torol without --ki in agents/cody deletes as cody",
+      ("DELETE", "/api/notes/abc123", {"by": "cody", "reason": "done"}) in calls, r.stderr + str(calls))
+r, calls = cli("torol", "abc123", cwd=OTHER_CWD)
+check("torol without --ki outside agents/ deletes as marveen",
+      ("DELETE", "/api/notes/abc123", {"by": "marveen", "reason": "done"}) in calls, r.stderr + str(calls))
+r, calls = cli("uj", "margo", "text", "--ki", "roxy", cwd=AGENT_CWD)
+check("an explicit --ki wins over the cwd",
+      ("POST", "/api/notes", {"assignee": "margo", "content": "text", "created_by": "roxy"}) in calls, r.stderr + str(calls))
+r, calls = cli("uj", "margo")
+check("uj with one positional is still a usage error, no request", r.returncode == 1 and calls == [], r.stderr)
 r, calls = cli("uj", "cody", "text", "--ki")
 check("a flag without a value is a clean error", r.returncode == 1 and "--ki needs a value" in r.stderr
       and "Traceback" not in r.stderr, r.stderr)
