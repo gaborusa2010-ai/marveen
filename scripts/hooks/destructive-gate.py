@@ -301,6 +301,15 @@ def _word(tok):
         elif c == '\\' and i + 1 < n:
             out.append(tok[i + 1])
             i += 2
+        elif c == '$' and tok[i + 1:i + 2] == "'":
+            # $'..' is ANSI-C quoting, not an expansion: `g$'d'b`, `$'\x67db'` name gdb (#777 review 15)
+            j = i + 2
+            while j < n and tok[j] != "'":
+                j += 2 if tok[j] == '\\' else 1
+            out.append(_heredoc_scan().ansi_c(tok[i + 2:j]))
+            i = j + 1
+        elif c == '$' and tok[i + 1:i + 2] == '"':
+            i += 1             # $".." is a (translated) double-quoted string
         else:
             if c in '$*?[{`':
                 dyn = True
@@ -491,17 +500,28 @@ _SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
 # stdin), and listing them took three rounds without closing the class. Over-blocking is accepted:
 # nobody here feeds gdb a heredoc.
 _GDB_NAMES = ('gdb', 'gdb-multiarch')
+
+
+def _is_gdb(name):
+    """gdb under any build name: `rust-gdb`, `aarch64-linux-gnu-gdb`, `cuda-gdb`, `gdb-multiarch`
+    (#777 review 15)."""
+    return name in _GDB_NAMES or name.endswith('-gdb') or name.startswith('gdb-')
+
+
 # Without a heredoc too (#777 review 13): an -ex/-iex/--eval-command/--init-eval-command value
 # whose gdb command runs a shell line or code (`-ex 'shell X'`, `-ex '!X'`, `-ex 'pipe p 1 | X'`,
 # `-ex 'python ..'`, `py`, `pi`, guile, compile, eval, interpreter-exec; gdb takes any unique
 # prefix of 2+ letters) or is dynamic BLOCKs; `-ex bt`, `-ex 'info functions'` stay allowed.
 _GDB_EX_FLAG_RE = re.compile(r'^--?(ex|iex|ev[a-z-]*|init-e[a-z-]*)(=.*)?$', re.S)
 _GDB_EX_LONG = ('eval-command', 'init-eval-command')
-_GDB_CALL_RE = re.compile(r'[A-Za-z0-9_$]\s*\(')
-_GDB_SAFE_ALIASES = ('bt', 'where', 'i', 'p', 'x', 'l', 'f', 'pt', 'c')
+# A call: a `(` after a name, `)`, `]` or a quote (`$_shell(`, `($_shell)(`, `arr[0](`, `'system'(`);
+# sizeof/alignof are operators, not calls (#777 review 15).
+_GDB_CALL_RE = re.compile(r'(?<![A-Za-z0-9_$])(?!(?:sizeof|alignof|_Alignof|__alignof__)\s*\()[A-Za-z0-9_$]+\s*\(|[)\]\'"]\s*\(')
+_GDB_SAFE_ALIASES = ('bt', 'where', 'i', 'p', 'x', 'l', 'f', 'pt', 'c', 'q')
 _GDB_SAFE_PREFIXES = (('backtrace', 4), ('info', 3), ('print', 1), ('disassemble', 5), ('list', 2),
                       ('ptype', 3), ('whatis', 5), ('frame', 2), ('show', 3), ('continue', 4),
-                      ('gcore', 5), ('generate-core-file', 18), ('set', 3))
+                      ('gcore', 5), ('generate-core-file', 18), ('set', 3), ('quit', 2), ('thread', 3),
+                      ('faas', 4), ('taas', 4), ('tfaas', 5))
 _GDB_RUNNING_CMDS = ('shell', 'pipe', 'python', 'python-interactive', 'guile', 'compile', 'eval',
                      'interpreter-exec')
 _TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
@@ -720,7 +740,7 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         return c
     if base in _SU_LIKE:
         return _su_consumer(words, k, base, depth, loose, argv)
-    if base in _GDB_NAMES:
+    if _is_gdb(base):
         return 'gdb'
     if base in _MARKER_LAUNCHERS:
         marker, shell = _MARKER_LAUNCHERS[base]
@@ -747,7 +767,7 @@ def _gdb_ex_runs(seg):
     toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
     words = [_word(t) for t in toks]
     for g, (w, _d) in enumerate(words):
-        if os.path.basename(re.sub(r'^[$(`{]+', '', w)) not in _GDB_NAMES:
+        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', w))):
             continue           # `(gdb -ex ..)`: the subshell paren is not part of the name (#777 review 14)
         j = g + 1
         while j < len(words):
@@ -775,12 +795,12 @@ def _gdb_value_runs(value):
         v = line.strip()
         if not v:
             continue
-        if _GDB_CALL_RE.search(v):
-            return True
         m = re.match(r'([A-Za-z][A-Za-z-]*)(?=$|[ \t/])', v)
         if not m:
             return True
         name = m.group(1).lower()
+        if _GDB_CALL_RE.search(re.sub(r'^/\w*', '', v[m.end():])):
+            return True        # the command word and a `/x` format cut first: `p/x (char)c` is a cast
         if name in ('r', 'run', 'start'):
             if v[m.end():].strip():
                 return True    # `run $(X)`: gdb hands the arguments to a shell
@@ -788,12 +808,50 @@ def _gdb_value_runs(value):
         if name not in _GDB_SAFE_ALIASES and not any(
                 len(name) >= n and c.startswith(name) for c, n in _GDB_SAFE_PREFIXES):
             return True
-        if name in ('f', 'fr', 'fra', 'fram', 'frame') and re.match(r'[A-Za-z-]+[ \t]+a', v):
-            return True        # `frame apply all CMD` runs CMD
+        applied = _gdb_applied(name, v[m.end():])
+        if applied is not None:
+            if not applied or _gdb_value_runs(applied):
+                return True    # `thread apply all CMD`, `frame apply`, faas/taas/tfaas run CMD, judged as a line
+            continue
         if 'set'.startswith(name) and name.startswith('se') and not re.match(
                 r'[A-Za-z-]+[ \t]+(?:pagination|confirm|print|width|height|style|listsize)(?![\w-])', v):
             return True
     return False
+
+
+# `--args`, `-args`, `--arg`, `-ar`, quoted too: gdb takes any unique prefix (#777 review 15)
+_GDB_ARGS_RE = re.compile(r'^--?ar(?:gs?)?$')
+
+
+def _gdb_applied(name, rest):
+    """The command `frame apply` / `thread apply` / faas / taas / tfaas runs (#777 review 15), ''
+    when it cannot be read, None when the line applies nothing."""
+    if name in ('faas', 'taas', 'tfaas'):
+        words = rest.split()
+    else:
+        words = rest.split()
+        if not (name in ('f', 'fr', 'fra', 'fram', 'frame') or 'thread'.startswith(name)):
+            return None
+        if not words or not 'apply'.startswith(words[0].lower()):
+            return None
+        words = words[1:]
+        if words and words[0] == 'all':
+            words = words[1:]
+        elif words and words[0] == 'level':
+            words = words[1:]
+            while words and re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                words = words[1:]
+        else:
+            if not words or not re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                return ''
+            while words and re.match(r'^[0-9][0-9.*-]*$', words[0]):
+                words = words[1:]
+    while words and words[0].startswith('-'):
+        if words[0] == '--':
+            words = words[1:]
+            break
+        words = words[1:]
+    return ' '.join(words)
 
 
 def _gdb_args_programs(seg):
@@ -802,11 +860,12 @@ def _gdb_args_programs(seg):
     toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
     out = []
     for g, t in enumerate(toks):
-        if os.path.basename(re.sub(r'^[$(`{]+', '', _word(t)[0])) not in _GDB_NAMES:
+        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', _word(t)[0]))):
             continue
         rest = toks[g + 1:]
-        if '--args' in rest:
-            out.append(' '.join(rest[rest.index('--args') + 1:]))
+        a = next((i for i, t in enumerate(rest) if _GDB_ARGS_RE.match(_word(t)[0])), None)
+        if a is not None:
+            out.append(' '.join(rest[a + 1:]))
     return out
 
 
@@ -937,7 +996,9 @@ def _runs_words(words, k, depth, loose=False):
         # command line of their own (`eval 'bash'` reads stdin, `eval 'echo hi'` does not).
         rest = words[k + 1:]
         if any(d for _x, d in rest):
-            return w
+            # the dynamic operand is what runs (`G=gdb; eval "$G" <<A`, `bash -c 'eval "$0"' gdb`),
+            # judged like a dynamic command word (#777 review 15)
+            return next(x for x, d in rest if d)
         return _program_consumer(' '.join(x for x, _d in rest), w, depth) if rest else ''
     if base in ('source', '.'):
         # `source /dev/stdin <<< X` runs it, `source file <<< X` runs the FILE; a dynamic
@@ -946,7 +1007,7 @@ def _runs_words(words, k, depth, loose=False):
     if base.startswith(('-S', '--split-string')):
         return base                # env -S'python3 -': a parancs egy szoban
     if base not in INTERPRETERS:
-        return _launcher_consumer(words, k, base, depth, loose) if base in _LAUNCHERS else ''
+        return _launcher_consumer(words, k, base, depth, loose) if base in _LAUNCHERS or _is_gdb(base) else ''
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
     long_opts = base in ('bash', 'rbash')   # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
@@ -1060,14 +1121,14 @@ _STDIN_SCRIPT_FLAGS = {
 # `{` and `}` are reserved WORDS: a mid-word brace (`/dev/std{i..i}n`, `${x}`, `a}b`) is part of
 # the word, and splitting there hid a dynamic redirect target (#777 review 10).
 _BRACE_WORD = r'(?<![^\s;&|()])[{}](?![^\s;&|()<>])'
-_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\||\$\(')
+_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>|])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\|&?|\$\(')
 # Ugyanaz, az elvalasztokat megtartva: [parancs, elvalaszto, parancs, ...] (#777 review 7: a
 # parancs UTANI `&` hatterbe teszi, akkor nem az orokolt stdin-t olvassa).
-_SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\||\$\()')
+_SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>|])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\|&?|\$\()')
 # A fej es a cso-tag hatarai a heredoc nyitojanak soran (lasd _heredoc_runs_body).
-_HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()')
-_TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>])&(?!>)')
-_PIPE_SPLIT = re.compile(r'(?<!>)\|')
+_HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>|])&(?!>)|[;(`]|(?<!>)\|&?|\$\()')
+_TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>|])&(?!>)')
+_PIPE_SPLIT = re.compile(r'(?<!>)\|&?')
 # `nev() { ... }`, `nev() ( ... )`, `function nev { ... }`: a nev es a nyito zarojel.
 _FUNC_DEF_RE = re.compile(
     r'(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*([{(])'
@@ -1533,7 +1594,7 @@ def _heredoc_runs_body(cmd, h, funcs=None):
     # a code consumer from the plain cut may be a word of a quoted value (#777 review 13:
     # `timeout 5 bash -s 'a;python3' <<A` is read by bash): a shell from the quoted cut wins
     quoted = _heredoc_runs_split(cmd, h, funcs, _quoted_split)
-    if plain and os.path.basename(quoted) not in _SHELLS + _GDB_NAMES:
+    if plain and os.path.basename(quoted) not in _SHELLS and not _is_gdb(os.path.basename(quoted)):
         return plain           # the quoted cut misreads a line that starts inside an earlier quote
     return quoted or plain
 
@@ -1805,7 +1866,7 @@ def _dynamic_gdb(consumer):
     if not _DYNAMIC_CONSUMER_RE.search(consumer):
         return False
     pattern = re.sub(r'\{[^{}]*\}', '*', os.path.basename(consumer))
-    return any(fnmatch.fnmatchcase(n, pattern) for n in _GDB_NAMES)
+    return any(fnmatch.fnmatchcase(n, pattern) for n in _GDB_NAMES + ('x-gdb', 'gdb-x'))
 # ...unless it is a plain `$NAME` whose every assignment in the command before it is a literal
 # non-gdb word: `P=/x/venv/bin/python; $P - <<EOF` (30 real fleet commands in the replay).
 _VAR_CONSUMER_RE = re.compile(r'^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$')
@@ -1832,7 +1893,7 @@ def _assigned_non_gdb(text, consumer, end):
             if not pre or not _STATEMENT_START_RE.search(pre.group(1)):
                 return False
             words = re.match(r'[ \t]+in((?:[ \t]+[A-Za-z0-9_./-]+)+)[ \t]*(?:;|\n)', head[j:])
-            if not words or any(os.path.basename(w) in _GDB_NAMES for w in words.group(1).split()):
+            if not words or any(_is_gdb(os.path.basename(w)) for w in words.group(1).split()):
                 return False
             writes += 1
             continue
@@ -1842,7 +1903,7 @@ def _assigned_non_gdb(text, consumer, end):
         if not value:
             return False
         w = next(g for g in value.groups() if g is not None)
-        if not w or _DYNAMIC_CONSUMER_RE.search(w) or os.path.basename(w.split()[0]) in _GDB_NAMES:
+        if not w or _DYNAMIC_CONSUMER_RE.search(w) or _is_gdb(os.path.basename(w.split()[0])):
             return False
         writes += 1
     return writes > 0

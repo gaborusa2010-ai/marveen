@@ -968,9 +968,9 @@ def _consumer(cmd):
 check("source /dev/stdin ruby <<'A' -> source", _consumer("source /dev/stdin ruby <<'A'\nx\nA") == ["source"])
 check("python3 - <<'PY' -> python3", _consumer("python3 - <<'PY'\nx\nPY") == ["python3"])
 check("cat <<'A' > f -> '' (adat)", _consumer("cat <<'A' > f\nx\nA") == [""])
-check("f(){ eval \"$(cat)\"; }; f php <<'A' -> eval (review 6: a fuggveny TORZSENEK fogyasztoja)",
-      _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["eval"])
-check("while read l; do eval \"$l\"; done <<'A' -> done", _consumer("while read l; do eval \"$l\"; done <<'A'\nx\nA") == ["done"])
+check("f(){ eval \"$(cat)\"; }; f php <<'A' -> $STDIN (review 6: a fuggveny TORZSENEK fogyasztoja; review 15: az eval dinamikus operandusa)",
+      _consumer("f(){ eval \"$(cat)\"; }; f php <<'A'\nx\nA") == ["$STDIN"])
+check("while read l; do eval \"$l\"; done <<'A' -> $l (review 15)", _consumer("while read l; do eval \"$l\"; done <<'A'\nx\nA") == ["$l"])
 check("cat <<'A' | node - -> node", _consumer("cat <<'A' | node -\nx\nA") == ["node"])
 check("bash <<< 'x' -> bash", _consumer("bash <<< 'x'") == ["bash"])
 
@@ -1495,6 +1495,59 @@ for label, cmd in [
     ("gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p", "gdb -batch -ex 'sho version' -ex 'disas main' -ex 'gcore /tmp/c' ./p"),
     ("gdb -batch -ex run --args ./prog -v", "gdb -batch -ex run --args ./prog -v"),
     ("cat <<'A' | while read l; do echo \"$l\"; done / RM (adat)", "cat <<'A' | while read l; do echo \"$l\"; done\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+
+
+# --- 26. #777 review 15: gdb hivas minden `(`-re, --args alakok, $'..' a nevben, eval dinamikus
+# operandusa, quit + thread apply, `|&` cso, *-gdb nevek -------------------------------------------
+# Marveen review 15 (komment 3765), e9352d5d-n mind ALLOW volt (a negativ kontroll ott BLOCK).
+print()
+print("#777 review 15, MUST-BLOCK:")
+for label, cmd in [
+    ("gdb -batch -ex 'p 0+($_shell)(\"id\")'", "gdb -batch -ex 'p 0+($_shell)(\"id\")' ./p"),
+    ("gdb -batch -ex 'print -- ($_shell)(\"id\")'", "gdb -batch -ex 'print -- ($_shell)(\"id\")' ./p"),
+    ("gdb -batch -ex 'p -($_shell)(\"id\")'", "gdb -batch -ex 'p -($_shell)(\"id\")' ./p"),
+    ("gdb -ex start -ex 'p 1,(system)(\"id\")'", "gdb -batch -ex start -ex 'p 1,(system)(\"id\")' ./p"),
+    ("gdb -ex start -ex \"p 'system'(\\\"id\\\")\"", "gdb -batch -ex start -ex \"p 'system'(\\\"id\\\")\" ./p"),
+    ("gdb -ex start -ex 'p arr[0](\"id\")'", "gdb -batch -ex start -ex 'p arr[0](\"id\")' ./p"),
+    ("gdb -ex 'thread apply all shell id'", "gdb -batch -ex 'thread apply all shell id' ./p"),
+    ("gdb -ex 'thread apply 1 2 -q shell id'", "gdb -batch -ex 'thread apply 1 2 -q shell id' ./p"),
+    ("gdb -ex 'taas shell id'", "gdb -batch -ex 'taas shell id' ./p"),
+    ("gdb -ex 'quit system(\"id\")'", "gdb -batch -ex 'quit system(\"id\")' ./p"),
+    ("gdb -ex run -args sh -c RM", "gdb -batch -ex run -args sh -c '" + RMH + "'"),
+    ("gdb -ex run --arg sh -c RM", "gdb -batch -ex run --arg sh -c '" + RMH + "'"),
+    ("gdb -ex run '--args' sh -c RM", "gdb -batch -ex run '--args' sh -c '" + RMH + "'"),
+    ("g$'d'b -batch -ex 'shell RM'", "g$'d'b -batch -ex 'shell " + RMH + "'"),
+    ("g$'\\x64'b -batch -ex 'shell RM'", "g$'\\x64'b -batch -ex 'shell " + RMH + "'"),
+    ("aarch64-linux-gnu-gdb -batch -ex 'shell RM'", "aarch64-linux-gnu-gdb -batch -ex 'shell " + RMH + "'"),
+    ("cuda-gdb -batch -ex 'shell RM'", "cuda-gdb -batch -ex 'shell " + RMH + "'"),
+    ("g$'d'b -q <<'A' / shell RM", "g$'d'b -q <<'A'\nshell " + RMH + "\nA"),
+    ("rust-gdb -q <<'A' / shell RM", "rust-gdb -q <<'A'\nshell " + RMH + "\nA"),
+    ("G=gdb; eval \"$G\" <<'A' / shell RM", "G=gdb; eval \"$G\" <<'A'\nshell " + RMH + "\nA"),
+    ("bash -c 'eval \"$0\"' gdb <<'A' / shell RM", "bash -c 'eval \"$0\"' gdb <<'A'\nshell " + RMH + "\nA"),
+    ("bash -c 'eval $0' bash <<'A' / RM", "bash -c 'eval $0' bash <<'A'\n" + RMH + "\nA"),
+    ("while read l; do eval \"$l\"; done <<'A' / RM", "while read l; do eval \"$l\"; done <<'A'\n" + RMH + "\nA"),
+    ("cat <<'A' |& bash / RM", "cat <<'A' |& bash\n" + RMH + "\nA"),
+    ("cat <<'A' |& sh / RM", "cat <<'A' |& sh\n" + RMH + "\nA"),
+    ("cat <<'A' |& if true; then bash; fi / RM", "cat <<'A' |& if true; then bash; fi\n" + RMH + "\nA"),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 15):")
+for label, cmd in [
+    ("gdb -batch -ex 'p (int)x'", "gdb -batch -ex 'p (int)x' ./p core"),
+    ("gdb -batch -ex 'p/x (char)c'", "gdb -batch -ex 'p/x (char)c' ./p core"),
+    ("gdb -batch -ex 'p sizeof(struct s)'", "gdb -batch -ex 'p sizeof(struct s)' ./p core"),
+    ("gdb -batch -ex 'p *(int *)ptr'", "gdb -batch -ex 'p *(int *)ptr' ./p core"),
+    ("gdb -batch -ex 'thread apply all bt full'", "gdb -batch -ex 'thread apply all bt full' ./p core"),
+    ("gdb -batch -ex 'info threads' -ex 'thread apply all bt' -p 123", "gdb -batch -ex 'info threads' -ex 'thread apply all bt' -p 123"),
+    ("gdb -batch -ex 'frame apply all -q p $pc'", "gdb -batch -ex 'frame apply all -q p $pc' ./p core"),
+    ("gdb -batch -ex bt -ex quit", "gdb -batch -ex 'bt' -ex 'quit' ./p core"),
+    ("gdb -batch -ex bt -ex q", "gdb -batch -ex bt -ex q ./p core"),
+    ("gdb -batch -ex run -args ./prog -v", "gdb -batch -ex run -args ./prog -v"),
+    ("G=cat; eval \"$G\" <<'A' (literalis, nem-gdb)", "G=cat; eval \"$G\" <<'A'\nbt\nA"),
+    ("make 2>&1 |& tee log", "make 2>&1 |& tee log"),
+    ("cat <<'A' |& grep x / RM (adat)", "cat <<'A' |& grep x\n" + RMH + "\nA"),
 ]:
     check(label, not blocks(cmd))
 

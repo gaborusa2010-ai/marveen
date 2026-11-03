@@ -5006,6 +5006,90 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_bash",
+   "cmd": "cat <<'A' |& bash\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_if_bash",
+   "cmd": "cat <<'A' |& if true; then bash; fi\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_g_eval_dq_g_bash",
+   "cmd": "G=bash; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_bash_c_eval_0_bash",
+   "cmd": "bash -c 'eval \"$0\"' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_while_read_eval_l",
+   "cmd": "while read l; do eval \"$l\"; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r15_g_ansi_d_b",
+   "cmd": "g$'d'b -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_rust_gdb",
+   "cmd": "rust-gdb -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_g_eval_dq_g_gdb",
+   "cmd": "G=gdb; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 15)"
+  },
+  {
+   "name": "777r15_cat_a_pipeamp_grep",
+   "cmd": "cat <<'A' |& grep x\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r15_g_cat_eval_dq_g",
+   "cmd": "G=cat; eval \"$G\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "dynamic consumer word $G: the body counts as run, like `G=cat; $G <<A`; the gdb gate exception for a literal non-gdb $NAME is separate (review 15)"
   }
  ]
 }
