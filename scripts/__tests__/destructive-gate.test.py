@@ -1075,6 +1075,60 @@ check("xargs python3 tool.py sh <<'A' -> python3", _consumer("xargs python3 tool
 check("sshpass -p python3 ssh host bash <<'A' -> bash", _consumer("sshpass -p python3 ssh host bash <<'A'\nx\nA") == ["bash"])
 
 
+# --- 19. #777 review 8: EGY futtato-feloldo es a TENYLEGES stdin ------------------------------
+# (1) Burkolo, xargs/parallel, ssh/docker/kubectl futtato, su/runuser/script: egyetlen feloldo
+# adja a program szavat, a kapcsolo-ertekekkel egyutt (opcio-csoport, aminek az UTOLSO betuje
+# erteket var, a kovetkezo szot is elnyeli: `-tl`). Ismeretlen program futtato mogott: barmelyik
+# kesobbi shell-szo a fogyaszto; parancs nelkuli parallel/xargs-argv-mod is fogyaszto.
+# (2) A sajat stdin a TENYLEGES: az atiranyitasok sorrendben, az UTOLSO nyer; csak literal cel
+# (nincs $, backtick, `<(`, nem /dev/stdin-szeru), `<&-` sajat, `<&n` nem, `<<` csak idezett
+# hatarolóval, `&` csak atiranyitas es `set -m` nelkul; a `2<` nem a stdin.
+# (3) A `#`-tel kezdodo szo komment: utana nincs parancs-szo.
+print()
+print("#777 review 8, MUST-BLOCK (futtato-feloldo, tenyleges stdin):")
+for label, cmd in [
+    ("taskset 1 bash <<'A'", "taskset 1 bash <<'A'"),
+    ("chrt -f 1 bash <<'A'", "chrt -f 1 bash <<'A'"),
+    ("runuser -u x -- bash <<'A'", "runuser -u x -- bash <<'A'"),
+    ("su <<'A' (a login shell olvas)", "su <<'A'"),
+    ("su -c 'bash' <<'A'", "su -c 'bash' <<'A'"),
+    ("script -q /dev/null <<'A'", "script -q /dev/null <<'A'"),
+    ("busybox sh <<'A'", "busybox sh <<'A'"),
+    ("xargs -0 nice <<'A' (argv-mod, a burkolo parancs nelkul)", "xargs -0 nice <<'A'"),
+    ("parallel <<'A' (parancs nelkul a sorok parancsok)", "parallel <<'A'"),
+    ("ssh host \"bash -s\" <<'A' (a tavoli szavak ujraolvasva)", "ssh host \"bash -s\" <<'A'"),
+    ("xargs ssh host <<'A'", "xargs ssh host <<'A'"),
+    ("xargs su -c <<'A'", "xargs su -c <<'A'"),
+    ("xargs script -qc <<'A'", "xargs script -qc <<'A'"),
+    ("f(){ bash 2</dev/null; }; f <<'A' (a 2< nem a stdin)", "f(){ bash 2</dev/null; }; f <<'A'"),
+    ("f(){ bash </dev/null <&0; }; f <<'A' (az utolso atiranyitas nyer)", "f(){ bash </dev/null <&0; }; f <<'A'"),
+    ("f(){ set -m; bash & wait; }; f <<'A' (job control: a hatter orokol)", "f(){ set -m; bash & wait; }; f <<'A'"),
+    ("f(){ bash < \"$F\"; }; f <<'A' (nem literal cel)", "f(){ bash < \"$F\"; }; f <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (sajat stdin, komment, adat-olvaso a futtato mogott):")
+for label, cmd in [
+    ("f(){ bash </dev/null; }; f <<'A'", "f(){ bash </dev/null; }; f <<'A'"),
+    ("f(){ bash 0</dev/null; }; f <<'A'", "f(){ bash 0</dev/null; }; f <<'A'"),
+    ("f(){ bash <<< 'echo hi'; }; f <<'A'", "f(){ bash <<< 'echo hi'; }; f <<'A'"),
+    ("f(){ bash & wait; }; f <<'A'", "f(){ bash & wait; }; f <<'A'"),
+    ("f(){ bash <&-; }; f <<'A'", "f(){ bash <&-; }; f <<'A'"),
+    ("f(){ cat #bash; }; f <<'A' (komment)", "f(){ cat #bash\n}; f <<'A'"),
+    ("xargs grep -l pattern <<'A'", "xargs grep -l pattern <<'A'"),
+    ("docker run -i --rm alpine cat <<'A'", "docker run -i --rm alpine cat <<'A'"),
+    ("chrt 1 cat <<'A'", "chrt 1 cat <<'A'"),
+    ("su -c 'echo hi' <<'A'", "su -c 'echo hi' <<'A'"),
+    ("ssh -n host true <<'A'", "ssh -n host true <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 8):")
+check("taskset 1 bash <<'A' -> bash", _consumer("taskset 1 bash <<'A'\nx\nA") == ["bash"])
+check("busybox sh <<'A' -> sh", _consumer("busybox sh <<'A'\nx\nA") == ["sh"])
+check("ssh host \"bash -s\" <<'A' -> bash", _consumer("ssh host \"bash -s\" <<'A'\nx\nA") == ["bash"])
+check("f(){ bash </dev/null; }; f <<'A' -> '' (adat)", _consumer("f(){ bash </dev/null; }; f <<'A'\nx\nA") == [""])
+check("chrt 1 cat <<'A' -> '' (adat)", _consumer("chrt 1 cat <<'A'\nx\nA") == [""])
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

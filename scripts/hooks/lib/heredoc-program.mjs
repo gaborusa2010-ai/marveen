@@ -94,7 +94,19 @@ const WRAPPERS = {
   unshare: { values: ['-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-R', '--root', '--map-user', '--map-group', '--map-users', '--map-groups'], skip: 0 },
   nsenter: { values: ['-t', '--target', '-S', '-G', '--setuid', '--setgid', '-w', '--wd', '-r', '--root'], skip: 0 },
   'systemd-run': { values: ['-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine', '--slice', '--on-active', '--on-calendar', '--uid', '--gid', '--nice', '--working-directory'], skip: 0 },
+  // #777 review 8: further launchers that exec the command after their options
+  chrt: { values: ['-T', '-P', '-D', '--sched-runtime', '--sched-period', '--sched-deadline'], skip: 1 },
+  taskset: { values: [], skip: 1 },
+  setpriv: { values: ['--reuid', '--regid', '--ruid', '--euid', '--rgid', '--egid', '--groups', '--inh-caps', '--ambient-caps', '--bounding-set', '--securebits', '--pdeathsig', '--selinux-label', '--apparmor-profile', '--landlock-access', '--landlock-rule'], skip: 0 },
+  firejail: { values: [], skip: 0 },
+  'xvfb-run': { values: ['-n', '--server-num', '-s', '--server-args', '-f', '--auth-file', '-e', '--error-file', '-p', '--xauth-protocol', '-w', '--wait'], skip: 0 },
+  busybox: { values: [], skip: 0 },
+  pkexec: { values: ['--user'], skip: 0 },
 }
+// su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
+// the options) they start a shell that reads the stdin (#777 review 8).
+const SU_LIKE = new Set(['su', 'runuser', 'script'])
+const SU_VALUE_FLAGS = ['-u', '--user', '-g', '--group', '-G', '--supp-group', '-s', '--shell', '-w', '--whitelist-environment', '-T', '-O', '-I', '-B', '--log-timing', '--log-out', '--log-in', '--log-io', '-E', '--echo', '-m', '--logging-format']
 // `sudo -s <<EOF` / `sudo -i <<EOF` with no command: the user's shell reads the body.
 const SHELL_FLAGS_OF = { sudo: ['-s', '-i', '--shell', '--login'], doas: ['-s'] }
 // These turn the body into ARGUMENTS of the command they run (`xargs -I{} sh -c {}`):
@@ -147,6 +159,17 @@ const FEEDER_VALUE_FLAGS = new Set([
   '--slf', '--colsep', '--joblog', '--results', '--tmpdir', '--wd', '--workdir',
   '--block', '--retries', '--timeout', '--halt'])
 
+/** Does the option word carry the NEXT word as its value: a value option itself, or a short
+ *  cluster (`-tl`, `-iu`, `-ic`) whose LAST letter is a value option and no earlier letter is
+ *  (after an earlier value letter the rest of the cluster is the value: `-lroot`) (#777 review 8). */
+function takesValue(x, flags) {
+  const has = (f) => (flags instanceof Set ? flags.has(f) : flags.includes(f))
+  if (has(x)) return true
+  if (x.length < 3 || x[0] !== '-' || x[1] === '-') return false
+  for (let i = 1; i < x.length; i++) if (has('-' + x[i])) return i === x.length - 1
+  return false
+}
+
 /** The index of the first word after an xargs/parallel's options (words.length when none). */
 function afterFeederOptions(words, k) {
   let j = k + 1
@@ -154,7 +177,7 @@ function afterFeederOptions(words, k) {
     const x = words[j][0]
     if (x === '--') return j + 1
     if (!x.startsWith('-')) return j
-    j += FEEDER_VALUE_FLAGS.has(x) ? 2 : 1
+    j += takesValue(x, FEEDER_VALUE_FLAGS) ? 2 : 1
   }
   return j
 }
@@ -166,21 +189,95 @@ function firstInterpreter(words, j) {
   return -1
 }
 
-/** The PROGRAM behind an xargs/parallel's options, -1 when none: the first word past the
- *  prefixes (assignments, transparent prefixes, known wrappers with their options). The body
- *  becomes this word's ARGUMENTS, so its name decides, not a later word's (#777 review 7:
- *  `xargs python3 tool.py sh` runs python3, sh is only an argument; review 6's "shell word
- *  wins" over-blocked here). */
-function argvProgram(words, j) {
-  for (;;) {
-    j = skipPrefix(words, j)
-    if (j >= words.length) return -1
-    const base = baseName(words[j][0])
-    if (!Object.hasOwn(WRAPPERS, base)) return j
-    const nj = afterWrapper(words, j, WRAPPERS[base])
-    if (nj < 0) return j
-    j = nj
+const LAUNCHERS = new Set([...Object.keys(WRAPPERS), ...ARGV_FEEDERS, ...REMOTE_RUNNERS, ...SU_LIKE])
+
+/** The first shell word after index j ('' if none): the conservative answer when a launcher
+ *  runs a program we do not model (review-6 rule, #777 review 8: `chrt 1 bash`, `firejail bash`). */
+function shellWordAfter(words, j) {
+  for (let i = j + 1; i < words.length; i++) if (SHELLS.has(baseName(words[i][0]))) return baseName(words[i][0])
+  return ''
+}
+
+/** Who consumes the body when a launcher runs the command at index j. `argv`: the body becomes
+ *  that command's ARGUMENTS (behind xargs/parallel), not its stdin. A program we do not model
+ *  answers with any shell word behind it (#777 review 8). */
+function viaLauncher(words, j, depth, loose, argv) {
+  j = skipPrefix(words, j)
+  if (j >= words.length) return ''
+  const [x, dyn] = words[j]
+  if (dyn) return x
+  const base = baseName(x)
+  if (LAUNCHERS.has(base)) return launcherConsumer(words, j, base, depth + 1, loose, argv)
+  // behind xargs the body is this program's argument list: an interpreter runs it (`xargs bash -c`)
+  if (argv) return INTERPRETERS.has(base) ? base : shellWordAfter(words, j)
+  const c = runsWords(words, j, depth + 1, loose)
+  if (c || INTERPRETERS.has(base) || base === 'eval' || base === 'source' || base === '.') return c
+  return shellWordAfter(words, j)
+}
+
+/** su/runuser/script (#777 review 8). `-c CMD` (also in a cluster: `-qc`) runs CMD through a
+ *  shell; behind xargs the body may be that CMD. `runuser -u U -- cmd` execs cmd. Without a
+ *  command they start a shell that reads the stdin. */
+function suConsumer(words, k, base, depth, loose, argv) {
+  const hasUser = (end) => words.slice(k + 1, end).some(([w]) => w === '-u' || w === '--user')
+  let j = k + 1
+  while (j < words.length) {
+    const x = words[j][0]
+    if (x === '--') { j++; break }
+    if (x === '-c' || x === '--command' || (/^-[A-Za-z]*c$/.test(x) && !x.startsWith('--'))) {
+      if (argv || j + 1 >= words.length) return base
+      const [v, vdyn] = words[j + 1]
+      return vdyn || anyRunsStdin(v, depth + 1) ? base : ''
+    }
+    if (x.startsWith('--command=')) return argv || anyRunsStdin(x.slice(10), depth + 1) ? base : ''
+    if (x === '-') { j++; continue }
+    if (!x.startsWith('-')) {
+      if (base === 'runuser' && hasUser(j)) break   // `runuser -u U cmd`: the command
+      j++                                            // su USER / script FILE: an operand, keep looking for -c
+      continue
+    }
+    j += takesValue(x, SU_VALUE_FLAGS) ? 2 : 1
   }
+  if (base === 'runuser' && j < words.length && hasUser(j)) return viaLauncher(words, j, depth, loose, argv)
+  return argv ? '' : base
+}
+
+/** ONE resolver for every non-interpreter launcher at index k: stdin wrappers (sudo, nice,
+ *  chrt...), argv feeders (xargs, parallel), remote/container runners (ssh, docker, kubectl) and
+ *  su-like commands. Returns the word that consumes the body, or ''. The three separate paths it
+ *  replaces each had their own gaps (#777 review 8). `argv`: the body is the launcher's argument
+ *  list (we are behind an xargs/parallel), not its stdin. The Python twin's _launcher_consumer. */
+function launcherConsumer(words, k, base, depth, loose, argv = false) {
+  if (depth > MAX_NEST) return 'nested'
+  if (Object.hasOwn(WRAPPERS, base)) {
+    const j = afterWrapper(words, k, WRAPPERS[base])
+    if (j < 0) {
+      // `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
+      const shellFlags = SHELL_FLAGS_OF[base] ?? []
+      return argv || words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
+    }
+    return viaLauncher(words, j, depth, loose, argv)
+  }
+  if (ARGV_FEEDERS.has(base)) {
+    const j = afterFeederOptions(words, k)
+    // parallel without a command runs its input lines (stdin or arguments) as commands
+    if (skipPrefix(words, j) >= words.length) return base === 'parallel' ? base : ''
+    return viaLauncher(words, j, depth, loose, true)
+  }
+  if (REMOTE_RUNNERS.has(base)) {
+    const j = runnerProgram(words, k)
+    // `ssh host <<A`: the remote login shell reads the body; behind xargs the body is the remote
+    // command (#777 review 7, 8). A container runner without a command runs nothing.
+    if (j < 0) return ['ssh', 'mosh', 'plink'].includes(base) ? base : ''
+    let c = viaLauncher(words, j, depth, loose, argv)
+    if (!c && ['ssh', 'mosh', 'plink'].includes(base) && !argv) {
+      // the remote shell re-parses the joined words: `ssh host "bash -s"`, `ssh host 'cd /; bash'`
+      c = anyRunsStdin(words.slice(j).map(([x]) => x).join(' '), depth + 1)
+    }
+    return c
+  }
+  if (SU_LIKE.has(base)) return suConsumer(words, k, base, depth, loose, argv)
+  return ''
 }
 
 /** The PROGRAM of the remote/container runner at word `k`, -1 when none: the subcommand
@@ -193,7 +290,7 @@ function runnerProgram(words, k) {
   let j = k + 1
   let skip = base === 'sshpass' ? 0 : 1
   if (SUBCOMMAND_RUNNERS.has(base)) {
-    while (j < words.length && (words[j][0].startsWith('-') || RUNNER_SUBCOMMAND_PREFIX.has(words[j][0]))) j += flags.includes(words[j][0]) ? 2 : 1
+    while (j < words.length && (words[j][0].startsWith('-') || RUNNER_SUBCOMMAND_PREFIX.has(words[j][0]))) j += takesValue(words[j][0], flags) ? 2 : 1
     if (j >= words.length || !RUNNER_SUBCOMMANDS.has(words[j][0])) return firstInterpreter(words, k + 1)
     j++
   }
@@ -204,7 +301,7 @@ function runnerProgram(words, k) {
       if (skip) { skip--; j++; continue }
       return j < words.length ? j : -1
     }
-    if (x.startsWith('-')) { j += flags.includes(x) ? 2 : 1; continue }
+    if (x.startsWith('-')) { j += takesValue(x, flags) ? 2 : 1; continue }
     if (skip) { skip--; j++; continue }
     return j
   }
@@ -240,9 +337,6 @@ const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(/
 // the same, keeping its separators: [command, separator, command, ...] (#777 review 7: a `&`
 // AFTER the command backgrounds it, and then it does not read the inherited stdin)
 const SIMPLE_SPLIT_KEEP = /(\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\()/
-// an own input redirect at the start of a word (`<f`, `0<f`, `<<<x`, `<<T`, `< <(..)`); a `<&n`
-// dup is NOT one, it may be the inherited stdin itself
-const OWN_STDIN_RE = /^0?(<<<|<<|<>|<)(?!&)/
 const HEAD_SPLIT = /(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()/
 const TAIL_SPLIT = /\|\||&&|;|(?<![<>])&(?!>)/
 const PIPE_SPLIT = /(?<!>)\|/
@@ -360,7 +454,12 @@ function lastOperand(words) {
  *  (`(bash) <<EOF`, `tee >(bash) <<EOF`): the words after it are not its operands. */
 function cmdWord(seg) {
   // quote-aware: `bash > "o 775" <<EOF` has one target word, not two (#775)
-  let words = (seg.replaceAll(')', ' ) ').match(SHELL_WORD_RE) ?? []).map(word)
+  let toks = seg.replaceAll(')', ' ) ').match(SHELL_WORD_RE) ?? []
+  // an unquoted word starting with `#` opens a comment: the rest is not the command
+  // (#777 review 8: `f(){ bash #<x` read `#<x` as a script file)
+  const hash = toks.findIndex((t) => t.startsWith('#'))
+  if (hash >= 0) toks = toks.slice(0, hash)
+  let words = toks.map(word)
   const k = skipPrefix(words, 0)
   const close = words.findIndex(([w], i) => i > k && w === ')')
   if (close >= 0) words = words.slice(0, close)
@@ -374,7 +473,7 @@ function afterWrapper(words, k, spec) {
   while (j < words.length) {
     const x = words[j][0]
     if (x === '--') { j++; break }
-    if (x.startsWith('-')) { j += spec.values.includes(x) ? 2 : 1; continue }
+    if (x.startsWith('-')) { j += takesValue(x, spec.values) ? 2 : 1; continue }
     if (skip > 0) { skip--; j++; continue }
     break
   }
@@ -403,33 +502,14 @@ function runsWords(words, k, depth, loose) {
     return words.slice(k + 1).some(([x, d]) => d || STDIN_PATH_RE.test(x) || x.startsWith('<')) ? w : ''
   }
   if (base.startsWith('-S') || base.startsWith('--split-string')) return base   // env -S'python3 -'
-  if (!INTERPRETERS.has(base)) {
-    if (Object.hasOwn(WRAPPERS, base)) {
-      const j = afterWrapper(words, k, WRAPPERS[base])
-      if (j >= 0) return runsWords(words, j, depth + 1, loose)
-      const shellFlags = SHELL_FLAGS_OF[base] ?? []
-      return words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
-    }
-    if (ARGV_FEEDERS.has(base)) {
-      const j = argvProgram(words, afterFeederOptions(words, k))
-      const pb = j >= 0 ? baseName(words[j][0]) : ''
-      return INTERPRETERS.has(pb) ? pb : ''
-    }
-    if (REMOTE_RUNNERS.has(base)) {
-      const j = runnerProgram(words, k)
-      // `ssh host <<A` with no command: the remote login shell reads the body (#777 review 7);
-      // a container runner without a command does not start.
-      if (j < 0) return ['ssh', 'mosh', 'plink'].includes(base) ? base : ''
-      return runsWords(words, j, depth + 1, loose)
-    }
-    return ''                         // an unknown command: its ARGUMENTS are not a program
-  }
+  // an unknown command: its ARGUMENTS are not a program
+  if (!INTERPRETERS.has(base)) return LAUNCHERS.has(base) ? launcherConsumer(words, k, base, depth, loose) : ''
   const shell = SHELLS.has(base)
   const flags = STDIN_SCRIPT_FLAGS[base] ?? []
   let longOpts = base === 'bash' || base === 'rbash'   // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
   for (let j = k + 1; j < words.length; j++) {
     const [x, xdyn] = words[j]
-    if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x)) return base
+    if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x) || x.startsWith('<(')) return base   // `bash <(cat)`: the script is a pipe, maybe the stdin (#777 review 8)
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
     if (longOpts) {
@@ -569,24 +649,46 @@ function subBlanked(text) {
  *  program? Read twice: as is (`x=$(bash -c "$l")` runs INSIDE the substitution), and with
  *  the closed substitutions collapsed (`bash -c "$(echo "$l")"`: the program is the
  *  substitution, #775). */
-/** The simple command has its OWN stdin and does not read the inherited one: an own input
- *  redirect (OWN_STDIN_RE) or backgrounded (`&`: non-interactive bash gives it /dev/null).
- *  Measured with bash (probe-sandbox, #777 review 7): `f(){ cat & wait; }; f <<<B` prints
- *  nothing; `x=$(cat)`, `(cat)`, `cat <&0`, the second `cat` after an own-redirect command and
- *  the second `cat` after a pipeline print B. */
-function ownStdin(piece, nextSep) {
-  if (nextSep === '&') return true
+// A stdin (fd 0) redirection at the start of a word: `<f`, `0<f`, `<<<x`, `<<T`, `<<-T`, `<>f`, `<&n`.
+// `<(..)` is a process substitution (an ARGUMENT), not a redirection.
+const STDIN_REDIR_RE = /^0?(<<<|<<-?|<>|<&|<)(?!\()/
+// A redirection target that is (or may be) the inherited stdin: /dev/stdin, //dev/./stdin,
+// /dev/fd/N, /proc/<anything>/fd/N (self, $$, thread-self, task/..).
+const INHERITED_TARGET_RE = /stdin|(?:^|\/)fd(?:\/|$)/
+// `set -m` / `set -o monitor`: job control on, a background job keeps the stdin.
+const JOB_CONTROL_RE = /(?<![\w-])set\s+(?:-[A-Za-z]*m|-o\s+monitor)/
+
+/** A redirection target that is a fixed file or text the shell does not expand, and that is
+ *  not the inherited stdin under another name. */
+function literalTarget(raw) {
+  if (!raw || '<>'.includes(raw[0]) || raw.includes('$') || raw.includes('`')) return false
+  return !INHERITED_TARGET_RE.test(word(raw)[0])
+}
+
+/** The simple command has its OWN stdin and does not read the inherited one (#777 review 8,
+ *  the effective_stdin rule; the Python twin's _own_stdin). Stdin redirections are followed in
+ *  bash order and the LAST one wins (`bash </dev/null <&0` reads the inherited stdin). Own only
+ *  when that last target is literal: a file (not /dev/stdin, /dev/fd/N, /proc/PID/fd/N under any
+ *  spelling), a here-string or a quoted-delimiter heredoc without expansion; `<&-` closes it.
+ *  `<&n`, a process substitution and anything with `$` or a backtick may be the inherited stdin.
+ *  Without a stdin redirection a background job (`&`) gets /dev/null, unless job control is on
+ *  (`set -m`). Inside a read/mapfile loop body nothing is exempt: the lines come from the stdin. */
+function ownStdin(piece, nextSep, loose = false, jobControl = false) {
+  if (loose) return false
   const toks = piece.match(SHELL_WORD_RE) ?? []
+  let own = null
   for (let i = 0; i < toks.length; i++) {
-    const m = OWN_STDIN_RE.exec(toks[i])
+    const m = STDIN_REDIR_RE.exec(toks[i])
     if (!m) continue
-    // the target: the glued rest of the token, else the next token (unquoted)
-    const target = word(toks[i].slice(m[0].length) || toks[i + 1] || '')[0]
-    if (m[1] === '<' && STDIN_PATH_RE.test(target)) continue      // `bash </dev/stdin`: the inherited stdin itself
-    if (m[1] === '<<<' && target === '$STDIN') continue           // `bash <<< "$(cat)"` (collapsed): its content
-    return true
+    let raw = toks[i].slice(m[0].length)
+    if (!raw && i + 1 < toks.length) raw = toks[++i]
+    const op = m[1]
+    if (op === '<&') own = raw === '-'
+    else if (op === '<<' || op === '<<-') own = Boolean(raw) && `\\'"`.includes(raw[0]) && !raw.includes('$') && !raw.includes('`')
+    else own = literalTarget(raw)
   }
-  return false
+  if (own !== null) return own
+  return nextSep === '&' && !jobControl
 }
 
 /** A code interpreter (python/node/ruby/perl/php), not a shell: the same rule as
@@ -606,6 +708,7 @@ const codeConsumer = (c) => INTERPRETERS.has(baseName(c)) && !SHELLS.has(baseNam
 function anyRunsStdin(text, depth = 0, funcs = {}) {
   if (depth > MAX_NEST) return 'nested'
   const loose = READS_STDIN_RE.test(text)
+  const jobControl = JOB_CONTROL_RE.test(text)
   const blanked = subBlanked(text)
   let interp = ''
   for (const t of blanked !== text ? [text, blanked] : [text]) {
@@ -619,7 +722,7 @@ function anyRunsStdin(text, depth = 0, funcs = {}) {
         c = anyRunsStdin(funcs[words[k][0]], depth + 1, funcs)
       }
       c = c || runsWords(words, k, depth, loose)
-      if (!c || ownStdin(p, parts[i + 1] ?? '')) continue
+      if (!c || ownStdin(p, parts[i + 1] ?? '', loose, jobControl)) continue
       if (!codeConsumer(c)) return c
       if (!interp) interp = c
     }

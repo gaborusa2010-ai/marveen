@@ -75,6 +75,15 @@ describe('heredoc-program twin: JS reads every case like the Python side', () =>
     expect(consumers("xargs python3 tool.py sh <<'A'\nprint(1)\nA")).toEqual(['python3'])
     expect(consumers("sshpass -p python3 ssh host bash <<'A'\nls\nA")).toEqual(['bash'])
     expect(consumers('cat > f <<EOF\nls\nEOF')).toEqual([])
+    // #777 review 8: one launcher resolver (wrappers, xargs/parallel, runners, su/script) and the
+    // effective stdin of a body command (the last redirect wins; `<&-` is its own, `2<` is not stdin)
+    expect(consumers("taskset 1 bash <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("busybox sh <<'A'\nls\nA")).toEqual(['sh'])
+    expect(consumers('ssh host "bash -s" <<\'A\'\nls\nA')).toEqual(['bash'])
+    expect(consumers("f(){ bash 2</dev/null; }; f <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("f(){ bash </dev/null; }; f <<'A'\nls\nA")).toEqual([])
+    expect(consumers("f(){ bash <&-; }; f <<'A'\nls\nA")).toEqual([])
+    expect(consumers("chrt 1 cat <<'A'\nls\nA")).toEqual([])
   })
 
   it('returns the $( ) and backtick texts of an unquoted data body, and nothing else', () => {

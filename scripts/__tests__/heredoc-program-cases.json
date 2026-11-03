@@ -3815,6 +3815,206 @@
     true
    ],
    "bash_runs": true
+  },
+  {
+   "name": "777r8_taskset_bash",
+   "cmd": "taskset 1 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_chrt_flag_bash",
+   "cmd": "chrt -f 1 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_runuser_bash",
+   "cmd": "runuser -u x -- bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_login_shell",
+   "cmd": "su <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_c_bash",
+   "cmd": "su -c 'bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_script_q",
+   "cmd": "script -q /dev/null <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_busybox_sh",
+   "cmd": "busybox sh <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_0_nice",
+   "cmd": "xargs -0 nice <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_parallel_no_cmd",
+   "cmd": "parallel <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_ssh_quoted_bash_s",
+   "cmd": "ssh host \"bash -s\" <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_ssh",
+   "cmd": "xargs ssh host <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_fd2_not_stdin",
+   "cmd": "f(){ bash 2</dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_last_redirect_wins",
+   "cmd": "f(){ bash </dev/null <&0; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_set_m_background",
+   "cmd": "f(){ set -m; bash & wait; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_var_target",
+   "cmd": "f(){ bash < \"$F\"; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_own_devnull",
+   "cmd": "f(){ bash </dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_own_fd0",
+   "cmd": "f(){ bash 0</dev/null; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_background",
+   "cmd": "f(){ bash & wait; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_closed_stdin",
+   "cmd": "f(){ bash <&-; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_fn_comment",
+   "cmd": "f(){ cat #bash\n}; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_xargs_grep",
+   "cmd": "xargs grep -l pattern <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_docker_run_cat",
+   "cmd": "docker run -i --rm alpine cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_chrt_cat",
+   "cmd": "chrt 1 cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_su_c_echo",
+   "cmd": "su -c 'echo hi' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r8_ssh_n_true",
+   "cmd": "ssh -n host true <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
   }
  ]
 }

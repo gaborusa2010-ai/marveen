@@ -370,7 +370,11 @@ def _cmd_word(seg):
     az utana allo szavak nem az operandusai."""
     # Idezojel-tudatos szavakra bontas: `bash > "o 775" <<EOF` celja egy szo, nem ketto
     # (a masodik fele programfajlnak latszott, #775). A `)` szokozzel korbeveve kulon szo.
-    words = [_word(t) for t in _SHELL_WORD_RE.findall(seg.replace(')', ' ) '))]
+    toks = _SHELL_WORD_RE.findall(seg.replace(')', ' ) '))
+    # an unquoted word starting with `#` opens a comment: the rest is not the command
+    # (#777 review 8: `f(){ bash #<x` read `#<x` as a script file)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    words = [_word(t) for t in toks]
     k = _skip_prefix(words, 0)
     for i in range(k + 1, len(words)):
         if words[i][0] == ')':
@@ -407,7 +411,24 @@ _STDIN_WRAPPERS = {
     'systemd-run': (('-p', '--property', '-u', '--unit', '-E', '--setenv', '--description', '-M', '--machine',
                      '--slice', '--on-active', '--on-calendar', '--uid', '--gid', '--nice',
                      '--working-directory'), 0),
+    # #777 review 8: further launchers that exec the command after their options
+    'chrt': (('-T', '-P', '-D', '--sched-runtime', '--sched-period', '--sched-deadline'), 1),
+    'taskset': ((), 1),
+    'setpriv': (('--reuid', '--regid', '--ruid', '--euid', '--rgid', '--egid', '--groups', '--inh-caps',
+                 '--ambient-caps', '--bounding-set', '--securebits', '--pdeathsig', '--selinux-label',
+                 '--apparmor-profile', '--landlock-access', '--landlock-rule'), 0),
+    'firejail': ((), 0),
+    'xvfb-run': (('-n', '--server-num', '-s', '--server-args', '-f', '--auth-file', '-e', '--error-file',
+                  '-p', '--xauth-protocol', '-w', '--wait'), 0),
+    'busybox': ((), 0),
+    'pkexec': (('--user',), 0),
 }
+# su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
+# the options) they start a shell that reads the stdin (#777 review 8).
+_SU_LIKE = ('su', 'runuser', 'script')
+_SU_VALUE_FLAGS = ('-u', '--user', '-g', '--group', '-G', '--supp-group', '-s', '--shell', '-w',
+                   '--whitelist-environment', '-T', '-O', '-I', '-B', '--log-timing', '--log-out', '--log-in',
+                   '--log-io', '-E', '--echo', '-m', '--logging-format')
 # `sudo -s <<EOF` / `sudo -i <<EOF` parancs nelkul: a felhasznalo shellje olvassa a torzset.
 _SHELL_FLAGS_OF = {'sudo': ('-s', '-i', '--shell', '--login'), 'doas': ('-s',)}
 # Ezek a torzset a futtatott parancs ARGUMENTUMAIVA teszik (`xargs -I{} sh -c {}`):
@@ -461,6 +482,20 @@ _FEEDER_VALUE_FLAGS = (
     '--block', '--retries', '--timeout', '--halt')
 
 
+def _takes_value(x, flags):
+    """Does the option word carry the NEXT word as its value: a value option itself, or a short
+    cluster (`-tl`, `-iu`, `-ic`) whose LAST letter is a value option and no earlier letter is
+    (after an earlier value letter the rest of the cluster is the value: `-lroot`) (#777 review 8)."""
+    if x in flags:
+        return True
+    if len(x) < 3 or x[0] != '-' or x[1] == '-':
+        return False
+    for i in range(1, len(x)):
+        if '-' + x[i] in flags:
+            return i == len(x) - 1
+    return False
+
+
 def _after_feeder_options(words, k):
     """Az xargs/parallel kapcsoloi utani elso szo indexe (len(words), ha nincs)."""
     j = k + 1
@@ -470,7 +505,7 @@ def _after_feeder_options(words, k):
             return j + 1
         if not x.startswith('-'):
             return j
-        j += 2 if x in _FEEDER_VALUE_FLAGS else 1
+        j += 2 if _takes_value(x, _FEEDER_VALUE_FLAGS) else 1
     return j
 
 
@@ -480,23 +515,102 @@ def _first_interpreter(words, j):
     return next((i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS), None)
 
 
-def _argv_program(words, j):
-    """Az xargs/parallel kapcsoloi utan allo PROGRAM indexe (None, ha nincs): az elotagok
-    (ertekadas, atlatszo burkolo, ismert stdin-burkolo a kapcsoloival) atlepese utan az elso
-    szo. A torzs ennek az ARGUMENTUMA lesz, ezert ennek a szonak a neve dont, nem egy kesobbi
-    szoe (#777 review 7: `xargs python3 tool.py sh` programja a python3, az sh csak argumentum;
-    a review-6 "shell-szo nyer" szabalya itt tulfogott)."""
-    while True:
-        j = _skip_prefix(words, j)
-        if j >= len(words):
-            return None
-        base = os.path.basename(words[j][0])
-        if base not in _STDIN_WRAPPERS:
-            return j
-        nj = _after_stdin_wrapper(words, j, _STDIN_WRAPPERS[base])
-        if nj is None:
-            return j
-        j = nj
+_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE)
+
+
+def _shell_word_after(words, j):
+    """The first shell word after index j ('' if none): the conservative answer when a launcher
+    runs a program we do not model (review-6 rule, #777 review 8: `chrt 1 bash`, `firejail bash`)."""
+    return next((os.path.basename(x) for x, _d in words[j + 1:] if os.path.basename(x) in _SHELLS), '')
+
+
+def _via_launcher(words, j, depth, loose, argv):
+    """Who consumes the body when a launcher runs the command at index j. `argv`: the body
+    becomes that command's ARGUMENTS (behind xargs/parallel), not its stdin. A program we do not
+    model answers with any shell word behind it (#777 review 8)."""
+    j = _skip_prefix(words, j)
+    if j >= len(words):
+        return ''
+    x, dyn = words[j]
+    if dyn:
+        return x
+    base = os.path.basename(x)
+    if base in _LAUNCHERS:
+        return _launcher_consumer(words, j, base, depth + 1, loose, argv)
+    if argv:
+        # the body is this program's argument list: an interpreter runs it (`xargs bash -c`)
+        return base if base in INTERPRETERS else _shell_word_after(words, j)
+    c = _runs_words(words, j, depth + 1, loose)
+    if c or base in INTERPRETERS or base in ('eval', 'source', '.'):
+        return c
+    return _shell_word_after(words, j)
+
+
+def _su_consumer(words, k, base, depth, loose, argv):
+    """su/runuser/script (#777 review 8). `-c CMD` (also in a cluster: `-qc`) runs CMD through a
+    shell; behind xargs the body may be that CMD. `runuser -u U -- cmd` execs cmd. Without a
+    command they start a shell that reads the stdin."""
+    j = k + 1
+    while j < len(words):
+        x, dyn = words[j]
+        if x == '--':
+            j += 1
+            break
+        if x in ('-c', '--command') or (re.match(r'^-[A-Za-z]*c$', x) and not x.startswith('--')):
+            if argv or j + 1 >= len(words):
+                return base
+            v, vdyn = words[j + 1]
+            return base if vdyn or _any_runs_stdin(v, depth + 1) else ''
+        if x.startswith('--command='):
+            return base if argv or _any_runs_stdin(x.split('=', 1)[1], depth + 1) else ''
+        if not x.startswith('-') or x == '-':
+            if x == '-':
+                j += 1
+                continue
+            if base == 'runuser' and any(w in ('-u', '--user') for w, _d in words[k + 1:j]):
+                break              # `runuser -u U cmd`: the command
+            j += 1                 # su USER / script FILE: an operand, keep looking for -c
+            continue
+        j += 2 if _takes_value(x, _SU_VALUE_FLAGS) else 1
+    if base == 'runuser' and j < len(words) and any(w in ('-u', '--user') for w, _d in words[k + 1:j]):
+        return _via_launcher(words, j, depth, loose, argv)
+    return '' if argv else base
+
+
+def _launcher_consumer(words, k, base, depth, loose, argv=False):
+    """ONE resolver for every non-interpreter launcher at index k: stdin wrappers (sudo, nice,
+    chrt...), argv feeders (xargs, parallel), remote/container runners (ssh, docker, kubectl) and
+    su-like commands. Returns the word that consumes the body, or ''. The three separate paths it
+    replaces each had their own gaps (#777 review 8). `argv`: the body is the launcher's argument
+    list (we are behind an xargs/parallel), not its stdin."""
+    if depth > _MAX_NEST:
+        return 'nested'
+    if base in _STDIN_WRAPPERS:
+        j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
+        if j is None:
+            # `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
+            return base if argv or any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
+        return _via_launcher(words, j, depth, loose, argv)
+    if base in _ARGV_FEEDERS:
+        j = _after_feeder_options(words, k)
+        if _skip_prefix(words, j) >= len(words):
+            # parallel without a command runs its input lines (stdin or arguments) as commands
+            return base if base == 'parallel' else ''
+        return _via_launcher(words, j, depth, loose, True)
+    if base in _REMOTE_RUNNERS:
+        j = _runner_program(words, k)
+        if j is None:
+            # `ssh host <<A`: the remote login shell reads the body; behind xargs the body is
+            # the remote command (#777 review 7, 8). A container runner without a command runs nothing.
+            return base if base in ('ssh', 'mosh', 'plink') else ''
+        c = _via_launcher(words, j, depth, loose, argv)
+        if not c and base in ('ssh', 'mosh', 'plink') and not argv:
+            # the remote shell re-parses the joined words: `ssh host "bash -s"`, `ssh host 'cd /; bash'`
+            c = _body_consumer(' '.join(x for x, _d in words[j:]), None, depth + 1)
+        return c
+    if base in _SU_LIKE:
+        return _su_consumer(words, k, base, depth, loose, argv)
+    return ''
 
 
 def _runner_program(words, k):
@@ -510,7 +624,7 @@ def _runner_program(words, k):
     skip = 0 if base == 'sshpass' else 1
     if base in _SUBCOMMAND_RUNNERS:
         while j < len(words) and (words[j][0].startswith('-') or words[j][0] in _RUNNER_SUBCOMMAND_PREFIX):
-            j += 2 if words[j][0] in flags else 1
+            j += 2 if _takes_value(words[j][0], flags) else 1
         if j >= len(words) or words[j][0] not in _RUNNER_SUBCOMMANDS:
             return _first_interpreter(words, k + 1)
         j += 1
@@ -524,7 +638,7 @@ def _runner_program(words, k):
                 continue
             return j if j < len(words) else None
         if x.startswith('-'):
-            j += 2 if x in flags else 1
+            j += 2 if _takes_value(x, flags) else 1
             continue
         if skip:
             skip -= 1
@@ -573,7 +687,7 @@ def _after_stdin_wrapper(words, k, spec):
             j += 1
             break
         if x.startswith('-'):
-            j += 2 if x in values else 1
+            j += 2 if _takes_value(x, values) else 1
             continue
         if skip > 0:
             skip -= 1
@@ -635,31 +749,15 @@ def _runs_words(words, k, depth, loose=False):
     if base.startswith(('-S', '--split-string')):
         return base                # env -S'python3 -': a parancs egy szoban
     if base not in INTERPRETERS:
-        if base in _STDIN_WRAPPERS:
-            j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
-            if j is not None:
-                return _runs_words(words, j, depth + 1, loose)
-            return base if any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
-        if base in _ARGV_FEEDERS:
-            j = _argv_program(words, _after_feeder_options(words, k))
-            pb = os.path.basename(words[j][0]) if j is not None else ''
-            return pb if pb in INTERPRETERS else ''
-        if base in _REMOTE_RUNNERS:
-            j = _runner_program(words, k)
-            if j is None:
-                # `ssh host <<A` parancs nelkul: a tavoli login shell olvassa a torzset
-                # (#777 review 7). Kontener-futtato parancs nelkul nem indul.
-                return base if base in ('ssh', 'mosh', 'plink') else ''
-            return _runs_words(words, j, depth + 1, loose)
-        return ''
+        return _launcher_consumer(words, k, base, depth, loose) if base in _LAUNCHERS else ''
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
     long_opts = base in ('bash', 'rbash')   # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
-        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x):
-            return base
+        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x) or x.startswith('<('):
+            return base            # `bash <(cat)`: the script file is a pipe, it may be the stdin (#777 review 8)
         if _REDIR_OP_RE.match(x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
             continue
@@ -765,9 +863,6 @@ _SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(')
 # Ugyanaz, az elvalasztokat megtartva: [parancs, elvalaszto, parancs, ...] (#777 review 7: a
 # parancs UTANI `&` hatterbe teszi, akkor nem az orokolt stdin-t olvassa).
 _SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\()')
-# Sajat bemeneti atiranyitas egy szo elejen (`<f`, `0<f`, `<<<x`, `<<T`, `< <(..)`); a `<&n`
-# masolat NEM az, az az orokolt stdin maga is lehet.
-_OWN_STDIN_RE = re.compile(r'^0?(<<<|<<|<>|<)(?!&)')
 # A fej es a cso-tag hatarai a heredoc nyitojanak soran (lasd _heredoc_runs_body).
 _HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()')
 _TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>])&(?!>)')
@@ -854,27 +949,58 @@ def _any_runs_stdin(text, depth=0, funcs=None):
     return bool(_body_consumer(text, funcs, depth))
 
 
-def _own_stdin(piece, next_sep):
-    """Az egyszeru parancsnak SAJAT stdin-je van, az orokoltet nem olvassa: sajat bemeneti
-    atiranyitas (_OWN_STDIN_RE) vagy hatterbe teve (`&`: a nem interaktiv bash /dev/null-t ad
-    neki). Bash-sal merve (probe-sandbox, #777 review 7): `f(){ cat & wait; }; f <<<B` semmit
-    nem ir; `x=$(cat)`, `(cat)`, `cat <&0`, a sajat atiranyitasu parancs UTANI masodik `cat` es
-    a cso utani masodik `cat` a B-t irja."""
-    if next_sep == '&':
-        return True
+# A stdin (fd 0) redirection at the start of a word: `<f`, `0<f`, `<<<x`, `<<T`, `<<-T`, `<>f`, `<&n`.
+# `<(..)` is a process substitution (an ARGUMENT), not a redirection.
+_STDIN_REDIR_RE = re.compile(r'^0?(<<<|<<-?|<>|<&|<)(?!\()')
+# A redirection target that is (or may be) the inherited stdin: /dev/stdin, //dev/./stdin, /dev/fd/N,
+# /proc/<anything>/fd/N (self, $$, thread-self, task/..).
+_INHERITED_TARGET_RE = re.compile(r'stdin|(?:^|/)fd(?:/|$)')
+# `set -m` / `set -o monitor`: job control on, a background job keeps the stdin.
+_JOB_CONTROL_RE = re.compile(r'(?<![\w-])set\s+(?:-[A-Za-z]*m|-o\s+monitor)')
+
+
+def _literal_target(raw):
+    """A redirection target that is a fixed file or text the shell does not expand, and that is
+    not the inherited stdin under another name."""
+    if not raw or raw[0] in '<>' or '$' in raw or '`' in raw:
+        return False
+    return not _INHERITED_TARGET_RE.search(_word(raw)[0])
+
+
+def _own_stdin(piece, next_sep, loose=False, job_control=False):
+    """The simple command has its OWN stdin and does not read the inherited one (#777 review 8,
+    the effective_stdin rule). Stdin redirections are followed in bash order and the LAST one wins
+    (`bash </dev/null <&0` reads the inherited stdin). Own only when that last target is literal:
+    a file (not /dev/stdin, /dev/fd/N, /proc/*/fd/N under any spelling), a here-string or a
+    quoted-delimiter heredoc without expansion; `<&-` closes it. `<&n`, a process substitution and
+    anything with `$` or a backtick may be the inherited stdin. Without a stdin redirection a
+    background job (`&`) gets /dev/null, unless job control is on (`set -m`). Inside a read/mapfile
+    loop body nothing is exempt: the lines come from the stdin (`while read l; do bash <<< "$l"`)."""
+    if loose:
+        return False
     toks = _SHELL_WORD_RE.findall(piece)
-    for i, t in enumerate(toks):
-        m = _OWN_STDIN_RE.match(t)
+    own = None
+    i = 0
+    while i < len(toks):
+        m = _STDIN_REDIR_RE.match(toks[i])
         if not m:
+            i += 1
             continue
-        # A cel: a token osszeragadt maradeka, kulonben a kovetkezo token (idezojel nelkul).
-        target = _word(t[m.end():] or (toks[i + 1] if i + 1 < len(toks) else ''))[0]
-        if m.group(1) == '<' and _STDIN_PATH_RE.match(target):
-            continue               # `bash </dev/stdin`: az orokolt stdin maga
-        if m.group(1) == '<<<' and target == '$STDIN':
-            continue               # `bash <<< "$(cat)"` (lezarva $STDIN): az orokolt stdin tartalma
-        return True
-    return False
+        raw = toks[i][m.end():]
+        if not raw and i + 1 < len(toks):
+            i += 1
+            raw = toks[i]
+        op = m.group(1)
+        if op == '<&':
+            own = raw == '-'
+        elif op in ('<<', '<<-'):
+            own = bool(raw) and raw[0] in '\'"' and '$' not in raw and '`' not in raw
+        else:
+            own = _literal_target(raw)
+        i += 1
+    if own is not None:
+        return own
+    return next_sep == '&' and not job_control
 
 
 def _body_consumer(text, funcs=None, depth=0):
@@ -894,6 +1020,7 @@ def _body_consumer(text, funcs=None, depth=0):
         return 'nested'
     funcs = funcs or {}
     loose = bool(_READS_STDIN_RE.search(text))
+    job_control = bool(_JOB_CONTROL_RE.search(text))
     blanked = _sub_blanked(text)
     interp = ''
     for t in ((text, blanked) if blanked != text else (text,)):
@@ -907,7 +1034,7 @@ def _body_consumer(text, funcs=None, depth=0):
             if k < len(words) and not words[k][1] and words[k][0] in funcs and not _function_bypassed(words, k):
                 c = _body_consumer(funcs[words[k][0]], funcs, depth + 1)
             c = c or _runs_words(words, k, depth, loose)
-            if not c or _own_stdin(p, parts[i + 1] if i + 1 < len(parts) else ''):
+            if not c or _own_stdin(p, parts[i + 1] if i + 1 < len(parts) else '', loose, job_control):
                 continue
             if not _code_consumer(c):
                 return c
