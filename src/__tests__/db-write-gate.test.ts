@@ -676,6 +676,34 @@ describe('4. git: the main checkout and the remote it pulls from', () => {
     expect(noCwd('git -C @WT@ commit -m x')).toEqual(ALLOW)
     expect(noCwd('git -C @WT@ -C @ROOT@ commit -m x')).toEqual(DENY_GIT)
   })
+  // LOCAL (owner tg 10577): the main agent keeps commit, merge and a push to `fork` in the main checkout.
+  it('the main agent may add, commit, merge a local branch and push to fork in the install; a sub-agent may not', () => {
+    const main = (command: string) => gateDecision('Bash', { command }, { cwd: root, root, mainAgent: true })
+    expect(main('git add -A')).toEqual(ALLOW)
+    expect(main('git commit -m "fix: x"')).toEqual(ALLOW)
+    expect(main('git merge --ff-only merge-v1.46')).toEqual(ALLOW)
+    expect(main('git merge --no-ff fix/777-herestring-gates')).toEqual(ALLOW)
+    expect(main('git push fork main')).toEqual(ALLOW)
+    expect(bash('git commit -m x')).toEqual(DENY_GIT)
+    expect(bash('git merge --ff-only merge-v1.46')).toEqual(DENY_GIT)
+    expect(bash('git push fork main')).toEqual(DENY_GIT)
+    expect(gateDecision('Bash', { command: 'git commit -m x' }, { cwd: root, root, mainAgent: 'true' })).toEqual(DENY_GIT)
+  })
+  it.each([
+    ['a merge of an origin ref (a worktree can plant one)', 'git merge --ff-only origin/develop'],
+    ['a merge of a remotes ref', 'git merge refs/remotes/origin/develop'],
+    ['a merge of FETCH_HEAD', 'git merge FETCH_HEAD'],
+    ['a push to origin', 'git push origin main'],
+    ['a forced push to fork', 'git push --force fork main'],
+    ['a forced refspec to fork', 'git push fork +main'],
+    ['a deleting push', 'git push fork :main'],
+    ['a mirror push', 'git push --mirror fork'],
+    ['a reset, still', 'git reset --hard HEAD~1'],
+    ['a rebase, still', 'git rebase origin/develop'],
+    ['a -c on a commit, still', 'git -c core.hooksPath=/tmp/x commit -m x'],
+  ])('main agent: %s is still denied in the install', (_, cmd) => {
+    expect(gateDecision('Bash', { command: cmd }, { cwd: root, root, mainAgent: true })).toEqual(DENY_GIT)
+  })
   it.each([
     ['a commit', 'git commit -m "x"'],
     ['a reset', 'git reset --hard HEAD~1'],

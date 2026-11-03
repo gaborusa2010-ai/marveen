@@ -350,6 +350,17 @@ export function gitDecision(words, ctx) {
   if (!inRoot) return null
   if (configs.length) return 'deny'
   if (GIT_ROOT_READS.has(sub)) return null
+  // LOCAL (owner tg 10577, on top of the standing permission tg 7801): the MAIN agent of this install keeps commit,
+  // merge and a push to its own `fork` remote in the main checkout. Never a merge of an origin/remote ref (a worktree
+  // can plant one, see GIT above), never a forced or deleting push. Every other rule of this gate stays as it is.
+  if (ctx.mainAgent && (sub === 'add' || sub === 'commit')) return 'allow'
+  if (ctx.mainAgent && sub === 'merge') {
+    return args.some((a) => /^(?:origin\/|remotes\/|refs\/remotes\/|FETCH_HEAD$)/.test(a)) ? 'deny' : 'allow'
+  }
+  if (ctx.mainAgent && sub === 'push') {
+    const bad = args.some((a) => /^(?:-f|--force(?:-with-lease)?(?:=.*)?|--mirror|--all|--delete|-d|--prune|--receive-pack(?:=.*)?|--exec(?:=.*)?)$/.test(a) || /^\+|^:/.test(a))
+    return !bad && args.filter((a) => !a.startsWith('-'))[0] === 'fork' ? 'allow' : 'deny'
+  }
   if (sub === 'fetch') return args.every((a) => GIT_FETCH_FLAGS.has(a)) || (args.filter((a) => !GIT_FETCH_FLAGS.has(a)).join(' ') === 'origin') ? 'allow' : 'deny'
   if (sub === 'pull') {
     const rest = args.filter((a) => a !== '-q' && a !== '--quiet')
@@ -513,7 +524,7 @@ export function subshellParts(own) {
 // Bash: does the command write a protected install path? true = deny.
 export function installFileDeny(command, opts = {}) {
   const cmd = String(command ?? '')
-  const ctx0 = { root: opts.root ?? INSTALL_ROOT, cwd: opts.cwd ? resolve(String(opts.cwd)) : null }
+  const ctx0 = { root: opts.root ?? INSTALL_ROOT, cwd: opts.cwd ? resolve(String(opts.cwd)) : null, mainAgent: opts.mainAgent === true }
   const insideDir = (cwd) => !!cwd && installTargets(ctx0.root).list.some((t) => t.dir && underKey(pathKey(cwd), t.key))
   const ctx = { ...ctx0, cwdInsideDir: insideDir(ctx0.cwd) }
   // fast path: nothing in any spelling of the whole command reaches a target,
@@ -773,6 +784,18 @@ function isInvokedDirectly() {
   }
 }
 
+// LOCAL (tg 10577): the main agent is the session the harness started with the install root as its project dir;
+// a sub-agent runs with CLAUDE_PROJECT_DIR=agents/<name>. Set by the harness, not by a command the agent runs.
+function isMainAgentSession() {
+  const dir = process.env.CLAUDE_PROJECT_DIR
+  if (!dir) return false
+  try {
+    return realpathSync(dir) === realpathSync(INSTALL_ROOT)
+  } catch {
+    return false
+  }
+}
+
 // The hook entry, as self-pace-gate's: the decision runs in a worker with a
 // deadline, and a throw, a hang or a missing verdict is a DENY (exit 1 or a
 // harness timeout would read as "allow"). Stdin that is not JSON allows: it
@@ -819,7 +842,7 @@ if (!isMainThread && workerData?.dbWriteGateWorker) {
     allow()
   }
   try {
-    const verdict = await decideInWorker(payload?.tool_name, payload?.tool_input, { cwd: payload?.cwd })
+    const verdict = await decideInWorker(payload?.tool_name, payload?.tool_input, { cwd: payload?.cwd, mainAgent: isMainAgentSession() })
     if (verdict.error) deny(FAIL_CLOSED_MSG(verdict.error.split('\n')[0]))
     if (verdict.deny) deny(verdict.reason === 'git' ? GIT_GATE_MSG : verdict.reason === 'install-file' ? INSTALL_FILE_GATE_MSG : DB_GATE_MSG)
     allow()
