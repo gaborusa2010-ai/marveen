@@ -211,6 +211,18 @@
    "programs": [
     "X"
    ]
+  },
+  {
+   "cmd": "true & bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "echo 'a & b' && bash -c 'rm -rf ~/marveen'",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
   }
  ]
 }

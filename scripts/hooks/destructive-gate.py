@@ -1033,7 +1033,7 @@ def _scannable_pair(cmd):
 
 
 def segments(text):
-    """Logikai szegmensek (&&, ||, ;, |, ujsor, $(, backtick) -- IDEZOJEL-TUDATOSAN.
+    """Logikai szegmensek (&&, ||, ;, |, &, ujsor, $(, backtick) -- IDEZOJEL-TUDATOSAN.
 
     A regi valtozat vakon vagott, ezert egy idezett grep-minta belsejeben levo '|'
     uj szegmenst nyitott, es a minta kovetkezo szava parancsnevnek latszott.
@@ -1050,6 +1050,12 @@ def _segment_spans(text):
             i += 1
             continue
         hit = next((d for d in DELIMS if text.startswith(d, i)), None)
+        if hit is None and text[i] == '&' and text[i + 1:i + 2] != '>' and text[i - 1:i] not in ('<', '>'):
+            # Egy magaban allo `&` ugyanugy parancsot zar, mint a `;` (`sleep 1 & rm ..`):
+            # a masodik parancs a hatterbe tett elso UTAN fut. Nem `&&` (az a DELIMS-ben
+            # elobb talal), nem `&>`, `>&`, `<&` atiranyitas. Regi hezag, nem #777;
+            # a JS iker _SIMPLE_SPLIT-je es a child-claude kapu eddig is vagott rajta.
+            hit = '&'
         if hit:
             spans.append((start, i))
             i += len(hit)

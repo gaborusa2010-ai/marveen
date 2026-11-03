@@ -861,6 +861,27 @@ check("eval <<< 'RM': az eval nem olvas stdin-t (merve)", not blocks("eval <<< '
 check("bash -c'RM': ervenytelen kapcsolo, nem fut (merve)", not blocks("bash -c'" + RMH + "'"))
 check("bash x.sh <<< 'RM': a szkript a fajl", not blocks("bash x.sh <<< '" + RMH + "'"))
 
+# --- 13. Egy magaban allo `&` parancsot zar (regi hezag, nem #777) ----------------------
+# `sleep 1 & RM` a bazison (f2fba696) ATMENT: a `&` nem volt szegmenshatar, a `rm` a
+# `sleep` argumentumanak latszott. bash lefuttatja (a hatterbe tett elso utan a masodik fut).
+print()
+print("magaban allo `&` mint szegmenshatar, MUST-BLOCK:")
+check("sleep 1 & RM", blocks("sleep 1 & " + RMH))
+check("sleep 1 &RM (szokoz nelkul)", blocks("sleep 1 &" + RMH))
+check("x & y & RM", blocks("x & y & " + RMH))
+check("true & bash -c 'RM'", blocks("true & bash -c '" + RMH + "'"))
+check("python3 x.py 2>&1 & RM", blocks("python3 x.py 2>&1 & " + RMH))
+print("negativ kontroll (atiranyitas es idezett `&`, nem hatar):")
+check("echo a 2>&1 | cat", not blocks("echo a 2>&1 | cat"))
+check("echo a &> /dev/null", not blocks("echo a &> /dev/null"))
+check("echo a &>> log", not blocks("echo a &>> log"))
+check("echo a >&2", not blocks("echo a >&2"))
+check("cat <&3", not blocks("cat <&3"))
+check("echo 'a & b'", not blocks("echo 'a & " + RM + "'"))
+check('echo "a & b"', not blocks('echo "a & ' + RM + '"'))
+check("sed 's/&/and/' f", not blocks("sed 's/&/and/' f"))
+check("setsid nohup x >> log 2>&1 < /dev/null & disown", not blocks("setsid nohup x >> log 2>&1 < /dev/null & disown"))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
