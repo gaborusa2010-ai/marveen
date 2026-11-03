@@ -153,8 +153,10 @@ describe('which call site asks which predicate (source pin, all 17 sites)', () =
   const src = (f: string) => readFileSync(join(ROOT, 'src', 'web', 'routes', f), 'utf-8')
   const count = (f: string, fn: string) => (src(f).match(new RegExp(`${fn}\\((?:ctx\\.auth|auth), `, 'g')) ?? []).length
   it('the non-issuing owner actions take the Bridge key beside the cookie', () => {
-    for (const [f, n] of [['approvals.ts', 2], ['skills.ts', 1], ['federation.ts', 1], ['autonomy.ts', 1], ['fleet-freeze.ts', 1], ['fleet.ts', 2], ['settings.ts', 1]] as const) {
-      expect([f, count(f, 'mayActAsOwner'), count(f, 'mayIssueCredentials')]).toEqual([f, n, 0])
+    // LOCAL (#728 review finding 3): fleet-freeze.ts mayPullBrake keeps one mayIssueCredentials call (token
+    // before the first login); the unfreeze itself is the owner action pinned here.
+    for (const [f, n, issuing] of [['approvals.ts', 2, 0], ['skills.ts', 1, 0], ['federation.ts', 1, 0], ['autonomy.ts', 1, 0], ['fleet-freeze.ts', 1, 1], ['fleet.ts', 2, 0], ['settings.ts', 1, 0]] as const) {
+      expect([f, count(f, 'mayActAsOwner'), count(f, 'mayIssueCredentials')]).toEqual([f, n, issuing])
     }
   })
   it('credential issuance takes it too (PR-2); mayIssueCredentials is left only inside mayActAsOwner', () => {

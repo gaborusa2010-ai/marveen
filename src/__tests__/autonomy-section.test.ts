@@ -62,7 +62,11 @@ describe('ensureAutonomySection -- main agent (PROJECT_ROOT/CLAUDE.md)', () => {
   it('writes the autonomy block to PROJECT_ROOT/CLAUDE.md for MAIN_AGENT_ID', () => {
     writeFileSync(MAIN_CLAUDE_MD, '# Main Agent\n\nPersona content.\n', 'utf-8')
     ensureAutonomySection('agent-a') // agent-a is the mocked MAIN_AGENT_ID
-    const result = readFileSync(MAIN_CLAUDE_MD, 'utf-8')
+    // LOCAL (owner tg 8944, main-compact-blocks.ts): the main agent's block is the compact form plus a
+    // pointer; the full body, recipes included, is in docs/tudas/generalt/autonomy-wiring.md.
+    const claudeMd = readFileSync(MAIN_CLAUDE_MD, 'utf-8')
+    expect(claudeMd).toContain('Teljes szöveg: `docs/tudas/generalt/autonomy-wiring.md`')
+    const result = claudeMd + readFileSync(join(tmpRoot, 'docs', 'tudas', 'generalt', 'autonomy-wiring.md'), 'utf-8')
     expect(result).toContain(MARKER_BEGIN)
     expect(result).toContain(MARKER_END)
     expect(result).toContain('## Autonómia és jóváhagyás')

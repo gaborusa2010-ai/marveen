@@ -302,7 +302,9 @@ export function kanbanMoveInstructions(id: string, target: string): string {
     // #663: a sub-agent's in_progress is refused until it has read the card (read_card_first);
     // the X-Agent-Id header on this GET is what records the read (marveen-api.sh kanban-read).
     ...(isMainAgent ? [] : [
-      `  (előtte olvasd el a kártyát teljesen, a leírást és a megjegyzéseket is, különben a tábla elutasítja: ${api} kanban-read ${card} ${target} és ${api} kanban-comments ${card} ${target})`,
+      `  Előtte olvasd el a kártyát teljesen, a leírást és a megjegyzéseket is, különben a tábla elutasítja:`,
+      `  ${api} kanban-read ${card} ${target}`,
+      `  ${api} kanban-comments ${card} ${target}`,
     ]),
     `  ${api} kanban-move ${card} in_progress --actor ${target}`,
     '',

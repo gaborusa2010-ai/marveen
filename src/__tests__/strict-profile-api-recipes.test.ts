@@ -276,7 +276,9 @@ describe('a non-strict agent gets the helper recipes in the generated blocks', (
     writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# main\n', 'utf-8')
     S.ensureAutonomySection('agent-a')
     S.ensureMessageCloseSection('agent-a')
-    const file = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8')
+    // LOCAL (owner tg 8944, main-compact-blocks.ts): the main agent's full bodies are in docs/tudas/generalt/.
+    const ref = (key: string) => readFileSync(join(tmpRoot, 'docs', 'tudas', 'generalt', `${key}.md`), 'utf-8')
+    const file = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf-8') + ref('autonomy-wiring') + ref('message-close')
     expect(file).toContain(`${HELPER_CMD} message agent-a agent-a ${join(tmpRoot, 'api-uzenet.txt')}`)
     expect(file).toContain(`--result-file ${join(tmpRoot, 'api-eredmeny.txt')}`)
     expect(file).not.toContain('$(cat')

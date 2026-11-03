@@ -84,7 +84,8 @@ describe('auth and same-origin', () => {
   it('web.ts runs the Origin gate (403) before it dispatches to the Gromzo routes', () => {
     // The test server above re-runs the gate itself; this pins the real wiring.
     const src = readFileSync(join(__dirname, '..', 'web.ts'), 'utf-8').replace(/^\s*\/\/.*$/gm, '')
-    const gate = src.search(/if \(isBlockedCrossOriginWrite\([^)]*\)\) \{\s*logger\.warn\([^\n]*\n\s*res\.writeHead\(403/)
+    // LOCAL: our gate's `if` also carries the gallery-extension exemption (#616) before this call.
+    const gate = src.search(/isBlockedCrossOriginWrite\([^)]*\)\) \{\s*logger\.warn\([^\n]*\n\s*res\.writeHead\(403/)
     const route = src.indexOf('await tryHandleGromzo(routeCtx)')
     expect(gate).toBeGreaterThan(-1)
     expect(route).toBeGreaterThan(gate)

@@ -335,7 +335,8 @@ describe('the generated CLAUDE.md text', () => {
       const section = scaffold.buildSkillSection()
       writeFileSync(join(tmpRoot, 'CLAUDE.md'), '# main\n')
       scaffold.ensureSkillsPathTrapSection('host-main')
-      const trap = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf8')
+      // LOCAL (owner tg 8944, main-compact-blocks.ts): the main agent's full path-trap body is in docs/tudas/generalt/.
+      const trap = readFileSync(join(tmpRoot, 'CLAUDE.md'), 'utf8') + readFileSync(join(tmpRoot, 'docs', 'tudas', 'generalt', 'skills-path-trap.md'), 'utf8')
       for (const text of [section, trap]) {
         expect(text).toContain('SKILL_QUARANTINE')
         expect(text).toMatch(/azonnal\s+élesedik/)

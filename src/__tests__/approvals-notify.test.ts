@@ -64,7 +64,12 @@ describe('approvals notification target', () => {
     expect(handled).toBe(true)
     expect(out.status).toBe(201)
 
-    // The notification must go to the mocked MAIN_AGENT_ID value.
+    // The notification must go to the mocked MAIN_AGENT_ID value. The owner
+    // notification (and its in-band fallback below) runs async, behind the
+    // upstream Slack-DM attempt, so wait for it to settle first.
+    await vi.waitFor(() => {
+      expect(getPendingMessages('agent-a').some((m) => m.content.includes('[APPROVAL_OWNER_UNREACHED'))).toBe(true)
+    })
     const pending = getPendingMessages('agent-a')
     for (const m of pending) {
       expect(m.to_agent).toBe('agent-a')
