@@ -4015,6 +4015,178 @@
     false
    ],
    "bash_runs": null
+  },
+  {
+   "name": "777r9_glob_stdin",
+   "cmd": "f(){ bash </dev/std[i]n; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_glob_proc_fd",
+   "cmd": "f(){ bash </proc/self/f[d]/0; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_glob_while",
+   "cmd": "while :; do bash </dev/std?n; break; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_comment_redirect",
+   "cmd": "f(){ bash # <x\n}; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_env",
+   "cmd": "xargs env <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_nohup",
+   "cmd": "xargs -n9 nohup <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_fakeroot_bare",
+   "cmd": "fakeroot <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_prlimit",
+   "cmd": "prlimit --nofile=10 bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_setarch_bare",
+   "cmd": "setarch x86_64 <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r9_xargs_ssh_echo",
+   "cmd": "xargs ssh host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_su_session_command",
+   "cmd": "xargs -0 su root --session-command <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_pkexec_bare",
+   "cmd": "pkexec <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_busybox_ash",
+   "cmd": "busybox ash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_gdb_args",
+   "cmd": "gdb -batch -ex r --args bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_toolbox_run",
+   "cmd": "toolbox run -c box bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_newgrp",
+   "cmd": "newgrp grp <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_backslash_delim",
+   "cmd": "f(){ bash <<\\B\nexit\nB\n}; f <<'A'\nX\nA",
+   "expect": [
+    true,
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the first record is the inner quoted heredoc (`exit`), which the inner bash runs; the marker sits in the outer body, which nothing reads (bash agrees with the outer record)"
+  },
+  {
+   "name": "777r9_midquote_delim",
+   "cmd": "f(){ bash <<B\"C\"\nexit\nBC\n}; f <<'A'\nX\nA",
+   "expect": [
+    true,
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "oracle artefact: the first record is the inner quoted heredoc (`exit`), which the inner bash runs; the marker sits in the outer body, which nothing reads (bash agrees with the outer record)"
+  },
+  {
+   "name": "777r9_quoted_star_target",
+   "cmd": "f(){ bash <\"a*b\"; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r9_gdb_no_args",
+   "cmd": "gdb -batch prog <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r9_toolbox_cat",
+   "cmd": "toolbox run cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
   }
  ]
 }

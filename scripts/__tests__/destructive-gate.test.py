@@ -1128,6 +1128,66 @@ check("ssh host \"bash -s\" <<'A' -> bash", _consumer("ssh host \"bash -s\" <<'A
 check("f(){ bash </dev/null; }; f <<'A' -> '' (adat)", _consumer("f(){ bash </dev/null; }; f <<'A'\nx\nA") == [""])
 check("chrt 1 cat <<'A' -> '' (adat)", _consumer("chrt 1 cat <<'A'\nx\nA") == [""])
 
+# --- 20. #777 review 9: dinamikus atiranyitas-cel, komment a stdin-szabalyban, futtato-tabla ----------
+# (1) Glob/kapcsos cel nem literal (`</dev/std[i]n` a stdin). (2) A `#` utani szo a stdin-szabalyban
+# sem atiranyitas. (3) xargs mogott a puszta atlatszo elotag (env, nohup, time) a program.
+# (4) xargs mogott az ssh-csalad minden szava a tavoli shell-sorba megy. (5) su --session-command.
+# (6) Parancs nelkul shellt indito futtatok. (7) busybox ash/hush. (8) Barhol idezett heredoc-hatarolo.
+# (9) Tovabbi futtatok a tablaban.
+print()
+print("#777 review 9, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ bash </dev/std[i]n; }; f <<'A'", "f(){ bash </dev/std[i]n; }; f <<'A'"),
+    ("f(){ bash </proc/self/f[d]/0; }; f <<'A'", "f(){ bash </proc/self/f[d]/0; }; f <<'A'"),
+    ("while :; do bash </dev/std?n; break; done <<'A'", "while :; do bash </dev/std?n; break; done <<'A'"),
+    ("f(){ bash # <x / }; f <<'A'", "f(){ bash # <x\n}; f <<'A'"),
+    ("xargs env <<'A'", "xargs env <<'A'"),
+    ("xargs -n9 nohup <<'A'", "xargs -n9 nohup <<'A'"),
+    ("xargs env -i <<'A'", "xargs env -i <<'A'"),
+    ("xargs ssh host echo <<'A'", "xargs ssh host echo <<'A'"),
+    ("xargs sshpass -p pw ssh host echo <<'A'", "xargs sshpass -p pw ssh host echo <<'A'"),
+    ("xargs -0 su root --session-command <<'A'", "xargs -0 su root --session-command <<'A'"),
+    ("su --session-command=bash <<'A'", "su --session-command=bash <<'A'"),
+    ("pkexec <<'A'", "pkexec <<'A'"),
+    ("firejail <<'A'", "firejail <<'A'"),
+    ("newgrp grp <<'A'", "newgrp grp <<'A'"),
+    ("busybox ash <<'A'", "busybox ash <<'A'"),
+    ("xargs -0 busybox hush -c <<'A'", "xargs -0 busybox hush -c <<'A'"),
+    ("fakeroot <<'A'", "fakeroot <<'A'"),
+    ("proot -r / bash <<'A'", "proot -r / bash <<'A'"),
+    ("gdb -batch -ex r --args bash <<'A'", "gdb -batch -ex r --args bash <<'A'"),
+    ("distrobox enter box -- bash <<'A'", "distrobox enter box -- bash <<'A'"),
+    ("toolbox run -c box bash <<'A'", "toolbox run -c box bash <<'A'"),
+    ("machinectl shell host <<'A'", "machinectl shell host <<'A'"),
+    ("prlimit --nofile=10 bash <<'A'", "prlimit --nofile=10 bash <<'A'"),
+    ("numactl -C 0 bash <<'A'", "numactl -C 0 bash <<'A'"),
+    ("cgexec -g cpu:x bash <<'A'", "cgexec -g cpu:x bash <<'A'"),
+    ("sg grp -c bash <<'A'", "sg grp -c bash <<'A'"),
+    ("setarch x86_64 <<'A'", "setarch x86_64 <<'A'"),
+    ("chpst -u x bash <<'A'", "chpst -u x bash <<'A'"),
+    ("faketime now bash <<'A'", "faketime now bash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (review 9):")
+for label, cmd in [
+    ("f(){ bash <<\\B / exit / B / }; f <<'A' (visszaperjeles hatarolo: sajat stdin)", "f(){ bash <<\\B\nexit\nB\n}; f <<'A'"),
+    ("f(){ bash <<B\"C\" / BC / }; f <<'A' (idezojel a hatarolo kozepen)", "f(){ bash <<B\"C\"\nexit\nBC\n}; f <<'A'"),
+    ("f(){ bash </dev/null; }; f <<'A' (literal cel)", "f(){ bash </dev/null; }; f <<'A'"),
+    ("f(){ bash <\"a*b\"; }; f <<'A' (idezett csillag: literal)", "f(){ bash <\"a*b\"; }; f <<'A'"),
+    ("xargs <<'A' (parancs nelkul: echo)", "xargs <<'A'"),
+    ("grep bash <<'A'", "grep bash <<'A'"),
+    ("gdb -batch prog <<'A' (--args nelkul nem fut a program)", "gdb -batch prog <<'A'"),
+    ("numactl -C 0 cat <<'A'", "numactl -C 0 cat <<'A'"),
+    ("toolbox run cat <<'A'", "toolbox run cat <<'A'"),
+    ("su -c 'cat' root <<'A'", "su -c 'cat' root <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 9):")
+check("xargs env <<'A' -> env", _consumer("xargs env <<'A'\nx\nA") == ["env"])
+check("busybox ash <<'A' -> ash", _consumer("busybox ash <<'A'\nx\nA") == ["ash"])
+check("gdb -batch -ex r --args bash <<'A' -> bash", _consumer("gdb -batch -ex r --args bash <<'A'\nx\nA") == ["bash"])
+check("xargs <<'A' -> '' (adat)", _consumer("xargs <<'A'\nx\nA") == [""])
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

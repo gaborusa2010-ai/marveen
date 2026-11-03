@@ -160,7 +160,7 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
-INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'node', 'perl', 'ruby', 'php'}
+INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'node', 'perl', 'ruby', 'php'}
 SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
 # -p is node's print-eval and -E is perl's feature-enabled -e. They are in the
 # set only so the argument after them counts as CODE rather than prose. A flag
@@ -422,10 +422,38 @@ _STDIN_WRAPPERS = {
                   '-p', '--xauth-protocol', '-w', '--wait'), 0),
     'busybox': ((), 0),
     'pkexec': (('--user',), 0),
+    # #777 review 9
+    'fakeroot': (('-l', '--lib', '--faked', '-s', '-i', '-b'), 0),
+    'proot': (('-r', '--rootfs', '-b', '--bind', '-m', '--mount', '-w', '--pwd', '--cwd', '-q', '--qemu',
+               '-k', '--kernel-release'), 0),
+    'valgrind': ((), 0),
+    'torsocks': (('-u', '--user', '-p', '--pass', '-a', '--address', '-P', '--port'), 0),
+    'catchsegv': ((), 0),
+    'flatpak-spawn': ((), 0),
+    'machinectl': (('-E', '--setenv', '--uid', '-M', '--machine', '-H', '--host'), 2),
+    'prlimit': (('-p', '--pid', '-o', '--output'), 0),
+    'numactl': (('-C', '--physcpubind', '-N', '--cpunodebind', '-m', '--membind', '-p', '--preferred',
+                 '-i', '--interleave', '-w', '--weighted-interleave'), 0),
+    'cgexec': (('-g',), 0),
+    'setarch': ((), 1),
+    'linux32': ((), 0),
+    'linux64': ((), 0),
+    'chpst': (('-u', '-U', '-b', '-e', '-/', '-C', '-n', '-l', '-L', '-m', '-d', '-o', '-p', '-f', '-c'), 0),
+    'faketime': (('-p',), 1),
+    'newgrp': ((), 1),
 }
+# Launchers that start a shell reading the stdin when no command follows (#777 review 9):
+# `pkexec <<A`, `firejail <<A`, `fakeroot <<A`, `proot <<A`, `machinectl shell host <<A`, `setarch x86_64 <<A`, `newgrp grp <<A`.
+_SHELL_WITHOUT_COMMAND = ('pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp')
+# The program follows a marker word (#777 review 9): `gdb -batch -ex r --args prog`,
+# `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: gdb runs nothing,
+# distrobox enter / toolbox enter start a shell.
+_MARKER_LAUNCHERS = {'gdb': ('--args', False), 'distrobox': ('--', True), 'distrobox-enter': ('--', True),
+                     'toolbox': ('run', True)}
+_TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
 # su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 # the options) they start a shell that reads the stdin (#777 review 8).
-_SU_LIKE = ('su', 'runuser', 'script')
+_SU_LIKE = ('su', 'runuser', 'script', 'sg')
 _SU_VALUE_FLAGS = ('-u', '--user', '-g', '--group', '-G', '--supp-group', '-s', '--shell', '-w',
                    '--whitelist-environment', '-T', '-O', '-I', '-B', '--log-timing', '--log-out', '--log-in',
                    '--log-io', '-E', '--echo', '-m', '--logging-format')
@@ -515,7 +543,7 @@ def _first_interpreter(words, j):
     return next((i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS), None)
 
 
-_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE)
+_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE) | set(_MARKER_LAUNCHERS)
 
 
 def _shell_word_after(words, j):
@@ -528,9 +556,10 @@ def _via_launcher(words, j, depth, loose, argv):
     """Who consumes the body when a launcher runs the command at index j. `argv`: the body
     becomes that command's ARGUMENTS (behind xargs/parallel), not its stdin. A program we do not
     model answers with any shell word behind it (#777 review 8)."""
-    j = _skip_prefix(words, j)
+    j0, j = j, _skip_prefix(words, j)
     if j >= len(words):
-        return ''
+        # behind xargs a bare `env`/`nohup`/`time` execs the body's words (#777 review 9)
+        return next((os.path.basename(x) for x, _d in words[j0:] if os.path.basename(x) in _TRANSPARENT), '') if argv else ''
     x, dyn = words[j]
     if dyn:
         return x
@@ -556,12 +585,12 @@ def _su_consumer(words, k, base, depth, loose, argv):
         if x == '--':
             j += 1
             break
-        if x in ('-c', '--command') or (re.match(r'^-[A-Za-z]*c$', x) and not x.startswith('--')):
+        if x in ('-c', '--command', '--session-command') or (re.match(r'^-[A-Za-z]*c$', x) and not x.startswith('--')):
             if argv or j + 1 >= len(words):
                 return base
             v, vdyn = words[j + 1]
             return base if vdyn or _any_runs_stdin(v, depth + 1) else ''
-        if x.startswith('--command='):
+        if x.startswith(('--command=', '--session-command=')):
             return base if argv or _any_runs_stdin(x.split('=', 1)[1], depth + 1) else ''
         if not x.startswith('-') or x == '-':
             if x == '-':
@@ -589,15 +618,19 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
         if j is None:
             # `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
-            return base if argv or any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
+            return base if argv or base in _SHELL_WITHOUT_COMMAND or any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
         return _via_launcher(words, j, depth, loose, argv)
     if base in _ARGV_FEEDERS:
         j = _after_feeder_options(words, k)
-        if _skip_prefix(words, j) >= len(words):
-            # parallel without a command runs its input lines (stdin or arguments) as commands
+        if j >= len(words):
+            # parallel without a command runs its input lines (stdin or arguments) as commands;
+            # xargs without one runs echo
             return base if base == 'parallel' else ''
         return _via_launcher(words, j, depth, loose, True)
     if base in _REMOTE_RUNNERS:
+        if argv and base in ('ssh', 'mosh', 'plink'):
+            # the body's words join the remote command line, whatever program it names (#777 review 9)
+            return base
         j = _runner_program(words, k)
         if j is None:
             # `ssh host <<A`: the remote login shell reads the body; behind xargs the body is
@@ -610,6 +643,17 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         return c
     if base in _SU_LIKE:
         return _su_consumer(words, k, base, depth, loose, argv)
+    if base in _MARKER_LAUNCHERS:
+        marker, shell = _MARKER_LAUNCHERS[base]
+        j = next((i for i in range(k + 1, len(words)) if words[i][0] == marker), None)
+        if j is not None and base == 'toolbox':
+            j += 1
+            while j < len(words) and words[j][0].startswith('-'):
+                j += 2 if _takes_value(words[j][0], _TOOLBOX_VALUE_FLAGS) else 1
+            j -= 1
+        if j is None or j + 1 >= len(words):
+            return base if argv or shell else ''
+        return _via_launcher(words, j + 1, depth, loose, argv)
     return ''
 
 
@@ -851,7 +895,7 @@ def _runs_words(words, k, depth, loose=False):
 # torzse program), a python3 -m modult futtat (a torzs annak a bemenete).
 _STDIN_SCRIPT_FLAGS = {
     'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'), 'dash': ('-c',), 'ksh': ('-c',),
-    'rbash': ('-c', '--command'),
+    'rbash': ('-c', '--command'), 'ash': ('-c',), 'hush': ('-c',),
     'python': ('-c', '-m'), 'python3': ('-c', '-m'),
     'node': ('-e', '-p', '--eval', '--print'), 'perl': ('-e', '-E'), 'ruby': ('-e',), 'php': ('-r',),
 }
@@ -964,7 +1008,9 @@ def _literal_target(raw):
     not the inherited stdin under another name."""
     if not raw or raw[0] in '<>' or '$' in raw or '`' in raw:
         return False
-    return not _INHERITED_TARGET_RE.search(_word(raw)[0])
+    target, dyn = _word(raw)
+    # a glob or brace target may expand to /dev/stdin (`</dev/std[i]n`, #777 review 9)
+    return not dyn and not _INHERITED_TARGET_RE.search(target)
 
 
 def _own_stdin(piece, next_sep, loose=False, job_control=False):
@@ -979,6 +1025,8 @@ def _own_stdin(piece, next_sep, loose=False, job_control=False):
     if loose:
         return False
     toks = _SHELL_WORD_RE.findall(piece)
+    # the same comment cut as _cmd_word: `bash # <x` has no redirection (#777 review 9)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
     own = None
     i = 0
     while i < len(toks):
@@ -994,7 +1042,8 @@ def _own_stdin(piece, next_sep, loose=False, job_control=False):
         if op == '<&':
             own = raw == '-'
         elif op in ('<<', '<<-'):
-            own = bool(raw) and raw[0] in '\'"' and '$' not in raw and '`' not in raw
+            # any quote or backslash in the delimiter quotes it: `<<\B`, `<<'B'`, `<<B"C"` (#777 review 9)
+            own = any(q in raw for q in '\'"\\') and '$' not in raw and '`' not in raw
         else:
             own = _literal_target(raw)
         i += 1
@@ -1554,7 +1603,7 @@ _TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')
-_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash')
+_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush')
 # A kapcsolok, amelyek KULON szoban hozzak az ertekuket (xargs -I {} / -n 1 / -P 4).
 _VALUE_FLAGS = ('-I', '-i', '-n', '-P', '-L', '-s', '-d', '-E', '-a',
                 '--max-args', '--max-procs', '--delimiter', '--replace', '--arg-file')
