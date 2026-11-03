@@ -61,7 +61,7 @@ vi.mock('../web/context-guard-store.js', async () => {
   return { readContextGuardConfig: () => ({ ...DEFAULT_CONTEXT_GUARD, enabled: true }) }
 })
 
-const { getContextGuardStatus, measurePct } = await import('../web/context-guard-runner.js')
+const { getContextGuardStatus, measurePct, measurePcts } = await import('../web/context-guard-runner.js')
 const { calibrateLimit, contextLimitForModel } = await import('../context-guard.js')
 
 const BASE = contextLimitForModel('test-model')
@@ -119,5 +119,47 @@ describe('context-guard status route reads the high-water mark without learning 
     expect(measurePct('agent-x', null)).toBe(LOW / calibrateLimit(HIGH, BASE))
     // A lower reading never lowers the stored mark.
     expect(storedMark('agent-x')).toBe(HIGH)
+  })
+})
+
+// #641: under a limitTokens pin the tiers compare against the pin, and the
+// same read also reports the real window, so await-handoff can tell a spent
+// budget from a full window. The pinned path never learned a mark; it still must not.
+describe('measurePcts: the pinned fraction and the real window from one read (#641)', () => {
+  const PIN = 150_000
+
+  it('without a pin both fractions are the same number', () => {
+    tokensNow = LOW
+    expect(measurePcts('nopin', null)).toEqual({ pct: LOW / BASE, windowPct: LOW / BASE })
+  })
+
+  it('under a pin pct is over the pin and windowPct over the calibrated model window', () => {
+    tokensNow = LOW
+    const m = measurePcts('pinned', PIN)
+    expect(m.pct).toBe(LOW / PIN)
+    expect(m.windowPct).toBe(LOW / calibrateLimit(LOW, BASE))
+    expect(measurePct('pinned', PIN)).toBe(m.pct)
+  })
+
+  it('the pinned path does not persist a high-water mark, and reads one the sweep stored', () => {
+    tokensNow = HIGH
+    measurePcts('pin-hw', PIN)
+    expect(storedMark('pin-hw')).toBeUndefined()
+    measurePct('pin-hw', null) // an unpinned sweep learns the wider window
+    tokensNow = LOW
+    expect(measurePcts('pin-hw', PIN).windowPct).toBe(LOW / calibrateLimit(HIGH, BASE))
+  })
+
+  it('the status row carries both', () => {
+    tokensNow = LOW
+    agents = ['rowpin']
+    const row = getContextGuardStatus().find(r => r.agent === 'rowpin')
+    expect(row?.pct).toBe(LOW / BASE)
+    expect(row?.windowPct).toBe(LOW / BASE)
+  })
+
+  it('unmeasurable is null for both', () => {
+    tokensNow = 0
+    expect(measurePcts('empty', PIN)).toEqual({ pct: null, windowPct: null })
   })
 })

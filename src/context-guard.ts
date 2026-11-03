@@ -420,6 +420,12 @@ export interface GuardInputs {
   nowMs: number
   /** Live context fraction (0..1+), or null when unmeasurable (no transcript / not running). */
   pct: number | null
+  /** The same tokens over the model's REAL window (calibrated, as an unpinned
+   *  agent's pct is), measured beside a `limitTokens` pin. Under a pin `pct`
+   *  can be at hardPct while the real window is far from wedging (#641:
+   *  marveen 150k pin on a 1M window). Absent or null = unknown, and unknown
+   *  grants nothing: every tier then reads `pct` alone, as before. */
+  windowPct?: number | null
   /** Agent session is up (tmux session exists / run state 'running'). */
   running: boolean
   /** Pane looks idle (safe to restart without cutting a turn). */
@@ -1189,7 +1195,7 @@ export function decideGuard(
         // First sweep after a limit episode. The flag is consumed here either
         // way, so the re-send happens at most once per episode.
         const unparked: GuardState = { ...state, handoffParkedByLimit: false }
-        const atHard = inputs.pct !== null && inputs.pct >= cfg.hardPct
+        const atHard = atHardDuringAwait(inputs, cfg, state)
         if (!handoffWritten && !atHard) {
           // The request went into a limited session and was never read: ask
           // again, and give the agent a full timeout window from now. At the
@@ -1214,7 +1220,7 @@ export function decideGuard(
           typeof staleMin === 'number' &&
           refreshBudgetLeft &&
           nowMs < state.deadlineMs &&
-          !(inputs.pct !== null && inputs.pct >= cfg.hardPct)
+          !atHardDuringAwait(inputs, cfg, state)
         ) {
           // There is still budget before the deadline and the context is not
           // yet at the hard threshold: ask for a refresh instead of shipping
@@ -1252,9 +1258,15 @@ export function decideGuard(
       // stays in the past while we defer, so the restart fires on the first
       // sweep that finds the pane no longer busy; a turn that saturates
       // mid-flight is caught by the paneSaturated branch above.
-      if (inputs.pct !== null && inputs.pct >= cfg.hardPct) {
+      if (atHardDuringAwait(inputs, cfg, state)) {
         if (inputs.paneBusy) return deferBusy('hard threshold during await-handoff but agent mid-turn -- deferring restart')
         return restartDecision(nowMs, 'hard threshold during await-handoff', handoffStaleMinutes(inputs))
+      }
+      if (inputs.pct !== null && inputs.pct >= cfg.hardPct && pinnedWindowHasRoom(inputs, cfg, state)) {
+        return none(
+          `pinned hard threshold during await-handoff (${Math.round(inputs.pct * 100)}% of the ${cfg.limitTokens} pin) -- ` +
+          `real window at ${Math.round((inputs.windowPct as number) * 100)}%, waiting for the handoff until the deadline`,
+        )
       }
       if (nowMs >= state.deadlineMs) {
         if (inputs.paneBusy) return deferBusy('handoff timeout but agent mid-turn -- deferring restart')
@@ -1335,6 +1347,23 @@ export function decideGuard(
 }
 
 type NoneFn = (reason: string, next?: GuardState) => GuardDecision
+
+/**
+ * #641: is await-handoff at the hard threshold? Under a `limitTokens` pin the
+ * pin's hardPct is a budget, not a wedge: when the real window is measurably
+ * below hardPct too, the restart waits for the handoff, at most until the
+ * handoff deadline (after it, the timeout branch restarts as before). Without
+ * a pin, or with the real window unknown or full, this is plain `pct >= hardPct`.
+ */
+function atHardDuringAwait(inputs: GuardInputs, cfg: ContextGuardConfig, state: GuardState): boolean {
+  if (inputs.pct === null || inputs.pct < cfg.hardPct) return false
+  return !pinnedWindowHasRoom(inputs, cfg, state)
+}
+
+function pinnedWindowHasRoom(inputs: GuardInputs, cfg: ContextGuardConfig, state: GuardState): boolean {
+  const w = inputs.windowPct
+  return cfg.limitTokens !== null && typeof w === 'number' && w < cfg.hardPct && inputs.nowMs < state.deadlineMs
+}
 
 /**
  * The two wedge tiers (hardPct restart, actPct handoff). Null = neither applies.

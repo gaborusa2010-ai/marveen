@@ -480,26 +480,36 @@ export function measureIdleMs(name: string, nowMs: number): number | null {
 }
 
 export function measurePct(name: string, cfgLimit: number | null, opts: { learn?: boolean } = {}): number | null {
+  return measurePcts(name, cfgLimit, opts).pct
+}
+
+/**
+ * One transcript read, two fractions: `pct` over the pin when there is one
+ * (what every tier compares), `windowPct` over the model's real window (#641).
+ * Without a pin the two are the same number. The pinned path never learned a
+ * high-water mark and still does not: its window reading uses learn:false.
+ */
+export function measurePcts(
+  name: string,
+  cfgLimit: number | null,
+  opts: { learn?: boolean } = {},
+): { pct: number | null; windowPct: number | null } {
   const workingDir = workingDirFor(name)
   const configDir = configDirFor(name)
   const tokens = readContextTokensFromProjectDir(workingDir, configDir)
-  if (tokens === null || tokens <= 0) return null
-  let limit: number
-  if (cfgLimit) {
-    limit = cfgLimit
-  } else {
-    const model = (name === MAIN_AGENT_ID
-      // Same root as the token read above: the model decides the context LIMIT,
-      // so a model read from a stale root produces a wrong pct from a right
-      // token count -- and pct is what the handoff threshold compares.
-      ? readActiveModelFromProjectDir(PROJECT_ROOT, undefined, configDirFor(name))
-      : readAgentModel(name)) ?? ''
-    // Calibrate against the persisted per-(agent, model) maximum, not just
-    // the live reading: a fresh post-restart session must not un-learn a
-    // window the previous session already proved (see HighwaterMap above).
-    limit = calibrateLimit(observedHighwater(name, model, tokens, opts.learn !== false), contextLimitForModel(model))
-  }
-  return tokens / limit
+  if (tokens === null || tokens <= 0) return { pct: null, windowPct: null }
+  const model = (name === MAIN_AGENT_ID
+    // Same root as the token read above: the model decides the context LIMIT,
+    // so a model read from a stale root produces a wrong pct from a right
+    // token count -- and pct is what the handoff threshold compares.
+    ? readActiveModelFromProjectDir(PROJECT_ROOT, undefined, configDirFor(name))
+    : readAgentModel(name)) ?? ''
+  // Calibrate against the persisted per-(agent, model) maximum, not just
+  // the live reading: a fresh post-restart session must not un-learn a
+  // window the previous session already proved (see HighwaterMap above).
+  const learn = !cfgLimit && opts.learn !== false
+  const windowPct = tokens / calibrateLimit(observedHighwater(name, model, tokens, learn), contextLimitForModel(model))
+  return { pct: cfgLimit ? tokens / cfgLimit : windowPct, windowPct }
 }
 
 // ---------------------------------------------------------------------------
@@ -808,9 +818,10 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
   // we write exactly as little as before this change.
   const bannerIsHardError = pane !== null && paneShowsContextSaturationHardError(pane)
   const needCredibilityProbe = paneSaturatedRaw && !bannerIsHardError
-  const measuredPct = running && needPct && (cfg.enabled || needCredibilityProbe)
-    ? measurePct(name, cfg.limitTokens)
-    : null
+  const measured = running && needPct && (cfg.enabled || needCredibilityProbe)
+    ? measurePcts(name, cfg.limitTokens)
+    : { pct: null, windowPct: null }
+  const measuredPct = measured.pct
   if (measuredPct !== null) {
     lastMeasuredPct.set(name, measuredPct)
     hotPctFor.set(name, hotThresholdPct(cfg.limitTokens, cfg.hardPct))
@@ -861,6 +872,8 @@ async function checkAgent(name: string, nowMs: number): Promise<void> {
     // an unconfigured agent would arm tiers that are quiet there today. The
     // credibility check above therefore reads measuredPct directly.
     pct: cfg.enabled ? measuredPct : null,
+    // #641: the real window beside a pin, under the same cfg.enabled gate.
+    windowPct: cfg.enabled ? measured.windowPct : null,
     paneIdle: paneState === 'idle',
     paneBusy: paneState === 'busy',
     // IDLEFLUSHVETO812: only a pane we actually captured can say "no background
@@ -1197,6 +1210,7 @@ export function getContextGuardStatus(): Array<{
   agent: string
   phase: string
   pct: number | null
+  windowPct: number | null
   enabled: boolean
   saturationRestart: boolean
   cooldownUntilMs?: number
@@ -1206,10 +1220,12 @@ export function getContextGuardStatus(): Array<{
     const state = guardStates.get(name)
     const cfg = readContextGuardConfig(name)
     const remote = name !== MAIN_AGENT_ID && !!readAgentRemoteHost(name)
+    const m = cfg.enabled && !remote ? measurePcts(name, cfg.limitTokens, { learn: false }) : { pct: null, windowPct: null }
     return {
       agent: name,
       phase: state?.phase ?? 'idle',
-      pct: cfg.enabled && !remote ? measurePct(name, cfg.limitTokens, { learn: false }) : null,
+      pct: m.pct,
+      windowPct: m.windowPct,
       enabled: cfg.enabled,
       saturationRestart: cfg.saturationRestart,
       ...cooldownStatusExtra(state),

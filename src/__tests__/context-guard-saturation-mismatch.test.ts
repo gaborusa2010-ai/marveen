@@ -116,7 +116,8 @@ describe('context-guard runner: the banner is reconciled with the measurement', 
     // The credibility check needs the same numbers the tiers need. Measuring
     // twice would double the per-sweep transcript read for every agent.
     const body = checkAgentBody()
-    expect(body.match(/measurePct\(/g) ?? []).toHaveLength(1)
+    // #641: measurePcts returns the pinned and the real-window fraction from that one read
+    expect(body.match(/measurePcts?\(/g) ?? []).toHaveLength(1)
     expect(body.match(/measureIdleMs\(/g) ?? []).toHaveLength(1)
   })
 })
