@@ -1363,6 +1363,80 @@ check("gdb -batch -nx <<'A' -> gdb", _consumer("gdb -batch -nx <<'A'\nx\nA") == 
 check("env X='a;b' bash <<'A' -> bash", _consumer("env X='a;b' bash <<'A'\nx\nA") == ["bash"])
 check("echo 'a;b' <<'A' -> '' (adat)", _consumer("echo 'a;b' <<'A'\nx\nA") == [""])
 
+# --- 24. #777 review 13: gdb a csoportban/-c programban, dinamikus parancsszo, ${...} a vagasban,
+# a shell nyer a rossz fogyaszto ellen, gdb -ex stdin nelkul -----------------------------------------
+# Marveen review 13 (komment 3759), f3bd3615-on mind ALLOW volt. A gdb-sorok torzse arthatatlan (`bt`):
+# a gdb-szabaly a torzstol fuggetlenul blokkol (review 12). A dinamikus parancsszo is egeszben tilos,
+# kiveve a csak literalis, nem-gdb ertekkel beallitott `$NAME`-et (Roxy `P=.../python; $P - <<EOF`
+# alakja, 30 valodi flotta-parancs a visszajatszasban).
+print()
+print("#777 review 13, MUST-BLOCK:")
+for label, cmd in [
+    ("{ gdb -q; } <<'A'", "{ gdb -q; } <<'A'\nbt\nA"),
+    ("{ gdb -batch -x /dev/stdin; } <<< 'bt'", "{ gdb -batch -x /dev/stdin; } <<< 'bt'"),
+    ("if true; then gdb -q; fi <<'A'", "if true; then gdb -q; fi <<'A'\nbt\nA"),
+    ("while gdb -q; do :; done <<'A'", "while gdb -q; do :; done <<'A'\nbt\nA"),
+    ("{ bash -c true; gdb -q; } <<'A' (a gdb nyer a shell ellen)", "{ bash -c true; gdb -q; } <<'A'\nbt\nA"),
+    ("cat <<'A' | (gdb -q)", "cat <<'A' | (gdb -q)\nbt\nA"),
+    ("G=gdb; $G -q <<'A'", "G=gdb; $G -q <<'A'\nbt\nA"),
+    ("$(echo gdb) -q <<'A'", "$(echo gdb) -q <<'A'\nbt\nA"),
+    ("`echo gdb` -q <<'A'", "`echo gdb` -q <<'A'\nbt\nA"),
+    ("f(){ \"$@\"; }; f gdb -q <<'A'", "f(){ \"$@\"; }; f gdb -q <<'A'\nbt\nA"),
+    ("f(){ $1 -q; }; f gdb <<'A'", "f(){ $1 -q; }; f gdb <<'A'\nbt\nA"),
+    ("$G -q <<< 'bt' (beallitas nelkul)", "$G -q <<< 'bt'"),
+    ("P=/x/python; P=gdb; $P -q <<'A' (egy gdb ertek eleg)", "P=/x/python; P=gdb; $P -q <<'A'\nbt\nA"),
+    ("P=$(which gdb); $P -q <<'A' (nem literalis ertek)", "P=$(which gdb); $P -q <<'A'\nbt\nA"),
+    ("/usr/bin/gd? -q <<'A' (glob)", "/usr/bin/gd? -q <<'A'\nbt\nA"),
+    ("g{d,x}b -q <<'A' (kapcsos)", "g{d,x}b -q <<'A'\nbt\nA"),
+    ("bash -c 'gdb -q' <<'A'", "bash -c 'gdb -q' <<'A'\nbt\nA"),
+    ("sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'", "sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'"),
+    ("X=${Y:-a;b} gdb -q <<'A'", "X=${Y:-a;b} gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'shell id' ./prog", "gdb -batch -ex 'shell id' ./prog"),
+    ("gdb -batch -ex '!id'", "gdb -batch -ex '!id'"),
+    ("gdb -batch -iex 'shell id'", "gdb -batch -iex 'shell id'"),
+    ("gdb -batch -ex 'pipe p 1 | sh'", "gdb -batch -ex 'pipe p 1 | sh'"),
+    ("gdb -batch -ex 'python import os'", "gdb -batch -ex 'python import os'"),
+    ("gdb -batch -ex 'pi'", "gdb -batch -ex 'pi'"),
+    ("gdb -batch -ex 'gu (system \"id\")'", "gdb -batch -ex 'gu (system \"id\")'"),
+    ("gdb -batch --eval-command='shell id'", "gdb -batch --eval-command='shell id'"),
+    ("gdb -batch --init-eval-command 'compile code 1'", "gdb -batch --init-eval-command 'compile code 1'"),
+    ("gdb -batch -ex \"$C\" (dinamikus ertek)", "gdb -batch -ex \"$C\""),
+    ("sudo gdb -batch -ex 'she id'", "sudo gdb -batch -ex 'she id'"),
+    ("bash -c \"gdb -batch -ex 'shell id'\"", "bash -c \"gdb -batch -ex 'shell id'\""),
+]:
+    check(label, blocks(cmd))
+for label, cmd in [
+    ("X=${Y:-a;b} bash <<'A'", "X=${Y:-a;b} bash <<'A'"),
+    ("env X=${Y:-a;b} bash <<'A'", "env X=${Y:-a;b} bash <<'A'"),
+    ("timeout 5 bash -s ${Y:-a;b} <<'A'", "timeout 5 bash -s ${Y:-a;b} <<'A'"),
+    ("X=${Y:-a|b} bash <<'A'", "X=${Y:-a|b} bash <<'A'"),
+    ("X=${Y:-a&b} bash <<'A'", "X=${Y:-a&b} bash <<'A'"),
+    ("X=${Y/;/x} bash <<'A'", "X=${Y/;/x} bash <<'A'"),
+    ("X=${Y//[;]/x} bash <<'A'", "X=${Y//[;]/x} bash <<'A'"),
+    ("timeout 5 bash -s 'a;python3' <<'A' (a bash olvassa, nem a python3)", "timeout 5 bash -s 'a;python3' <<'A'"),
+    ("env X='a; python3 -' bash <<'A'", "env X='a; python3 -' bash <<'A'"),
+]:
+    check(label + " / RM / A", blocks(cmd + "\n" + RMH + "\nA"))
+print("negativ kontroll (review 13):")
+for label, cmd in [
+    ("gdb --version", "gdb --version"),
+    ("gdb -batch -ex bt ./prog core", "gdb -batch -ex bt ./prog core"),
+    ("gdb -batch -ex 'info functions' ./p", "gdb -batch -ex 'info functions' ./p"),
+    ("gdb -batch -ex 'print 1' -ex 'pt x' ./p", "gdb -batch -ex 'print 1' -ex 'pt x' ./p"),
+    ("P=/x/venv/bin/python; $P - <<'EOF' (literalis, nem-gdb ertek)", "P=/x/venv/bin/python; $P - <<'EOF'\nprint(1)\nEOF"),
+    ("P='/x/venv/bin/python3'; $P <<'EOF'", "P='/x/venv/bin/python3'; $P <<'EOF'\nprint(1)\nEOF"),
+    ("while read l; do echo \"$l\"; done <<'A'", "while read l; do echo \"$l\"; done <<'A'\nbt\nA"),
+    ("X=${Y:-a;b} cat <<'A' / RM (adat)", "X=${Y:-a;b} cat <<'A'\n" + RMH + "\nA"),
+    ("git commit -m 'gdb -ex shell' (a gdb szo idezett ertek)", "git commit -m 'gdb -ex shell x'"),
+]:
+    check(label, not blocks(cmd))
+print("a fogyaszto szo (review 13):")
+check("{ gdb -q; } <<'A' -> gdb", _consumer("{ gdb -q; } <<'A'\nx\nA") == ["gdb"])
+check("bash -c 'gdb -q' <<'A' -> gdb", _consumer("bash -c 'gdb -q' <<'A'\nx\nA") == ["gdb"])
+check("bash -c 'bash' <<'A' -> bash (a regi alak)", _consumer("bash -c 'bash' <<'A'\nx\nA") == ["bash"])
+check("timeout 5 bash -s 'a;python3' <<'A' -> bash", _consumer("timeout 5 bash -s 'a;python3' <<'A'\nx\nA") == ["bash"])
+check("{ echo x; bash; } <<'A' -> } (a zaro marad)", _consumer("{ echo x; bash; } <<'A'\nx\nA") == ["}"])
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

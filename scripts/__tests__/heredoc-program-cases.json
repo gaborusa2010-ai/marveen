@@ -4776,6 +4776,139 @@
    ],
    "bash_runs": false,
    "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r13_param_semicolon",
+   "cmd": "V=${Y:-a;b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_env_param_semicolon",
+   "cmd": "env V=${Y:-a;b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_operand",
+   "cmd": "timeout 5 bash -s ${Y:-a;b} <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_pipe",
+   "cmd": "V=${Y:-a|b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_amp",
+   "cmd": "V=${Y:-a&b} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_subst",
+   "cmd": "V=${Y/;/x} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_subst_class",
+   "cmd": "V=${Y//[;]/x} bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_quoted_python3_word",
+   "cmd": "timeout 5 bash -s 'a;python3' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_env_quoted_python3",
+   "cmd": "env V='a; python3 -' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r13_param_cat_data",
+   "cmd": "V=${Y:-a;b} cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r13_c_cat_data",
+   "cmd": "bash -c 'cat' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r13_group_gdb",
+   "cmd": "{ gdb -q; } <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_if_gdb",
+   "cmd": "if true; then gdb -q; fi <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_pipe_subshell_gdb",
+   "cmd": "cat <<'A' | (gdb -q)\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_c_gdb",
+   "cmd": "bash -c 'gdb -q' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
+  },
+  {
+   "name": "777r13_dynamic_word",
+   "cmd": "G=gdb; $G -q <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb (or a word that may be gdb) reads the body; gdb not installed, consumer by rule (review 13)"
   }
  ]
 }

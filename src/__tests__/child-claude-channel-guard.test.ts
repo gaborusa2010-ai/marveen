@@ -519,3 +519,40 @@ describe('#777 review 12: gdb reading a heredoc/here-string is denied whole; quo
     expect(decide(command, CHANNEL_ENV).allow).toBe(true)
   })
 })
+
+describe('#777 review 13: gdb in a group or -c program, a dynamic command word, ${...} in the cut, gdb -ex without stdin', () => {
+  // The destructive gate's twin: scripts/__tests__/destructive-gate.test.py section 24. The `${...}` and
+  // quoted-python3 shapes: probe-sandbox bash runs each body.
+  it.each([
+    ["{ gdb -q; } <<'A'\nbt\nA"],
+    ["if true; then gdb -q; fi <<'A'\nbt\nA"],
+    ["while gdb -q; do :; done <<'A'\nbt\nA"],
+    ["cat <<'A' | (gdb -q)\nbt\nA"],
+    ["G=gdb; $G -q <<'A'\nbt\nA"],
+    ["$(echo gdb) -q <<'A'\nbt\nA"],
+    ["f(){ \"$@\"; }; f gdb -q <<'A'\nbt\nA"],
+    ["bash -c 'gdb -q' <<'A'\nbt\nA"],
+    ["sh -c 'gdb -batch -x /dev/stdin' <<< 'bt'"],
+    ["gdb -batch -ex 'shell id' ./prog"],
+    ["gdb -batch -ex '!id'"],
+    ["gdb -batch -iex 'shell id'"],
+    ["gdb -batch -ex 'pipe p 1 | sh'"],
+    ["gdb -batch -ex 'python import os'"],
+    ["gdb -batch --eval-command='shell id'"],
+    ["bash -c \"gdb -batch -ex 'shell id'\""],
+    ["X=${Y:-a;b} bash <<'A'\nclaude -p x\nA"],
+    ["env X=${Y:-a|b} bash <<'A'\nclaude -p x\nA"],
+    ["timeout 5 bash -s 'a;python3' <<'A'\nclaude -p x\nA"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['gdb -batch -ex bt ./prog core'],
+    ["gdb -batch -ex 'info functions' ./p"],
+    ["P=/x/venv/bin/python; $P - <<'EOF'\nprint(1)\nEOF"],
+    ["X=${Y:-a;b} cat <<'A'\nclaude -p x\nA"],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})

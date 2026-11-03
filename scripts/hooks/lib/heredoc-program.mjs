@@ -647,7 +647,9 @@ function runsWords(words, k, depth, loose) {
       // #777: the LITERAL -c program may itself read stdin: `bash -c 'bash' <<EOF`,
       // `sh -c 'cat | sh' <<< X`, `bash -c 'eval "$(cat)"' <<< X` run the body (measured
       // with bash), `bash -c 'echo hi' <<EOF` does not. The program text is a command line.
-      return shell && anyRunsStdin(words[m][0], depth + 1) ? base : ''
+      // A gdb the program feeds the stdin to is the consumer (#777 review 13: `bash -c 'gdb -q' <<A`).
+      const c = shell ? anyRunsStdin(words[m][0], depth + 1) : ''
+      return baseName(c) === 'gdb' ? c : (c ? base : '')
     }
     if (shell && optValues(x)) { j += optValues(x); continue }  // `-o pipefail`, `-xo pipefail`: value word(s) follow
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
@@ -794,6 +796,7 @@ function anyRunsStdin(text, depth = 0, funcs = {}) {
   const jobControl = JOB_CONTROL_RE.test(text)
   const blanked = subBlanked(text)
   let interp = ''
+  let shell = ''
   for (const t of blanked !== text ? [text, blanked] : [text]) {
     const parts = t.split(SIMPLE_SPLIT_KEEP)
     for (let i = 0; i < parts.length; i += 2) {
@@ -806,11 +809,12 @@ function anyRunsStdin(text, depth = 0, funcs = {}) {
       }
       c = c || runsWords(words, k, depth, loose)
       if (!c || ownStdin(p, parts[i + 1] ?? '', loose, jobControl)) continue
-      if (!codeConsumer(c)) return c
-      if (!interp) interp = c
+      if (baseName(c) === 'gdb') return c   // a gdb anywhere in the body wins (#777 review 13: `{ bash; gdb; }`)
+      if (!codeConsumer(c)) shell = shell || c
+      else if (!interp) interp = c
     }
   }
-  return interp
+  return shell || interp
 }
 
 /** {name: body text} for every `name() { ... }` / `name() ( ... )` / `function name { ... }`. */
@@ -999,7 +1003,11 @@ function simpleRuns(seg, funcs, cmd, end) {
   const direct = runsStdinAsProgram(seg)
   if (direct) return direct
   const last = lastOperand(words)
-  if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) return anyRunsStdin(compoundText(cmd, end, last), 0, funcs) ? last : ''
+  if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) {
+    // a gdb inside the compound is the consumer, not the closer (#777 review 13: `{ gdb -q; } <<A`)
+    const c = anyRunsStdin(compoundText(cmd, end, last), 0, funcs)
+    return baseName(c) === 'gdb' ? c : (c ? last : '')
+  }
   return ''
 }
 
@@ -1056,7 +1064,13 @@ function enclosingRuns(parts, funcs) {
  */
 export function heredocRunsBody(cmd, h, funcs) {
   if (funcs === undefined) funcs = functionBodies(cmd)
-  return heredocRunsSplit(cmd, h, funcs, plainSplit) || heredocRunsSplit(cmd, h, funcs, quotedSplit)
+  const plain = heredocRunsSplit(cmd, h, funcs, plainSplit)
+  if (plain && !codeConsumer(plain)) return plain
+  // a code consumer from the plain cut may be a word of a quoted value (#777 review 13:
+  // `timeout 5 bash -s 'a;python3' <<A` is read by bash): a shell from the quoted cut wins
+  const quoted = heredocRunsSplit(cmd, h, funcs, quotedSplit)
+  if (plain && !SHELLS.has(baseName(quoted)) && !GDB_NAMES.has(baseName(quoted))) return plain   // the quoted cut misreads a line that starts inside an earlier quote
+  return quoted || plain
 }
 
 const plainSplit = (rx, text) => text.split(rx)
@@ -1124,8 +1138,9 @@ function quoteMap(text) {
   return state
 }
 
-/** text.split(rx) at the matches outside quotes and backslash escapes only (#777 review 12).
- *  The Python twin's _quoted_split; rx keeps its separators when it has a capture group. */
+/** text.split(rx) at the matches outside quotes, backslash escapes and balanced `${...}` only
+ *  (#777 review 12, 13: `X=${Y:-a;b} bash <<A`). The Python twin's _quoted_split; rx keeps its
+ *  separators when it has a capture group. */
 function quotedSplit(rx, text) {
   const state = quoteMap(text)
   const mask = text.split('')
@@ -1134,6 +1149,12 @@ function quotedSplit(rx, text) {
     else if (text[i] === '\\' && i + 1 < text.length) {
       mask[i] = mask[i + 1] = '_'
       i++
+    } else if (text.startsWith('${', i)) {
+      const end = paramEnd(text, state, i)
+      if (end) {
+        for (let k = i; k < end; k++) mask[k] = '_'
+        i = end - 1
+      }
     }
   }
   const keep = new RegExp(rx.source + '|').exec('').length > 1
@@ -1146,6 +1167,20 @@ function quotedSplit(rx, text) {
   }
   out.push(text.slice(pos))
   return out
+}
+
+/** The index after the `}` closing the `${` at i (nested `${`/`{` counted, quoted text skipped),
+ *  or 0 when it is not closed on this text. The Python twin's _param_end. */
+function paramEnd(text, state, i) {
+  let depth = 0
+  for (let j = i + 1; j < text.length; j++) {
+    if (state[j]) continue
+    const ch = text[j]
+    if (ch === '\\') { j++; continue }
+    if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return j + 1
+  }
+  return 0
 }
 
 function heredocRunsSplit(cmd, h, funcs, split) {
@@ -1181,7 +1216,8 @@ function heredocRunsSplit(cmd, h, funcs, split) {
   const first = simpleRuns(parts[parts.length - 1] + ' ' + pipe[0], funcs, cmd, h.start)
   if (first) return first
   for (const p of pipe.slice(1)) {
-    const c = simpleRuns(p, funcs)
+    // a subshell member is read whole (#777 review 13: `cat <<A | (gdb -q)`)
+    const c = p.trimStart().startsWith('(') ? anyRunsStdin(p, 0, funcs) : simpleRuns(p, funcs)
     if (c) return c
   }
   return enclosingRuns(parts, funcs) || closingPipeRuns(cmd, h, parts, funcs)
@@ -1399,14 +1435,121 @@ export function programHeredocs(cmd) {
 }
 
 /** Does a gdb read one of the command's heredocs or here-strings (this level only; the gates
- *  recurse into the bodies a shell runs)? Every gate blocks that whole (#777 review 12). The
- *  Python twin's gdb check in _stdin_programs. */
+ *  recurse into the bodies a shell runs)? Every gate blocks that whole (#777 review 12). A
+ *  consumer the shell expands at run time may be gdb and blocks the same way (#777 review 13),
+ *  unless it is a `$NAME` assigned only literal non-gdb words before. The Python twin's gdb
+ *  checks in _stdin_programs. */
 export function gdbReadsStdin(cmd) {
   const s = String(cmd ?? '')
   if (!s.includes('<<')) return false
   const { records } = findAll(s)
   const funcs = functionBodies(s)
-  return records.some((h) => baseName(heredocRunsBody(s, h, funcs)) === 'gdb')
+  return records.some((h) => {
+    const c = heredocRunsBody(s, h, funcs)
+    return baseName(c) === 'gdb' || (dynamicGdb(c) && !assignedNonGdb(s, c, h.start))
+  })
+}
+
+// A consumer the shell expands at run time (`$G -q <<A`, `$(echo gdb)`, a backtick, `"$@"` or `$1`
+// in a function, a glob or brace name). The Python twin's _DYNAMIC_CONSUMER_RE.
+const DYNAMIC_CONSUMER_RE = /[$`*?[{]/
+
+/** fnmatchcase(name, pattern): `*`, `?`, `[..]` (`[!..]` negated), the rest literal. */
+function globMatch(name, pattern) {
+  let rx = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]
+    if (c === '*') rx += '.*'
+    else if (c === '?') rx += '.'
+    else if (c === '[' && pattern.indexOf(']', i + 2) > 0) {
+      const j = pattern.indexOf(']', i + 2)
+      let body = pattern.slice(i + 1, j).replaceAll('\\', '\\\\')
+      if (body.startsWith('!')) body = '^' + body.slice(1)
+      rx += '[' + body + ']'
+      i = j
+    } else rx += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp('^' + rx + '$', 's').test(name)
+}
+
+/** An expanded word (`$..`, a backtick) or a glob/brace pattern that may name gdb. */
+function dynamicGdb(consumer) {
+  if (consumer.startsWith('$') || consumer.startsWith('`')) return true
+  if (!DYNAMIC_CONSUMER_RE.test(consumer)) return false
+  const pattern = baseName(consumer).replace(/\{[^{}]*\}/g, '*')
+  return [...GDB_NAMES].some((n) => globMatch(n, pattern))
+}
+
+// ...unless it is a plain `$NAME` whose every assignment in the command before it is a literal
+// non-gdb word: `P=/x/venv/bin/python; $P - <<EOF` (30 real fleet commands in the replay).
+const VAR_CONSUMER_RE = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/
+const LITERAL_VALUE = `(?:'([^']*)'|"([^"$\`\\\\]*)"|([^\\s;&|()<>$\`'"\\\\]*))(?=[\\s;&|)]|$)`
+
+function assignedNonGdb(text, consumer, end) {
+  const m = VAR_CONSUMER_RE.exec(consumer)
+  if (!m) return false
+  const lead = '(?:^|[\\s;&|(])' + m[1] + '='
+  const head = text.slice(0, end)
+  const all = head.match(new RegExp(lead, 'g')) ?? []
+  if (!all.length) return false
+  const values = [...head.matchAll(new RegExp(lead + LITERAL_VALUE, 'g'))]
+  if (values.length !== all.length) return false   // an assignment that is not a literal word
+  return values.every((v) => {
+    const w = v[1] ?? v[2] ?? v[3] ?? ''
+    return w && !DYNAMIC_CONSUMER_RE.test(w) && !GDB_NAMES.has(baseName(w.split(/\s/)[0]))
+  })
+}
+
+// Without a heredoc too (#777 review 13): an -ex/-iex/--eval-command/--init-eval-command value
+// whose gdb command runs a shell line or code (`-ex 'shell X'`, `-ex '!X'`, `-ex 'pipe p 1 | X'`,
+// `-ex 'python ..'`, `py`, `pi`, guile, compile, eval, interpreter-exec; gdb takes any unique
+// prefix of 2+ letters) or is dynamic BLOCKs; `-ex bt`, `-ex 'info functions'` stay allowed.
+// The Python twin's _GDB_EX_FLAG_RE and friends.
+const GDB_EX_FLAG_RE = /^--?(ex|iex|ev[a-z-]*|init-e[a-z-]*)(=[\s\S]*)?$/
+const GDB_EX_LONG = ['eval-command', 'init-eval-command']
+const GDB_RUNNING_CMDS = ['shell', 'pipe', 'python', 'python-interactive', 'guile', 'compile', 'eval', 'interpreter-exec']
+
+/** A gdb command line runs a shell line or code (see GDB_RUNNING_CMDS). */
+function gdbValueRuns(value) {
+  const v = value.trimStart()
+  if (v.startsWith('!') || v.startsWith('|')) return true
+  const name = /^[A-Za-z][A-Za-z-]*/.exec(v)?.[0] ?? ''
+  return name.length >= 2 && GDB_RUNNING_CMDS.some((c) => c.startsWith(name))
+}
+
+/** A gdb in this simple command runs a shell line or code through an -ex style value; the gdb
+ *  word may stand after a wrapper (`sudo gdb -ex ..`), so every word is looked at. Returns the
+ *  offending value, or ''. The Python twin's _gdb_ex_runs. */
+function gdbExSegment(seg) {
+  let toks = seg.match(SHELL_WORD_RE) ?? []
+  const hash = toks.findIndex((t) => t.startsWith('#'))
+  if (hash >= 0) toks = toks.slice(0, hash)
+  const words = toks.map(word)
+  for (let g = 0; g < words.length; g++) {
+    if (!GDB_NAMES.has(baseName(words[g][0]))) continue
+    for (let j = g + 1; j < words.length; j++) {
+      const m = GDB_EX_FLAG_RE.exec(words[j][0])
+      if (!m || !(m[1] === 'ex' || m[1] === 'iex' || GDB_EX_LONG.some((f) => f.startsWith(m[1])))) continue
+      let value, dyn
+      if (m[2] !== undefined) [value, dyn] = [m[2].slice(1), words[j][1]]
+      else if (j + 1 < words.length) [value, dyn] = words[++j]
+      else break
+      if (dyn || gdbValueRuns(value)) return value || '(dynamic)'
+    }
+  }
+  return ''
+}
+
+/** The first gdb -ex/-iex value in `cmd` (this level: the shell text, not the heredoc bodies and
+ *  -c programs, which the gates recurse into) that runs a shell line or code, or ''. */
+export function gdbExRuns(cmd) {
+  const s = String(cmd ?? '')
+  if (!/gdb/.test(s)) return ''
+  for (const seg of simpleSegments(lightText(s))) {
+    const v = gdbExSegment(seg)
+    if (v) return v
+  }
+  return ''
 }
 
 /**

@@ -472,6 +472,14 @@ _SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
 # stdin), and listing them took three rounds without closing the class. Over-blocking is accepted:
 # nobody here feeds gdb a heredoc.
 _GDB_NAMES = ('gdb', 'gdb-multiarch')
+# Without a heredoc too (#777 review 13): an -ex/-iex/--eval-command/--init-eval-command value
+# whose gdb command runs a shell line or code (`-ex 'shell X'`, `-ex '!X'`, `-ex 'pipe p 1 | X'`,
+# `-ex 'python ..'`, `py`, `pi`, guile, compile, eval, interpreter-exec; gdb takes any unique
+# prefix of 2+ letters) or is dynamic BLOCKs; `-ex bt`, `-ex 'info functions'` stay allowed.
+_GDB_EX_FLAG_RE = re.compile(r'^--?(ex|iex|ev[a-z-]*|init-e[a-z-]*)(=.*)?$', re.S)
+_GDB_EX_LONG = ('eval-command', 'init-eval-command')
+_GDB_RUNNING_CMDS = ('shell', 'pipe', 'python', 'python-interactive', 'guile', 'compile', 'eval',
+                     'interpreter-exec')
 _TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
 # su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 # the options) they start a shell that reads the stdin (#777 review 8).
@@ -707,6 +715,44 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
     return ''
 
 
+def _gdb_ex_runs(seg):
+    """A gdb in this simple command runs a shell line or code through an -ex style value (see
+    _GDB_EX_FLAG_RE); the gdb word may stand after a wrapper (`sudo gdb -ex ..`), so every word is
+    looked at. Returns the offending value, or ''."""
+    toks = _SHELL_WORD_RE.findall(seg)
+    toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
+    words = [_word(t) for t in toks]
+    for g, (w, _d) in enumerate(words):
+        if os.path.basename(w) not in _GDB_NAMES:
+            continue
+        j = g + 1
+        while j < len(words):
+            m = _GDB_EX_FLAG_RE.match(words[j][0])
+            flag = m.group(1) if m else ''
+            if m and (flag in ('ex', 'iex') or any(f.startswith(flag) for f in _GDB_EX_LONG)):
+                if m.group(2) is not None:
+                    value, dyn = m.group(2)[1:], words[j][1]
+                elif j + 1 < len(words):
+                    j += 1
+                    value, dyn = words[j]
+                else:
+                    break
+                if dyn or _gdb_value_runs(value):
+                    return value or '(dynamic)'
+            j += 1
+    return ''
+
+
+def _gdb_value_runs(value):
+    """A gdb command line runs a shell line or code (see _GDB_RUNNING_CMDS)."""
+    v = value.lstrip()
+    if v[:1] in ('!', '|'):
+        return True
+    name = re.match(r'[A-Za-z][A-Za-z-]*', v)
+    name = name.group(0) if name else ''
+    return len(name) >= 2 and any(c.startswith(name) for c in _GDB_RUNNING_CMDS)
+
+
 def _runner_program(words, k):
     """A k-adik szon allo tavoli/kontener-futtato PROGRAMJANAK indexe (None, ha nincs): az
     alparancs (docker/podman/nerdctl/kubectl), a kapcsolok (az ertekesek az ertekukkel), a
@@ -929,7 +975,9 @@ def _runs_words(words, k, depth, loose=False):
             # #777: a SZO SZERINTI -c program maga is olvashatja a stdin-t: `bash -c 'bash' <<EOF`,
             # `sh -c 'cat | sh' <<< X`, `bash -c 'eval "$(cat)"' <<< X` futtatjak a torzset (bash-sal
             # merve), `bash -c 'echo hi' <<EOF` nem. A program szovege egy parancssor: ugyanugy olvassuk.
-            return base if shell and _any_runs_stdin(words[m][0], depth + 1) else ''
+            # a gdb the program feeds the stdin to is the consumer (#777 review 13: `bash -c 'gdb -q' <<A`)
+            c = _body_consumer(words[m][0], None, depth + 1) if shell else ''
+            return c if os.path.basename(c) == 'gdb' else (base if c else '')
         if shell and _opt_values(x):
             j += 1 + _opt_values(x)   # `-o pipefail`, `+O extglob`, `-xo pipefail`: ertekszo(k) a csoport utan
             continue
@@ -1124,7 +1172,7 @@ def _body_consumer(text, funcs=None, depth=0):
     loose = bool(_READS_STDIN_RE.search(text))
     job_control = bool(_JOB_CONTROL_RE.search(text))
     blanked = _sub_blanked(text)
-    interp = ''
+    interp = shell = ''
     for t in ((text, blanked) if blanked != text else (text,)):
         parts = _SIMPLE_SPLIT_KEEP.split(t)
         for i in range(0, len(parts), 2):
@@ -1138,11 +1186,13 @@ def _body_consumer(text, funcs=None, depth=0):
             c = c or _runs_words(words, k, depth, loose)
             if not c or _own_stdin(p, parts[i + 1] if i + 1 < len(parts) else '', loose, job_control):
                 continue
+            if os.path.basename(c) == 'gdb':
+                return c           # a gdb anywhere in the body wins (#777 review 13: `{ bash; gdb; }`)
             if not _code_consumer(c):
-                return c
-            if not interp:
+                shell = shell or c
+            elif not interp:
                 interp = c
-    return interp
+    return shell or interp
 
 
 def _function_bypassed(words, k):
@@ -1349,7 +1399,9 @@ def _simple_runs(seg, funcs, cmd=None, end=None):
         return consumer
     last = _last_operand(words)
     if cmd is not None and last in _CLOSERS:
-        return last if _any_runs_stdin(_compound_text(cmd, end, last), funcs=funcs) else ''
+        # a gdb inside the compound is the consumer, not the closer (#777 review 13: `{ gdb -q; } <<A`)
+        c = _body_consumer(_compound_text(cmd, end, last), funcs)
+        return c if os.path.basename(c) == 'gdb' else (last if c else '')
     return ''
 
 
@@ -1417,7 +1469,15 @@ def _heredoc_runs_body(cmd, h, funcs=None):
     line alone does not show a quote opened on an earlier line."""
     if funcs is None:
         funcs = _function_bodies(cmd)
-    return _heredoc_runs_split(cmd, h, funcs, _plain_split) or _heredoc_runs_split(cmd, h, funcs, _quoted_split)
+    plain = _heredoc_runs_split(cmd, h, funcs, _plain_split)
+    if plain and not _code_consumer(plain):
+        return plain
+    # a code consumer from the plain cut may be a word of a quoted value (#777 review 13:
+    # `timeout 5 bash -s 'a;python3' <<A` is read by bash): a shell from the quoted cut wins
+    quoted = _heredoc_runs_split(cmd, h, funcs, _quoted_split)
+    if plain and os.path.basename(quoted) not in _SHELLS + _GDB_NAMES:
+        return plain           # the quoted cut misreads a line that starts inside an earlier quote
+    return quoted or plain
 
 
 def _plain_split(rx, text):
@@ -1425,7 +1485,8 @@ def _plain_split(rx, text):
 
 
 def _quoted_split(rx, text):
-    """rx.split(text) at the matches outside quotes and backslash escapes only (#777 review 12)."""
+    """rx.split(text) at the matches outside quotes, backslash escapes and balanced `${...}`
+    only (#777 review 12, 13: `X=${Y:-a;b} bash <<A`)."""
     state = _quote_map(text)
     mask = list(text)
     i = 0
@@ -1436,6 +1497,12 @@ def _quoted_split(rx, text):
             mask[i] = mask[i + 1] = '_'
             i += 2
             continue
+        elif text.startswith('${', i):
+            end = _param_end(text, state, i)
+            if end:
+                mask[i:end] = '_' * (end - i)
+                i = end
+                continue
         i += 1
     out, pos = [], 0
     for m in rx.finditer(''.join(mask)):
@@ -1445,6 +1512,26 @@ def _quoted_split(rx, text):
         pos = m.end()
     out.append(text[pos:])
     return out
+
+
+def _param_end(text, state, i):
+    """The index after the `}` closing the `${` at i (nested `${`/`{` counted, quoted text skipped),
+    or 0 when it is not closed on this text."""
+    depth, j = 0, i + 1
+    while j < len(text):
+        if not state[j]:
+            ch = text[j]
+            if ch == '\\':
+                j += 2
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if not depth:
+                    return j + 1
+        j += 1
+    return 0
 
 
 def _heredoc_runs_split(cmd, h, funcs, split):
@@ -1530,7 +1617,8 @@ def _heredoc_runs_split(cmd, h, funcs, split):
     if first:
         return first
     for p in pipe[1:]:
-        c = _simple_runs(p, funcs)
+        # a subshell member is read whole (#777 review 13: `cat <<A | (gdb -q)`)
+        c = _body_consumer(p, funcs) if p.lstrip().startswith('(') else _simple_runs(p, funcs)
         if c:
             return c
     return _enclosing_runs(parts, funcs) or _closing_pipe_runs(cmd, h, parts, funcs)
@@ -1557,6 +1645,10 @@ def _stdin_programs(text, depth=0):
                   'eval, interpreter-exec, guile, -x /dev/stdin) a torzset sokfelekeppen futtathatja, '
                   'ezert a kapu egeszben nem engedi at (#777 review 12). A gdb-parancsokat irasd '
                   'fajlba, es -x FAJL-lal add at.')
+        if _dynamic_gdb(consumer) and not _assigned_non_gdb(text, consumer, h.start):
+            block('A heredocot vagy itt-stringet futasidoben kifejtett parancsszo olvassa (%s): a '
+                  'kapu nem tudja, mi lesz belole (gdb is lehet), egeszben nem engedi at (#777 review 13).'
+                  % consumer[:40])
         if h.kind == 'herestring':
             if h.text.strip():
                 out.append(h.text)
@@ -1566,6 +1658,41 @@ def _stdin_programs(text, depth=0):
             if '<<' in body and not _code_consumer(consumer):
                 out.extend(_stdin_programs(body, depth + 1))
     return out
+
+
+# A consumer the shell expands at run time (`$G -q <<A`, `$(echo gdb)`, a backtick, `"$@"` or `$1`
+# in a function, a glob or brace name): it may be gdb, so it BLOCKs whole like gdb (#777 review 13).
+_DYNAMIC_CONSUMER_RE = re.compile(r'[$`*?\[{]')
+
+
+def _dynamic_gdb(consumer):
+    """An expanded word (`$..`, a backtick) or a glob/brace pattern that may name gdb."""
+    if consumer[:1] in ('$', '`'):
+        return True
+    if not _DYNAMIC_CONSUMER_RE.search(consumer):
+        return False
+    pattern = re.sub(r'\{[^{}]*\}', '*', os.path.basename(consumer))
+    return any(fnmatch.fnmatchcase(n, pattern) for n in _GDB_NAMES)
+# ...unless it is a plain `$NAME` whose every assignment in the command before it is a literal
+# non-gdb word: `P=/x/venv/bin/python; $P - <<EOF` (30 real fleet commands in the replay).
+_VAR_CONSUMER_RE = re.compile(r'^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$')
+_LITERAL_VALUE_RE = r"""(?:'([^']*)'|"([^"$`\\]*)"|([^\s;&|()<>$`'"\\]*))(?=[\s;&|)]|$)"""
+
+
+def _assigned_non_gdb(text, consumer, end):
+    m = _VAR_CONSUMER_RE.match(consumer)
+    if not m:
+        return False
+    name = re.escape(m.group(1))
+    head = text[:end]
+    if not re.search(r'(?:^|[\s;&|(])%s=' % name, head):
+        return False
+    values = re.findall(r'(?:^|[\s;&|(])%s=%s' % (name, _LITERAL_VALUE_RE), head)
+    if len(values) != len(re.findall(r'(?:^|[\s;&|(])%s=' % name, head)):
+        return False               # an assignment that is not a literal word
+    words = [a or b or c for a, b, c in values]
+    return all(w and not _DYNAMIC_CONSUMER_RE.search(w) and os.path.basename(w.split()[0]) not in _GDB_NAMES
+               for w in words)
 
 
 def _code_consumer(consumer):
@@ -2381,6 +2508,11 @@ def check_bash(cmd, _depth=0, cwd=None):
         if idx is not None and not toks[idx][1] and os.path.basename(toks[idx][0]) == 'cd':
             cwd = _cd_target(toks, idx + 1, cwd)
             saw_cd = True
+
+        gdb_ex = _gdb_ex_runs(light[a:b])
+        if gdb_ex:
+            block('gdb -ex/-iex shell-sort vagy kodot futtat ("%s"): a kapu nem latja, mit; '
+                  'egeszben nem engedi at (#777 review 13).' % gdb_ex[:80])
 
         # A -c program a LIGHT szovegbol jon: a prozaszures a szokozos programszot
         # kifeheritette volna (`bash -c "rm -rf x"` eddig csak a _script_arg_ranges
