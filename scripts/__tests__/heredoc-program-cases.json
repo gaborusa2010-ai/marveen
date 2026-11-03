@@ -1320,6 +1320,305 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "775_rl_bash_c_dash",
+   "cmd": "while read l; do bash -c - \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_sh_c_dash",
+   "cmd": "while read l; do sh -c - \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_x",
+   "cmd": "while read l; do bash -c -x \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_e",
+   "cmd": "while read l; do bash -c -e \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_plusx",
+   "cmd": "while read l; do bash -c +x \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_o_pipefail",
+   "cmd": "while read l; do bash -c -o pipefail \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_x_dd",
+   "cmd": "while read l; do bash -c -x -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_cx",
+   "cmd": "while read l; do bash -cx \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_norc_data",
+   "cmd": "while read l; do bash -c --norc \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "bash rejects a --long option after -c (\"--: invalid option\"): nothing runs"
+  },
+  {
+   "name": "775_rl_bash_c_redir",
+   "cmd": "while read l; do bash -c 2>/dev/null \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_dd_redir",
+   "cmd": "while read l; do bash -c -- 2>/dev/null \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_redir_dd",
+   "cmd": "while read l; do bash -c 2>/dev/null -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_bare_redir",
+   "cmd": "while read l; do bash -c 2> /dev/null \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_x_static_data",
+   "cmd": "while read l; do bash -c -x 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_rl_bash_c_redir_static_data",
+   "cmd": "while read l; do bash -c 2>/dev/null 'echo static'; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_rl_bash_c_dd_dd_dyn_data",
+   "cmd": "while read l; do bash -c -- -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_rl_python_c_dd_data",
+   "cmd": "while read l; do python3 -c -- \"$l\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "python takes the word after -c as the program, so the program is `--`, not $l"
+  },
+  {
+   "name": "775_top_bash_c_x_dyn_data",
+   "cmd": "bash -c -x \"$CMD\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_clobber_bash",
+   "cmd": "bash >| /tmp/o775 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_clobber_brace_bash",
+   "cmd": "{ bash; } >| /tmp/o775 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_clobber_done_dyn",
+   "cmd": "while read l; do $l; done >| /tmp/o775 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_clobber_cat_data",
+   "cmd": "cat >| /tmp/o775 <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_quoted_target_bash",
+   "cmd": "bash > \"/tmp/o 775\" <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_escaped_target_bash",
+   "cmd": "bash > /tmp/o\\ 775 <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_quoted_target_sq_bash",
+   "cmd": "bash 2> '/tmp/o 775' <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_quoted_target_cat_data",
+   "cmd": "cat > \"/tmp/o 775\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_quoted_target_file_data",
+   "cmd": "bash \"/tmp/no such.sh\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_fd3_brace_redir_dup",
+   "cmd": "{ bash; } 2>&1 3<<EOF <&3\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_fd3_done_redir_dup",
+   "cmd": "while read l; do $l; done 2>&1 3<<EOF <&3\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_fd3_brace_redir_nodup_data",
+   "cmd": "{ bash; } 2>&1 3<<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_fd3_brace_cat_dup_data",
+   "cmd": "{ cat; } 2>&1 3<<EOF <&3\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_rl_bash_c_subst",
+   "cmd": "while read l; do bash -c \"$(echo \"$l\")\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_bash_c_subst_printf",
+   "cmd": "while read l; do bash -c \"$(printf %s \"$l\")\"; done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "775_rl_assign_subst_bash_c",
+   "cmd": "while read l; do x=$(bash -c \"$l\"); done <<EOF\nX\nEOF",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "note": "the body runs inside $( ): the oracle payload wrote a file, because the mark is captured into x"
+  },
+  {
+   "name": "775_rl_echo_subst_data",
+   "cmd": "while read l; do echo \"$(echo \"$l\")\"; done <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "775_top_bash_c_subst_data",
+   "cmd": "bash -c \"$(echo \"$CMD\")\" <<EOF\nX\nEOF",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "note": "the substitution is closed before <<EOF: the heredoc is the outer bash -c stdin, the program is $CMD (data at top level)"
+  },
+  {
+   "name": "775_herestring_not_heredoc",
+   "cmd": "bash <<< 'X'",
+   "expect": [],
+   "bash_runs": null,
+   "note": "a here-string is not a heredoc: no scan result, and all 3 live gates allowed the payload (measured 2026-11-03); its own card"
   }
  ]
 }

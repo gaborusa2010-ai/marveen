@@ -106,13 +106,18 @@ const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'docker', 'po
 
 // A path that IS the standard input: `bash /dev/stdin <<EOF` runs the body.
 const STDIN_PATH_RE = /^\/(?:dev\/stdin|(?:dev|proc\/self)\/fd\/0+)$/
-const REDIR_OP_RE = /^([0-9]*[<>]+&?|&>>?)$/          // a bare operator: the next word is its target
+const REDIR_OP_RE = /^([0-9]*[<>]+&?|[0-9]*>\||&>>?)$/   // a bare operator: the next word is its target (`>|` too, #775)
 const REDIR_GLUED_RE = /^([0-9]*[<>]|&>)/             // `2>&1`, `>log`: no operand
 
-// The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`).
-const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;|\n(){}`]|\$\(/
-const HEAD_SPLIT = /(\|\||&&|(?<![<>])&(?!>)|[;|(`]|\$\()/
+// The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`);
+// neither is the `|` of `>|` (`bash >| log <<SH`, #775).
+const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(/
+const HEAD_SPLIT = /(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()/
 const TAIL_SPLIT = /\|\||&&|;|(?<![<>])&(?!>)/
+const PIPE_SPLIT = /(?<!>)\|/
+// One shell word: unquoted chars, backslash-escaped chars, "..." and '...' pieces. An
+// unpaired quote is dropped (the segment may be cut at a substitution boundary).
+const SHELL_WORD_RE = /(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"|'[^']*')+/g
 const FUNC_DEF_RE = /(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*([{(])|\bfunction\s+([A-Za-z_][A-Za-z0-9_:.-]*)\s*([{(])/g
 const CLOSERS = { done: ['while', 'until', 'for', 'select'], fi: ['if'], esac: ['case'], '}': ['{'] }
 const COMPOUND_TOKEN_RE = /(?<![\w$-])(while|until|for|select|done|if|fi|case|esac)(?![\w-])|[{}]/g
@@ -171,7 +176,8 @@ function lastOperand(words) {
  *  A `)` closing a subshell or process substitution ends the simple command
  *  (`(bash) <<EOF`, `tee >(bash) <<EOF`): the words after it are not its operands. */
 function cmdWord(seg) {
-  let words = seg.replaceAll(')', ' ) ').trim().split(/\s+/).filter(Boolean).map(word)
+  // quote-aware: `bash > "o 775" <<EOF` has one target word, not two (#775)
+  let words = (seg.replaceAll(')', ' ) ').match(SHELL_WORD_RE) ?? []).map(word)
   const k = skipPrefix(words, 0)
   const close = words.findIndex(([w], i) => i > k && w === ')')
   if (close >= 0) words = words.slice(0, close)
@@ -226,9 +232,26 @@ function runsWords(words, k, depth, loose) {
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
     if (flags.includes(x) || (shell && /^-[A-Za-z]*c/.test(x))) {
-      // the program follows the flag; a `--` right after it only ends the options
-      // (`bash -c -- "$l"`). Dynamic in a reading body: the body.
-      const m = words[j + 1]?.[0] === '--' && !words[j + 1][1] ? j + 2 : j + 1
+      // the program follows the flag. A shell still reads options after -c (`bash -c -x
+      // "$l"`, `-o pipefail`, `+x`), a `-` or `--` ends them (`bash -c - "$l"`), and a
+      // redirect may stand in between (`bash -c 2>/dev/null "$l"`): the program is the
+      // word after these (#773, #775). A `--long` option after -c bash rejects
+      // (`bash -c --norc "$l"`: nothing runs): data. python/perl/node run the FIRST word
+      // after -c (`python3 -c -- "$l"`: the program is `--`), only a redirect may intervene.
+      // Dynamic in a reading body: the body.
+      let m = j + 1
+      let ended = !shell          // options over: only a redirect may still intervene
+      while (m < words.length && !words[m][1]) {
+        const y = words[m][0]
+        if (REDIR_OP_RE.test(y)) m += 2
+        else if (REDIR_GLUED_RE.test(y)) m += 1
+        else if (ended) break
+        else if (y === '-' || y === '--') { m += 1; ended = true }   // `bash -c -- 2>/dev/null "$l"`
+        else if (/^[-+][oO]$/.test(y)) m += 2
+        else if (y.startsWith('--')) return ''
+        else if (y.startsWith('-') || y.startsWith('+')) m += 1
+        else break
+      }
       return loose && words[m]?.[1] ? base : ''
     }
     if (shell && /^[-+][oO]$/.test(x)) { j++; continue }  // `-o pipefail` takes a value
@@ -244,12 +267,54 @@ export function runsStdinAsProgram(seg, loose = false) {
   return runsWords(words, k, 0, loose)
 }
 
+/** The text with every CLOSED `$(...)` and `...` substitution collapsed into one dynamic
+ *  word, `$SUB`. An unclosed one (the heredoc stands INSIDE the substitution) is left as
+ *  is, for enclosingRuns. So `bash -c "$(echo "$l")"` reads as `bash -c "$SUB"` (a dynamic
+ *  program), and a closed substitution in the head is not read in place of the outer
+ *  command (#775). */
+function subBlanked(text) {
+  let out = ''
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const ch = text[i]
+    if (ch === '$' && text.startsWith('$(', i)) {
+      let depth = 1
+      let j = i + 2
+      while (j < n && depth) {
+        if (text[j] === '(') depth++
+        else if (text[j] === ')') depth--
+        j++
+      }
+      if (depth) { out += text.slice(i); break }
+      out += '$SUB'
+      i = j
+    } else if (ch === '`') {
+      const j = text.indexOf('`', i + 1)
+      if (j < 0) { out += text.slice(i); break }
+      out += '$SUB'
+      i = j + 1
+    } else {
+      out += ch
+      i++
+    }
+  }
+  return out
+}
+
+/** Does any simple command of a compound text (loop or function body) run its stdin as a
+ *  program? Read twice: as is (`x=$(bash -c "$l")` runs INSIDE the substitution), and with
+ *  the closed substitutions collapsed (`bash -c "$(echo "$l")"`: the program is the
+ *  substitution, #775). */
 function anyRunsStdin(text) {
   const loose = READS_STDIN_RE.test(text)
-  for (const p of text.split(SIMPLE_SPLIT)) {
-    if (!p.trim()) continue
-    const c = runsStdinAsProgram(p, loose)
-    if (c) return c
+  const blanked = subBlanked(text)
+  for (const t of blanked !== text ? [text, blanked] : [text]) {
+    for (const p of t.split(SIMPLE_SPLIT)) {
+      if (!p.trim()) continue
+      const c = runsStdinAsProgram(p, loose)
+      if (c) return c
+    }
   }
   return ''
 }
@@ -361,12 +426,14 @@ export function heredocRunsBody(cmd, h, funcs) {
       let line = head + ' ' + cmd.slice(h.tailStart, h.lineEnd).split(TAIL_SPLIT)[0]
       if (!new RegExp(path).test(line) && !new RegExp(dup).test(line)) return ''
       line = line.replace(new RegExp(path, 'g'), '-').replace(new RegExp(dup, 'g'), ' ')
-      return simpleRuns(line, funcs)
+      // the last simple command, with its closer (`{ bash; } 2>&1 3<<EOF <&3`, #775):
+      // the same way as the stdin-heredoc head below
+      return simpleRuns(subBlanked(line).split(HEAD_SPLIT).at(-1), funcs, cmd, h.start)
     }
   }
-  const parts = head.split(HEAD_SPLIT)
+  const parts = subBlanked(head).split(HEAD_SPLIT)
   const tail = cmd.slice(h.tailStart, h.lineEnd).split(TAIL_SPLIT)[0]
-  const pipe = tail.split('|')
+  const pipe = tail.split(PIPE_SPLIT)
   const first = simpleRuns(parts[parts.length - 1] + ' ' + pipe[0], funcs, cmd, h.start)
   if (first) return first
   for (const p of pipe.slice(1)) {
