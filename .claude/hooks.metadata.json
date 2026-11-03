@@ -231,7 +231,7 @@
         "hook": "outgoing-copy-gate",
         "gate": true,
         "purpose": "Copy QA gate on outgoing email sent from Bash.",
-        "fingerprint": "4589a8651a90e5c321f598de13a4f1c980856260c2d4d1c0e559c3e98d68c2da"
+        "fingerprint": "4875f49ff2de5e87ac66fb19d8e7b72668dad156a6019a1ea76b321167d9c9df"
       },
       {
         "index": 2,
@@ -400,6 +400,14 @@
         "gate": true,
         "purpose": "Line-cap gate: no SKILL.md and no hand-written CLAUDE.md part may grow past 500 lines.",
         "fingerprint": "55133ca0cd7d87fac38cd7293efec6ed6a036b9a1299926ba31b1b55a658a41d"
+      },
+      {
+        "index": 23,
+        "id": "pre-tool-use/subagent-write-scope",
+        "hook": "subagent-write-scope",
+        "gate": false,
+        "purpose": "PreToolUse on Write/Edit/NotebookEdit: a SUB-AGENT writes only to scratch or a side worktree.",
+        "fingerprint": "6c43cfd843dc2c998136f059dd2fd5ce23b1ae66f7daea1fbbda8874282d9927"
       }
     ],
     "Stop": [
