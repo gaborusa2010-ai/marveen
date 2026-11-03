@@ -1551,6 +1551,19 @@ for label, cmd in [
 ]:
     check(label, not blocks(cmd))
 
+# --- 27. #777 review 16: --args idezojellel szetvagva ------------------------------------------
+# Marveen review 16 (komment 3768): a py kapu mar 0d5791e2-n is BLOCK, a JS iker nem (nyers-szoveg
+# elofilter); itt a py oldalt rogzitjuk, hogy a ket kapu egyutt maradjon.
+print()
+print("#777 review 16, MUST-BLOCK:")
+for label, cmd in [
+    ("gdb -ex run -'a'rgs sh -c RM", "gdb -batch -ex run -'a'rgs sh -c '" + RMH + "'"),
+    ("gdb -ex run --a''rgs sh -c RM", "gdb -batch -ex run --a''rgs sh -c '" + RMH + "'"),
+    ("gdb -ex run \"--\"args sh -c RM", "gdb -batch -ex run \"--\"args sh -c '" + RMH + "'"),
+    ("gdb -ex run -$'a'rgs sh -c RM", "gdb -batch -ex run -$'a'rgs sh -c '" + RMH + "'"),
+]:
+    check(label, blocks(cmd))
+
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""

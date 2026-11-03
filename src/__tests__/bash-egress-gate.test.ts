@@ -899,3 +899,14 @@ describe('#777 review 15: gdb call on any `(`, --args spellings, ANSI-C quotes i
     expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
   })
 })
+describe('#777 review 16: --args split by quotes', () => {
+  // Quote removal comes before the --args match (no raw-text prefilter); py twin: destructive-gate.test.py section 27.
+  it.each([
+    ["gdb -batch -ex run -'a'rgs sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run --a''rgs sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run \"--\"args sh -c 'PAYLOAD'"],
+    ["gdb -batch -ex run -$'a'rgs sh -c 'PAYLOAD'"],
+  ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('blocks %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(true)
+  })
+})

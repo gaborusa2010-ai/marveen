@@ -1717,8 +1717,9 @@ const GDB_ARGS_RE = /^--?ar(?:gs?)?$/
 /** The programs after `gdb .. --args` in `cmd` (gdb runs them on `run`), as raw text; the gates
  *  judge each as a command line (#777 review 14). The Python twin's _gdb_args_programs. */
 export function gdbArgsPrograms(cmd) {
+  // No raw-text prefilter: quotes split the flag (-'a'rgs, "--"args, -$'a'rgs), only the
+  // unquoted word is matched.
   const s = String(cmd ?? '')
-  if (!/-ar/.test(s)) return []
   const out = []
   for (const seg of simpleSegments(lightText(s))) {
     let toks = seg.match(SHELL_WORD_RE) ?? []
