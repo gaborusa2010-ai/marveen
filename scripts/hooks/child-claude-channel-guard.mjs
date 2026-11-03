@@ -56,7 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -348,6 +348,8 @@ export function decide(command, env = process.env, depth = 0) {
     if (ownConfigDir(child, env) || tokenlessStateDir(child)) continue
     return { allow: false, segment: segment.trim().replaceAll(Q_SPACE, ' ').replaceAll(Q_SEP, '_').slice(0, 200) }
   }
+  // #777 review 12: gdb's command language can run a heredoc/here-string many ways; blocked whole
+  if (gdbReadsStdin(command)) return { allow: false, segment: 'gdb reading a heredoc/here-string (#777 review 12)' }
   for (const text of nestedPrograms(command)) {
     const inner = decide(text, env, depth + 1)
     if (!inner.allow) return inner

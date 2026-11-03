@@ -3566,10 +3566,10 @@
    "name": "777_bash_c_ifs_read_r_l_bash_c_l_x",
    "cmd": "bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'X'",
    "expect": [
-    false
+    true
    ],
    "bash_runs": true,
-   "bash_note": "KNOWN GAP (#777 follow-up): the head splitter is quote-blind and cuts the -c program at its inner `;`, so the read loop is not seen; bash runs the body"
+   "bash_note": "#777 review 12: the head splitter reads quoted separators too now (quote-aware second pass); bash runs the body"
   },
   {
    "name": "777_bash_c_cat_dev_null_x",
@@ -4175,9 +4175,10 @@
    "name": "777r9_gdb_no_args",
    "cmd": "gdb -batch prog <<'A'\nX\nA",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": null
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
   },
   {
    "name": "777r9_toolbox_cat",
@@ -4343,9 +4344,10 @@
    "name": "777r10_gdb_version",
    "cmd": "gdb --version <<'A'\nX\nA",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": null
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
   },
   {
    "name": "777r10_machinectl_list",
@@ -4563,33 +4565,217 @@
    "name": "777r11_gdb_batch_nx",
    "cmd": "gdb -batch -nx <<'A'\nX\nA",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": null
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
   },
   {
    "name": "777r11_gdb_batch_ex_echo",
    "cmd": "gdb -batch -ex 'shell echo hi' <<'A'\nX\nA",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": null
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
   },
   {
    "name": "777r11_gdb_batch_ex_print",
    "cmd": "gdb -batch -ex 'print 1' prog <<'A'\nX\nA",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": null
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
   },
   {
    "name": "777r11_gdb_batch_x_file",
    "cmd": "gdb -batch -x cmds.gdb prog <<'A'\nX\nA",
    "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "#777 review 12: a gdb heredoc/itt-string stdinnel egeszben blokkolt (vallalt tultiltas), a fogyaszto gdb"
+  },
+  {
+   "name": "777r12_gdb_py_exec_stdin",
+   "cmd": "gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale (review 12); Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_py_abbrev",
+   "cmd": "gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale"
+  },
+  {
+   "name": "777r12_gdb_she",
+   "cmd": "gdb -batch -ex 'she bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_eval_shell",
+   "cmd": "gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_interpreter_exec",
+   "cmd": "gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale; Marveen measured RUNS"
+  },
+  {
+   "name": "777r12_gdb_multiarch",
+   "cmd": "gdb-multiarch -batch <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale"
+  },
+  {
+   "name": "777r12_gdb_herestring",
+   "cmd": "gdb -batch -ex 'py exec(input())' <<< 'X'",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale, here-string"
+  },
+  {
+   "name": "777r12_gdb_pipe_member",
+   "cmd": "cat <<'A' | gdb -batch\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null,
+   "bash_note": "gdb wholesale, pipe member"
+  },
+  {
+   "name": "777r12_q_env_semicolon",
+   "cmd": "env V='a;b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_assign_semicolon",
+   "cmd": "V='a;b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_dquote_semicolon",
+   "cmd": "env V=\"a;b\" bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_escaped_semicolon",
+   "cmd": "env V=a\\;b bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_timeout_s",
+   "cmd": "timeout 5 bash -s 'a;b' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_paren",
+   "cmd": "bash -s 'x(y' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_pipe_char",
+   "cmd": "env V='a|b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_amp_char",
+   "cmd": "env V='a&b' bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_tail_semicolon",
+   "cmd": "cat <<'A' - 'x;y' | bash\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true,
+   "bash_note": "probe-sandbox bash, payload echo RAN_$((6*7)): RUNS"
+  },
+  {
+   "name": "777r12_q_echo_data",
+   "cmd": "echo 'a;b' <<'A'\nX\nA",
+   "expect": [
     false
    ],
-   "bash_runs": null
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r12_q_env_cat_data",
+   "cmd": "env V='a;b' cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
+  },
+  {
+   "name": "777r12_q_sort_data",
+   "cmd": "sort -t';' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false,
+   "bash_note": "probe-sandbox bash: no"
   }
  ]
 }

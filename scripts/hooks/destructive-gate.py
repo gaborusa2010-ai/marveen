@@ -461,23 +461,17 @@ _STDIN_WRAPPERS = {
 _SHELL_WITHOUT_COMMAND = ('pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp')
 # ...but not when they only print something (#777 review 10: `setarch --list`, `machinectl list`).
 _INFO_FLAGS = ('--help', '-h', '--version', '-V', '--list')
-# The program follows a marker word (#777 review 9): `gdb -batch -ex r --args prog`,
-# `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
+# The program follows a marker word (#777 review 9): `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
 # toolbox enter start a shell, their other subcommands (create, list, rm) run nothing (#777 review 10).
-_MARKER_LAUNCHERS = {'gdb': ('--args', False), 'distrobox': ('--', True), 'distrobox-enter': ('--', True),
+_MARKER_LAUNCHERS = {'distrobox': ('--', True), 'distrobox-enter': ('--', True),
                      'toolbox': ('run', True)}
 _SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
-# gdb without -batch reads its stdin as gdb commands, and `shell CMD` runs CMD, with or without
-# --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
-_GDB_BATCH = ('-batch', '--batch', '-batch-silent', '--batch-silent')
-_GDB_INFO = ('--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration')
-_GDB_EX_FLAGS = ('-ex', '--ex', '-eval-command', '--eval-command', '-iex', '--iex',
-                 '-init-eval-command', '--init-eval-command')
-# gdb commands that hand their text to a shell or to Python (#777 review 11)
-_GDB_SHELL_CMD_RE = re.compile(r'\s*(?:shell\b|!|pipe\b|\|)(.*)', re.S)
-_GDB_PYTHON_CMD_RE = re.compile(r'\s*(?:python|python-interactive|py|pi)\b')
-_GDB_SCRIPT_FLAGS = ('-x', '--x', '-command', '--command', '-ix', '--ix', '-init-command', '--init-command')
-_GDB_SOURCE_STDIN_RE = re.compile(r'\s*source\s+(?:-\S+\s+)*(\S+)\s*$')
+# A gdb that reads a heredoc/here-string is BLOCKED whatever its flags (#777 review 12): its command
+# language runs shell lines and code many ways (`shell`, `she`, `!`, `pipe`, `python exec(stdin)`,
+# `eval "shell %s"`, `interpreter-exec`, guile, define, `-x /dev/stdin`, an inferior inheriting the
+# stdin), and listing them took three rounds without closing the class. Over-blocking is accepted:
+# nobody here feeds gdb a heredoc.
+_GDB_NAMES = ('gdb', 'gdb-multiarch')
 _TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
 # su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 # the options) they start a shell that reads the stdin (#777 review 8).
@@ -577,7 +571,7 @@ def _first_interpreter(words, j):
     return next((i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS), None)
 
 
-_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE) | set(_MARKER_LAUNCHERS)
+_LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE) | set(_MARKER_LAUNCHERS) | set(_GDB_NAMES)
 
 
 def _shell_word_after(words, j):
@@ -694,15 +688,11 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         return c
     if base in _SU_LIKE:
         return _su_consumer(words, k, base, depth, loose, argv)
+    if base in _GDB_NAMES:
+        return 'gdb'
     if base in _MARKER_LAUNCHERS:
         marker, shell = _MARKER_LAUNCHERS[base]
         rest = [x for x, _d in words[k + 1:]]
-        if base == 'gdb' and not argv and not any(x in _GDB_BATCH or x in _GDB_INFO for x in rest):
-            return base
-        if base == 'gdb':
-            c = _gdb_command_consumer(rest, depth)
-            if c:
-                return c
         if base in _SHELL_SUBCOMMAND:
             shell = next((x for x in rest if not x.startswith('-')), '') == _SHELL_SUBCOMMAND[base]
         j = next((i for i in range(k + 1, len(words)) if words[i][0] == marker), None)
@@ -715,57 +705,6 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
             return base if argv or shell else ''
         return _via_launcher(words, j + 1, depth, loose, argv)
     return ''
-
-
-def _gdb_command_consumer(rest, depth):
-    """The consumer behind gdb's -ex/-iex commands (words before --args): `shell CMD`, `!CMD`
-    and `pipe ... | CMD` run CMD in a shell that inherits gdb's stdin, so CMD is read like a
-    shell line; a `python` command runs arbitrary code, which may read stdin (#777 review 11:
-    `gdb -batch -ex 'shell bash' <<A` ran the body)."""
-    vals = []
-    i = 0
-    while i < len(rest) and rest[i] != '--args':
-        x = rest[i]
-        if x in _GDB_EX_FLAGS:
-            if i + 1 < len(rest):
-                vals.append(rest[i + 1])
-            i += 2
-            continue
-        if x in _GDB_SCRIPT_FLAGS:
-            if i + 1 < len(rest) and _STDIN_PATH_RE.match(rest[i + 1]):
-                return 'gdb'                     # `-x /dev/stdin`: the body is a gdb script
-            i += 2
-            continue
-        flag, eq, v = x.partition('=')
-        if eq and flag in _GDB_EX_FLAGS:
-            vals.append(v)
-        if eq and flag in _GDB_SCRIPT_FLAGS and _STDIN_PATH_RE.match(v):
-            return 'gdb'
-        i += 1
-    for v in vals:
-        src = _GDB_SOURCE_STDIN_RE.match(v)
-        if src and _STDIN_PATH_RE.match(src.group(1)):
-            return 'gdb'
-        m = _GDB_SHELL_CMD_RE.match(v)
-        if m:
-            c = _body_consumer(m.group(1), None, depth + 1)
-            if c:
-                return c
-        if _GDB_PYTHON_CMD_RE.match(v):
-            return 'gdb'
-    return ''
-
-
-def _gdb_shell_lines(body):
-    """The shell command lines of a gdb script read from the stdin: `shell CMD`, `!CMD`,
-    `pipe ..| CMD` and `| ..| CMD` lines, the gdb prefix removed (`shell rm -rf x` is `rm -rf x`
-    to the shell, the gate does not see it under the `shell` word)."""
-    out = []
-    for line in body.split('\n'):
-        m = _GDB_SHELL_CMD_RE.match(line)
-        if m and m.group(1).strip():
-            out.append(m.group(1))
-    return out
 
 
 def _runner_program(words, k):
@@ -1471,6 +1410,44 @@ _HEREDOC_LINE_CAP = 4096
 
 
 def _heredoc_runs_body(cmd, h, funcs=None):
+    """The word that runs the body of heredoc/here-string h, or ''; see _heredoc_runs_split. A
+    quoted or escaped separator before the consumer (`env X='a;b' bash <<A`, `bash -s 'x(y' <<A`,
+    `env X=a\\;b bash <<A`) cut the opener line in the wrong place and the body passed as data
+    (#777 review 12). The quote-aware reading comes second and only adds a consumer: the opener
+    line alone does not show a quote opened on an earlier line."""
+    if funcs is None:
+        funcs = _function_bodies(cmd)
+    return _heredoc_runs_split(cmd, h, funcs, _plain_split) or _heredoc_runs_split(cmd, h, funcs, _quoted_split)
+
+
+def _plain_split(rx, text):
+    return rx.split(text)
+
+
+def _quoted_split(rx, text):
+    """rx.split(text) at the matches outside quotes and backslash escapes only (#777 review 12)."""
+    state = _quote_map(text)
+    mask = list(text)
+    i = 0
+    while i < len(text):
+        if state[i]:
+            mask[i] = '_'
+        elif text[i] == '\\' and i + 1 < len(text):
+            mask[i] = mask[i + 1] = '_'
+            i += 2
+            continue
+        i += 1
+    out, pos = [], 0
+    for m in rx.finditer(''.join(mask)):
+        out.append(text[pos:m.start()])
+        if rx.groups:
+            out.append(text[m.start():m.end()])
+        pos = m.end()
+    out.append(text[pos:])
+    return out
+
+
+def _heredoc_runs_split(cmd, h, funcs, split):
     """A torzs PROGRAM lesz, vagy egy program BEMENETE? Visszaad: a FOGYASZTO szo (az
     ertelmezo, a fuggveny, a zaro, `eval`/`source`, a dinamikus szo; 'unread' a tul hosszu
     soron), vagy '' ha a torzs adat. Igaz/hamis helyett szo, mint a JS iker heredocRunsBody-ja,
@@ -1534,21 +1511,21 @@ def _heredoc_runs_body(cmd, h, funcs=None):
             n = fd.group(1).lstrip('0')
             path = r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n
             dup = r'(?:^|\s)0?<&\s*0*%s-?(?=\s|$)' % n
-            line = head + ' ' + _TAIL_SPLIT.split(_strip_comment(cmd[h.tail_start:h.line_end]))[0]
+            line = head + ' ' + split(_TAIL_SPLIT, _strip_comment(cmd[h.tail_start:h.line_end]))[0]
             if not re.search(path, line) and not re.search(dup, line):
                 return ''
             line = re.sub(dup, ' ', re.sub(path, '-', line))
             # az utolso egyszeru parancs, a zarojaval egyutt (`{ bash; } 2>&1 3<<EOF <&3`,
             # #775): ugyanugy, mint a stdin-heredoc fejenel lent
-            return _simple_runs(_HEAD_SPLIT.split(_sub_blanked(line))[-1], funcs, cmd, h.start)
-    parts = _HEAD_SPLIT.split(_sub_blanked(head))
-    tail = _TAIL_SPLIT.split(_strip_comment(cmd[h.tail_start:h.line_end]))[0]
+            return _simple_runs(split(_HEAD_SPLIT, _sub_blanked(line))[-1], funcs, cmd, h.start)
+    parts = split(_HEAD_SPLIT, _sub_blanked(head))
+    tail = split(_TAIL_SPLIT, _strip_comment(cmd[h.tail_start:h.line_end]))[0]
     if _in_backticks(head):
         # inside a backtick substitution the next closer (`\`` of a nested one, or the bare
         # backtick) ends the simple command: `echo `echo \`bash <<< 'x'\` tail`` runs `bash`,
         # the ` tail` after the closer is the OUTER echo's (#777 review 4)
         tail = _BACKTICK_CLOSER_RE.split(tail)[0]
-    pipe = _PIPE_SPLIT.split(tail)
+    pipe = split(_PIPE_SPLIT, tail)
     first = _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start)
     if first:
         return first
@@ -1575,14 +1552,18 @@ def _stdin_programs(text, depth=0):
         consumer = _heredoc_runs_body(text, h, funcs)
         if not consumer:
             continue
+        if os.path.basename(consumer) == 'gdb':
+            block('gdb olvas heredocot vagy itt-stringet: a parancsnyelve (shell/she/!, pipe, python, '
+                  'eval, interpreter-exec, guile, -x /dev/stdin) a torzset sokfelekeppen futtathatja, '
+                  'ezert a kapu egeszben nem engedi at (#777 review 12). A gdb-parancsokat irasd '
+                  'fajlba, es -x FAJL-lal add at.')
         if h.kind == 'herestring':
             if h.text.strip():
                 out.append(h.text)
         elif depth < _MAX_NEST:
             body = text[h.body_start:h.body_end]
-            if os.path.basename(consumer) == 'gdb':
-                out.extend(_gdb_shell_lines(body))
-            if '<<<' in body and not _code_consumer(consumer):
+            # `<<` too: a gdb heredoc nested in a run body is blocked one level down (#777 review 12)
+            if '<<' in body and not _code_consumer(consumer):
                 out.extend(_stdin_programs(body, depth + 1))
     return out
 

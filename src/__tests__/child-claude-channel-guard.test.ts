@@ -486,3 +486,36 @@ describe('#777: a here-string program and a literal `bash -c` program reach the 
     expect(decide(command, CHANNEL_ENV).allow).toBe(true)
   })
 })
+
+describe('#777 review 12: gdb reading a heredoc/here-string is denied whole; quoted separators in the opener line', () => {
+  // gdb's command language runs the stdin many ways (abbreviations, eval, python, interpreter-exec):
+  // the guard denies any gdb that reads one, whatever the body. The destructive gate's twin:
+  // scripts/__tests__/destructive-gate.test.py section 23. Quoted shapes: probe-sandbox bash runs each.
+  it.each([
+    ["gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"],
+    ["gdb -batch -ex 'she bash' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nls\nA"],
+    ["gdb -batch -ex 'pi' <<'A'\nimport os\nA"],
+    ["gdb -batch prog <<'A'\nbt\nA"],
+    ["gdb-multiarch -batch <<'A'\nbt\nA"],
+    ["gdb -batch -ex 'py exec(input())' <<< 'import os'"],
+    ["bash <<'A'\ngdb -batch <<'B'\nbt\nB\nA"],
+    ["env X='a;b' bash <<'A'\nclaude -p x\nA"],
+    ["env X=a\\;b bash <<'A'\nclaude -p x\nA"],
+    ["bash -s 'x(y' <<'A'\nclaude -p x\nA"],
+    ["cat <<'A' - 'x;y' | bash\nclaude -p x\nA"],
+    ["bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'claude -p x'"],
+  ])('denies %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+
+  it.each([
+    ['gdb -batch -ex bt ./prog ./core'],
+    ["cat <<'A'\ngdb -batch <<'B'\nbt\nB\nA"],
+    ["echo 'a;b' <<'A'\nclaude -p x\nA"],
+    ["env X='a;b' cat <<'A'\nclaude -p x\nA"],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})

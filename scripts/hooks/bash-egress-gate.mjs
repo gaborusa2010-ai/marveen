@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
 import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, verbIndex } from './lib/shell-command.mjs'
-import { programFeeds, dataBodySubstitutions, shellCPrograms } from './lib/heredoc-program.mjs'
+import { programFeeds, dataBodySubstitutions, shellCPrograms, gdbReadsStdin } from './lib/heredoc-program.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
@@ -233,6 +233,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
   // as a command line of its own, exactly like `sh -c "..."`; one run by
   // python/node/... by CODE_FETCHER_RE on its text, as before.
   // #777: the here-string word a shell runs (`bash <<< 'curl ..'`) is a feed like a body.
+  // #777 review 12: gdb's command language can run a heredoc/here-string many ways; blocked whole
+  if (gdbReadsStdin(cmd)) return { blocked: true, tier: 'gdb-stdin' }
   for (const { body, consumer } of programFeeds(cmd)) {
     if (!body) continue
     if (!CODE_INTERPRETERS.has(consumer)) {

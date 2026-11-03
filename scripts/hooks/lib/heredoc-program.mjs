@@ -125,21 +125,15 @@ const WRAPPERS = {
 const SHELL_WITHOUT_COMMAND = new Set(['pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp'])
 // ...but not when they only print something (#777 review 10: `setarch --list`, `machinectl list`).
 const INFO_FLAGS = ['--help', '-h', '--version', '-V', '--list']
-// The program follows a marker word (#777 review 9): `gdb -batch -ex r --args prog`,
-// `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
+// The program follows a marker word (#777 review 9): `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
 // toolbox enter start a shell, their other subcommands (create, list, rm) run nothing (#777 review 10).
-const MARKER_LAUNCHERS = { gdb: ['--args', false], distrobox: ['--', true], 'distrobox-enter': ['--', true], toolbox: ['run', true] }
+const MARKER_LAUNCHERS = { distrobox: ['--', true], 'distrobox-enter': ['--', true], toolbox: ['run', true] }
 const SHELL_SUBCOMMAND = { distrobox: 'enter', toolbox: 'enter' }
-// gdb without -batch reads its stdin as gdb commands, and `shell CMD` runs CMD, with or without
-// --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
-const GDB_BATCH = ['-batch', '--batch', '-batch-silent', '--batch-silent']
-const GDB_INFO = ['--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration']
-const GDB_EX_FLAGS = ['-ex', '--ex', '-eval-command', '--eval-command', '-iex', '--iex', '-init-eval-command', '--init-eval-command']
-// gdb commands that hand their text to a shell or to Python (#777 review 11)
-const GDB_SHELL_CMD_RE = /^\s*(?:shell\b|!|pipe\b|\|)([\s\S]*)/
-const GDB_PYTHON_CMD_RE = /^\s*(?:python|python-interactive|py|pi)\b/
-const GDB_SCRIPT_FLAGS = ['-x', '--x', '-command', '--command', '-ix', '--ix', '-init-command', '--init-command']
-const GDB_SOURCE_STDIN_RE = /^\s*source\s+(?:-\S+\s+)*(\S+)\s*$/
+// A gdb that reads a heredoc/here-string is BLOCKED by every gate whatever its flags (#777 review 12):
+// its command language runs shell lines and code many ways (`she`, `!`, `pipe`, `python exec(stdin)`,
+// `eval "shell %s"`, `interpreter-exec`, guile, `-x /dev/stdin`, an inferior inheriting the stdin).
+// The Python twin's _GDB_NAMES.
+const GDB_NAMES = new Set(['gdb', 'gdb-multiarch'])
 const TOOLBOX_VALUE_FLAGS = ['-c', '--container', '-d', '--distro', '-r', '--release']
 // su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 // the options) they start a shell that reads the stdin (#777 review 8).
@@ -233,7 +227,7 @@ function firstInterpreter(words, j) {
   return -1
 }
 
-const LAUNCHERS = new Set([...Object.keys(WRAPPERS), ...ARGV_FEEDERS, ...REMOTE_RUNNERS, ...SU_LIKE, ...Object.keys(MARKER_LAUNCHERS)])
+const LAUNCHERS = new Set([...Object.keys(WRAPPERS), ...ARGV_FEEDERS, ...REMOTE_RUNNERS, ...SU_LIKE, ...Object.keys(MARKER_LAUNCHERS), ...GDB_NAMES])
 
 /** The first shell word after index j ('' if none): the conservative answer when a launcher
  *  runs a program we do not model (review-6 rule, #777 review 8: `chrt 1 bash`, `firejail bash`). */
@@ -344,14 +338,10 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
     return c
   }
   if (SU_LIKE.has(base)) return suConsumer(words, k, base, depth, loose, argv)
+  if (GDB_NAMES.has(base)) return 'gdb'
   if (Object.hasOwn(MARKER_LAUNCHERS, base)) {
     let [marker, shell] = MARKER_LAUNCHERS[base]
     const rest = words.slice(k + 1).map(([x]) => x)
-    if (base === 'gdb' && !argv && !rest.some((x) => GDB_BATCH.includes(x) || GDB_INFO.includes(x))) return base
-    if (base === 'gdb') {
-      const c = gdbCommandConsumer(rest, depth)
-      if (c) return c
-    }
     if (Object.hasOwn(SHELL_SUBCOMMAND, base)) shell = (rest.find((x) => !x.startsWith('-')) ?? '') === SHELL_SUBCOMMAND[base]
     let j = words.findIndex(([x], i) => i > k && x === marker)
     if (j >= 0 && base === 'toolbox') {
@@ -363,52 +353,6 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
     return viaLauncher(words, j + 1, depth, loose, argv)
   }
   return ''
-}
-
-/** The consumer behind gdb's -ex/-iex commands (words before --args): `shell CMD`, `!CMD` and
- *  `pipe ... | CMD` run CMD in a shell that inherits gdb's stdin, so CMD is read like a shell
- *  line; a `python` command runs arbitrary code, which may read stdin (#777 review 11:
- *  `gdb -batch -ex 'shell bash' <<A` ran the body). The Python twin's _gdb_command_consumer. */
-function gdbCommandConsumer(rest, depth) {
-  const vals = []
-  for (let i = 0; i < rest.length && rest[i] !== '--args'; i++) {
-    const x = rest[i]
-    if (GDB_EX_FLAGS.includes(x)) {
-      if (i + 1 < rest.length) vals.push(rest[i + 1])
-      i++
-      continue
-    }
-    if (GDB_SCRIPT_FLAGS.includes(x)) {
-      if (i + 1 < rest.length && STDIN_PATH_RE.test(rest[i + 1])) return 'gdb'   // `-x /dev/stdin`: the body is a gdb script
-      i++
-      continue
-    }
-    const eq = x.indexOf('=')
-    if (eq >= 0 && GDB_EX_FLAGS.includes(x.slice(0, eq))) vals.push(x.slice(eq + 1))
-    if (eq >= 0 && GDB_SCRIPT_FLAGS.includes(x.slice(0, eq)) && STDIN_PATH_RE.test(x.slice(eq + 1))) return 'gdb'
-  }
-  for (const v of vals) {
-    const src = GDB_SOURCE_STDIN_RE.exec(v)
-    if (src && STDIN_PATH_RE.test(src[1])) return 'gdb'
-    const m = GDB_SHELL_CMD_RE.exec(v)
-    if (m) {
-      const c = anyRunsStdin(m[1], depth + 1)
-      if (c) return c
-    }
-    if (GDB_PYTHON_CMD_RE.test(v)) return 'gdb'
-  }
-  return ''
-}
-
-/** The shell command lines of a gdb script read from the stdin: `shell CMD`, `!CMD`, `pipe ..| CMD`
- *  and `| ..| CMD` lines, the gdb prefix removed. The Python twin's _gdb_shell_lines. */
-export function gdbShellLines(body) {
-  const out = []
-  for (const line of body.split('\n')) {
-    const m = GDB_SHELL_CMD_RE.exec(line)
-    if (m && m[1].trim()) out.push(m[1])
-  }
-  return out
 }
 
 /** The PROGRAM of the remote/container runner at word `k`, -1 when none: the subcommand
@@ -1105,12 +1049,109 @@ function enclosingRuns(parts, funcs) {
  * The consumer that runs heredoc `h` (a record from lib/heredoc-scan.mjs) of `cmd`
  * as a program, or '' when the body is data. `funcs` is functionBodies(cmd),
  * passed in by callers that judge several heredocs of one command.
+ * A quoted or escaped separator before the consumer (`env X='a;b' bash <<A`, `bash -s 'x(y' <<A`)
+ * cut the opener line in the wrong place and the body passed as data (#777 review 12). The
+ * quote-aware reading comes second and only adds a consumer: the opener line alone does not
+ * show a quote opened on an earlier line. The Python twin's _heredoc_runs_body.
  */
 export function heredocRunsBody(cmd, h, funcs) {
+  if (funcs === undefined) funcs = functionBodies(cmd)
+  return heredocRunsSplit(cmd, h, funcs, plainSplit) || heredocRunsSplit(cmd, h, funcs, quotedSplit)
+}
+
+const plainSplit = (rx, text) => text.split(rx)
+
+/** Per character: inside quotes (0 no, 1 single, 2 double)? `$(` and backticks inside double
+ *  quotes go back to command context, `$'..'` escapes its closer. The Python twin's _quote_map. */
+function quoteMap(text) {
+  const state = new Array(text.length).fill(0)
+  const stack = []
+  let q = 0
+  let depth = 0
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const ch = text[i]
+    if (ch === '\\' && q !== 1 && i + 1 < n) {
+      state[i] = q
+      state[i + 1] = q
+      i += 2
+      continue
+    }
+    if (q === 2 && (ch === '`' || text.startsWith('$(', i))) {
+      const step = ch === '`' ? 1 : 2
+      stack.push([ch === '`' ? '`' : ')', depth])
+      depth = 0
+      for (let k = 0; k < step; k++) state[i + k] = 0
+      i += step
+      q = 0
+      continue
+    }
+    if (q === 0 && stack.length) {
+      const closer = stack[stack.length - 1][0]
+      if (closer === ')' && ch === '(') depth++
+      else if (ch === closer && (closer === '`' || depth === 0)) {
+        depth = stack.pop()[1]
+        state[i] = 0
+        i++
+        q = 2
+        continue
+      } else if (closer === ')' && ch === ')') depth--
+    }
+    if (q === 0 && text.startsWith("$'", i)) {
+      i += 2
+      while (i < n && text[i] !== "'") {
+        const step = text[i] === '\\' && i + 1 < n ? 2 : 1
+        for (let k = 0; k < step; k++) state[i + k] = 1
+        i += step
+      }
+      if (i < n) i++
+      continue
+    }
+    if (q === 0 && (ch === "'" || ch === '"')) {
+      q = ch === "'" ? 1 : 2
+      i++
+      continue
+    }
+    if ((q === 1 && ch === "'") || (q === 2 && ch === '"')) {
+      q = 0
+      i++
+      continue
+    }
+    state[i] = q
+    i++
+  }
+  return state
+}
+
+/** text.split(rx) at the matches outside quotes and backslash escapes only (#777 review 12).
+ *  The Python twin's _quoted_split; rx keeps its separators when it has a capture group. */
+function quotedSplit(rx, text) {
+  const state = quoteMap(text)
+  const mask = text.split('')
+  for (let i = 0; i < text.length; i++) {
+    if (state[i]) mask[i] = '_'
+    else if (text[i] === '\\' && i + 1 < text.length) {
+      mask[i] = mask[i + 1] = '_'
+      i++
+    }
+  }
+  const keep = new RegExp(rx.source + '|').exec('').length > 1
+  const out = []
+  let pos = 0
+  for (const m of mask.join('').matchAll(new RegExp(rx.source, 'g'))) {
+    out.push(text.slice(pos, m.index))
+    if (keep) out.push(text.slice(m.index, m.index + m[0].length))
+    pos = m.index + m[0].length
+  }
+  out.push(text.slice(pos))
+  return out
+}
+
+function heredocRunsSplit(cmd, h, funcs, split) {
   let ls = cmd.lastIndexOf('\n', h.start - 1)
   while (ls > 0 && cmd[ls - 1] === '\\') ls = cmd.lastIndexOf('\n', ls - 2)
   if (h.start - ls > LINE_CAP || h.lineEnd - h.tailStart > LINE_CAP) return 'unread'
-  if (funcs === undefined) funcs = functionBodies(cmd)
   let head = cmd.slice(ls + 1, h.start).replaceAll('\\\n', '')
   const fd = head.match(/(^|\s)([0-9]+)$/)         // `bash 0<<SH`: a file descriptor, not a script
   if (fd) {
@@ -1122,21 +1163,21 @@ export function heredocRunsBody(cmd, h, funcs) {
       // it onto stdin (`bash 3<<SH <&3`): then the command is read as if it had stdin.
       const path = '/(?:dev|proc/self)/fd/0*' + n + '(?![0-9])'
       const dup = '(?:^|\\s)0?<&\\s*0*' + n + '-?(?=\\s|$)'
-      let line = head + ' ' + stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
+      let line = head + ' ' + split(TAIL_SPLIT, stripComment(cmd.slice(h.tailStart, h.lineEnd)))[0]
       if (!new RegExp(path).test(line) && !new RegExp(dup).test(line)) return ''
       line = line.replace(new RegExp(path, 'g'), '-').replace(new RegExp(dup, 'g'), ' ')
       // the last simple command, with its closer (`{ bash; } 2>&1 3<<EOF <&3`, #775):
       // the same way as the stdin-heredoc head below
-      return simpleRuns(subBlanked(line).split(HEAD_SPLIT).at(-1), funcs, cmd, h.start)
+      return simpleRuns(split(HEAD_SPLIT, subBlanked(line)).at(-1), funcs, cmd, h.start)
     }
   }
-  const parts = subBlanked(head).split(HEAD_SPLIT)
-  let tail = stripComment(cmd.slice(h.tailStart, h.lineEnd)).split(TAIL_SPLIT)[0]
+  const parts = split(HEAD_SPLIT, subBlanked(head))
+  let tail = split(TAIL_SPLIT, stripComment(cmd.slice(h.tailStart, h.lineEnd)))[0]
   // inside a backtick substitution the next closer (`\`` of a nested one, or the bare backtick)
   // ends the simple command: `echo `echo \`bash <<< 'x'\` tail`` runs `bash`, the ` tail` after
   // the closer is the OUTER echo's (#777 review 4)
   if (inBackticks(head)) tail = tail.split(BACKTICK_CLOSER)[0]
-  const pipe = tail.split(PIPE_SPLIT)
+  const pipe = split(PIPE_SPLIT, tail)
   const first = simpleRuns(parts[parts.length - 1] + ' ' + pipe[0], funcs, cmd, h.start)
   if (first) return first
   for (const p of pipe.slice(1)) {
@@ -1353,10 +1394,19 @@ export function programHeredocs(cmd) {
     if (!consumer) continue
     const body = s.slice(h.bodyStart, h.bodyEnd).replace(/\n$/, '')
     out.push({ consumer: baseName(consumer), body })
-    // a gdb script from the stdin: its `shell`/`!`/pipe lines are shell command lines (#777 review 11)
-    if (baseName(consumer) === 'gdb') for (const line of gdbShellLines(body)) out.push({ consumer: 'sh', body: line })
   }
   return out
+}
+
+/** Does a gdb read one of the command's heredocs or here-strings (this level only; the gates
+ *  recurse into the bodies a shell runs)? Every gate blocks that whole (#777 review 12). The
+ *  Python twin's gdb check in _stdin_programs. */
+export function gdbReadsStdin(cmd) {
+  const s = String(cmd ?? '')
+  if (!s.includes('<<')) return false
+  const { records } = findAll(s)
+  const funcs = functionBodies(s)
+  return records.some((h) => baseName(heredocRunsBody(s, h, funcs)) === 'gdb')
 }
 
 /**

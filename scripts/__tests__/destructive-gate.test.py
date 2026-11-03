@@ -1176,7 +1176,6 @@ for label, cmd in [
     ("f(){ bash <\"a*b\"; }; f <<'A' (idezett csillag: literal)", "f(){ bash <\"a*b\"; }; f <<'A'"),
     ("xargs <<'A' (parancs nelkul: echo)", "xargs <<'A'"),
     ("grep bash <<'A'", "grep bash <<'A'"),
-    ("gdb -batch prog <<'A' (--args nelkul nem fut a program)", "gdb -batch prog <<'A'"),
     ("numactl -C 0 cat <<'A'", "numactl -C 0 cat <<'A'"),
     ("toolbox run cat <<'A'", "toolbox run cat <<'A'"),
     ("su -c 'cat' root <<'A'", "su -c 'cat' root <<'A'"),
@@ -1185,7 +1184,7 @@ for label, cmd in [
 print("a fogyaszto szo (review 9):")
 check("xargs env <<'A' -> env", _consumer("xargs env <<'A'\nx\nA") == ["env"])
 check("busybox ash <<'A' -> ash", _consumer("busybox ash <<'A'\nx\nA") == ["ash"])
-check("gdb -batch -ex r --args bash <<'A' -> bash", _consumer("gdb -batch -ex r --args bash <<'A'\nx\nA") == ["bash"])
+check("gdb -batch -ex r --args bash <<'A' -> gdb (review 12: a gdb egeszben)", _consumer("gdb -batch -ex r --args bash <<'A'\nx\nA") == ["gdb"])
 check("xargs <<'A' -> '' (adat)", _consumer("xargs <<'A'\nx\nA") == [""])
 
 
@@ -1226,8 +1225,6 @@ for label, cmd in [
     check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
 print("negativ kontroll (review 10):")
 for label, cmd in [
-    ("gdb -batch prog <<'A' (gdb 17.1: nem futott)", "gdb -batch prog <<'A'"),
-    ("gdb --version <<'A' (gdb 17.1: nem futott)", "gdb --version <<'A'"),
     ("machinectl list <<'A'", "machinectl list <<'A'"),
     ("machinectl status box <<'A'", "machinectl status box <<'A'"),
     ("setarch --list <<'A'", "setarch --list <<'A'"),
@@ -1241,7 +1238,6 @@ for label, cmd in [
     check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
 print("a fogyaszto szo (review 10):")
 check("gdb -q -nx prog <<'A' -> gdb", _consumer("gdb -q -nx prog <<'A'\nx\nA") == ["gdb"])
-check("gdb -batch prog <<'A' -> '' (adat)", _consumer("gdb -batch prog <<'A'\nx\nA") == [""])
 check("xargs rsh host echo <<'A' -> rsh", _consumer("xargs rsh host echo <<'A'\nx\nA") == ["rsh"])
 check("mksh <<'A' -> mksh", _consumer("mksh <<'A'\nx\nA") == ["mksh"])
 
@@ -1286,19 +1282,86 @@ for label, cmd in [
     ("f(){ cat <<'X' / } / X / }; f <<'A'", "f(){ cat <<'X'\n}\nX\n}; f <<'A'"),
     ("f(){ echo $'a\\'b'; cat; }; f <<'A'", "f(){ echo $'a\\'b'; cat; }; f <<'A'"),
     ("f(){ echo $((1+2)); cat; }; f <<'A'", "f(){ echo $((1+2)); cat; }; f <<'A'"),
-    ("gdb -batch -nx <<'A'", "gdb -batch -nx <<'A'"),
-    ("gdb -batch -ex 'shell echo hi' <<'A'", "gdb -batch -ex 'shell echo hi' <<'A'"),
-    ("gdb -batch -ex 'print 1' prog <<'A'", "gdb -batch -ex 'print 1' prog <<'A'"),
 ]:
     check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
-check("gdb -batch -x cmds.gdb prog <<'A' / shell RM (a szkript fajlbol jon, a torzs adat)",
-      not blocks("gdb -batch -x cmds.gdb prog <<'A'\nshell " + RMH + "\nA"))
-check("gdb -q -nx prog <<'A' / shell echo hi / bt", not blocks("gdb -q -nx prog <<'A'\nshell echo hi\nbt\nA"))
 check("cat <<'A' / shell RM (adat)", not blocks("cat <<'A'\nshell " + RMH + "\nA"))
 print("a fogyaszto szo (review 11):")
-check("gdb -batch -ex 'shell bash' <<'A' -> bash", _consumer("gdb -batch -ex 'shell bash' <<'A'\nx\nA") == ["bash"])
+check("gdb -batch -ex 'shell bash' <<'A' -> gdb", _consumer("gdb -batch -ex 'shell bash' <<'A'\nx\nA") == ["gdb"])
 check("gdb -batch -x /dev/stdin <<'A' -> gdb", _consumer("gdb -batch -x /dev/stdin <<'A'\nx\nA") == ["gdb"])
-check("gdb -batch -nx <<'A' -> '' (adat)", _consumer("gdb -batch -nx <<'A'\nx\nA") == [""])
+
+# --- 23. #777 review 12: a gdb heredoc/itt-string stdinnel EGESZBEN tilos; idezett elvalaszto a fejben ---
+# (1) A gdb parancsnyelve tul sok uton futtatja a torzset (`she`, `eval "shell %s"`, interpreter-exec,
+# `python exec(sys.stdin.read())`, guile, define, -x /dev/stdin): a review 10-11 negativ kontrolljai
+# (gdb -batch prog, --version, -nx, -ex 'print 1', -x cmds.gdb, shell echo hi) MOST BLOKKOLNAK, ez
+# vallalt tultiltas (Marveen review 12 javaslata). A gdb-szabaly a torzstol fuggetlenul blokkol.
+# (2) A heredoc-nyito sor fejeben idezett vagy escape-elt `;`/`(`/`|`/`&` a fogyaszto elott a fejet rossz
+# helyen vagta, a torzs adatnak latszott: `env X='a;b' bash <<A` (a bazison, ae20f75a-n is ALLOW).
+# probe-sandbox bash-sal merve: mind a 10 must-block futtatja a torzset, a 3 negativ kontroll nem.
+# Az idezett szoveg csak MASODIK olvasat (csak hozzaad fogyasztot): `grep 'a;bash' <<A` mar
+# ca246eac-n is blokkolt (a sima vagas `bash'`-t lat), ez a regi tultiltas marad.
+print()
+print("#777 review 12, MUST-BLOCK (gdb, a torzstol fuggetlenul):")
+for label, cmd in [
+    ("gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'",
+     "gdb -batch -ex 'python import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'",
+     "gdb -batch -ex 'py import sys; exec(sys.stdin.read())' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'she bash' <<'A'", "gdb -batch -ex 'she bash' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'shel bash' <<'A'", "gdb -batch -ex 'shel bash' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'", "gdb -batch -ex 'eval \"shell %s\", \"bash\"' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'",
+     "gdb -batch -ex 'interpreter-exec console \"shell bash\"' <<'A'\nls\nA"),
+    ("gdb -batch -ex 'pi' <<'A'", "gdb -batch -ex 'pi' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'python-interactive' <<'A'", "gdb -batch -ex 'python-interactive' <<'A'\nimport os\nA"),
+    ("gdb -batch -ex 'so /dev/stdin' <<'A'", "gdb -batch -ex 'so /dev/stdin' <<'A'\nbt\nA"),
+    ("gdb -batch prog <<'A' (review 9-10: adat volt)", "gdb -batch prog <<'A'\nbt\nA"),
+    ("gdb --version <<'A'", "gdb --version <<'A'\nbt\nA"),
+    ("gdb -batch -nx <<'A'", "gdb -batch -nx <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'print 1' prog <<'A'", "gdb -batch -ex 'print 1' prog <<'A'\nbt\nA"),
+    ("gdb -batch -x cmds.gdb prog <<'A'", "gdb -batch -x cmds.gdb prog <<'A'\nbt\nA"),
+    ("gdb-multiarch -batch <<'A'", "gdb-multiarch -batch <<'A'\nbt\nA"),
+    ("/usr/bin/gdb -q <<'A'", "/usr/bin/gdb -q <<'A'\nbt\nA"),
+    ("gdb -batch -ex 'py exec(input())' <<< 'import os'", "gdb -batch -ex 'py exec(input())' <<< 'import os'"),
+    ("sudo gdb -batch <<'A'", "sudo gdb -batch <<'A'\nbt\nA"),
+    ("f(){ gdb -batch; }; f <<'A'", "f(){ gdb -batch; }; f <<'A'\nbt\nA"),
+    ("cat <<'A' | gdb -batch", "cat <<'A' | gdb -batch\nbt\nA"),
+    ("bash <<'A' / gdb -batch <<'B' (egymasba agyazva)", "bash <<'A'\ngdb -batch -ex 'py exec(open(0).read())' <<'B'\nimport os\nB\nA"),
+    ("bash -c \"gdb -batch <<< 'bt'\"", "bash -c \"gdb -batch <<< 'bt'\""),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 12):")
+for label, cmd in [
+    ("gdb -batch -ex bt ./core (heredoc nelkul)", "gdb -batch -ex bt ./prog ./core"),
+    ("cat <<'A' / gdb -batch (a gdb szo a torzsben, adat)", "cat <<'A'\ngdb -batch <<'B'\nbt\nB\nA"),
+    ("echo gdb <<'A' (a gdb argumentum)", "echo gdb <<'A'\nbt\nA"),
+]:
+    check(label, not blocks(cmd))
+print("#777 review 12, MUST-BLOCK (idezett/escape-elt elvalaszto a fejben):")
+for label, cmd in [
+    ("env X='a;b' bash <<'A'", "env X='a;b' bash <<'A'"),
+    ("X='a;b' bash <<'A'", "X='a;b' bash <<'A'"),
+    ("env X=\"a;b\" bash <<'A'", "env X=\"a;b\" bash <<'A'"),
+    ("env X=a\\;b bash <<'A'", "env X=a\\;b bash <<'A'"),
+    ("timeout 5 bash -s 'a;b' <<'A'", "timeout 5 bash -s 'a;b' <<'A'"),
+    ("bash -s 'x(y' <<'A'", "bash -s 'x(y' <<'A'"),
+    ("env X='a|b' bash <<'A'", "env X='a|b' bash <<'A'"),
+    ("env X='a&b' bash <<'A'", "env X='a&b' bash <<'A'"),
+    ("cat <<'A' - 'x;y' | bash", "cat <<'A' - 'x;y' | bash"),
+    ("bash -c 'IFS= read -r l; bash -c \"$l\"' <<< 'RM' (eddig ismert res)",
+     "bash -c 'IFS= read -r l; bash -c \"$l\"' <<< '" + RMH + "'"),
+]:
+    check(label + " / RM / A", blocks(cmd + ("" if "<<<" in cmd else "\n" + RMH + "\nA")))
+print("negativ kontroll (review 12, idezett elvalaszto):")
+for label, cmd in [
+    ("echo 'a;b' <<'A' / RM (adat)", "echo 'a;b' <<'A'\n" + RMH + "\nA"),
+    ("env X='a;b' cat <<'A' / RM (adat)", "env X='a;b' cat <<'A'\n" + RMH + "\nA"),
+    ("sort -t';' <<'A' / RM (adat)", "sort -t';' <<'A'\n" + RMH + "\nA"),
+]:
+    check(label, not blocks(cmd))
+print("a fogyaszto szo (review 12):")
+check("gdb -batch -nx <<'A' -> gdb", _consumer("gdb -batch -nx <<'A'\nx\nA") == ["gdb"])
+check("env X='a;b' bash <<'A' -> bash", _consumer("env X='a;b' bash <<'A'\nx\nA") == ["bash"])
+check("echo 'a;b' <<'A' -> '' (adat)", _consumer("echo 'a;b' <<'A'\nx\nA") == [""])
 
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
