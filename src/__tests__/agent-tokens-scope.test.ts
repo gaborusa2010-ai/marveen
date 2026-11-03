@@ -932,6 +932,9 @@ describe('HTTP: the dashboard gate in front of the real routes', () => {
     expectBinding403(await call('POST', `/api/kanban/${id}/move`, agentTok, { status: 'in_progress', actor: MAIN_AGENT_ID }), 'move as main')
     expectBinding403(await call('PUT', `/api/kanban/${id}`, agentTok, { title: 'x', actor: MAIN_AGENT_ID }), 'PUT as main')
     expect((await call('POST', `/api/kanban/${id}/comments`, agentTok, { author: AGENT, content: 'sajat' })).status).toBe(200)
+    // LOCAL #663: a sub-agent's in_progress needs the card read first (read_card_first, 409 otherwise).
+    expect((await call('GET', `/api/kanban/${id}`, agentTok)).status).toBe(200)
+    expect((await call('GET', `/api/kanban/${id}/comments`, agentTok)).status).toBe(200)
     expect((await call('POST', `/api/kanban/${id}/move`, agentTok, { status: 'in_progress', actor: AGENT })).status).toBe(200)
     expect((await call('POST', `/api/kanban/${id}/release`, agentTok, { agent: AGENT })).status).toBe(200)
     // main token: force release and foreign authorship still pass the gate

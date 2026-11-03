@@ -802,17 +802,21 @@ export function initDatabase(dbPathOverride?: string): void {
   // churning the index. DROP + CREATE for the same upgrade reason as above;
   // the FTS column set decides the body (pre-keywords installs index content
   // only).
-  const ftsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'memories_fts'").get() as { sql: string } | undefined)?.sql ?? ''
-  db.exec('DROP TRIGGER IF EXISTS memories_au')
-  db.exec(/\bkeywords\b/.test(ftsSql)
-    ? `CREATE TRIGGER memories_au AFTER UPDATE OF content, keywords ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content, keywords) VALUES('delete', old.id, old.content, old.keywords);
-        INSERT INTO memories_fts(rowid, content, keywords) VALUES (new.id, new.content, new.keywords);
-      END`
-    : `CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
-        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
-      END`)
+  // One IMMEDIATE transaction, like the touch trigger above: concurrent startups
+  // (db-init-concurrent.test.ts) otherwise race between the DROP and the CREATE.
+  db.transaction(() => {
+    const ftsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'memories_fts'").get() as { sql: string } | undefined)?.sql ?? ''
+    db.exec('DROP TRIGGER IF EXISTS memories_au')
+    db.exec(/\bkeywords\b/.test(ftsSql)
+      ? `CREATE TRIGGER memories_au AFTER UPDATE OF content, keywords ON memories BEGIN
+          INSERT INTO memories_fts(memories_fts, rowid, content, keywords) VALUES('delete', old.id, old.content, old.keywords);
+          INSERT INTO memories_fts(rowid, content, keywords) VALUES (new.id, new.content, new.keywords);
+        END`
+      : `CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN
+          INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+          INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+        END`)
+  }).immediate()
   // Memory version history (card 27ab6a18, 2026-09-14).
   //
   // WHY: PUT /api/memories/<id> overwrote `content` in place and answered
