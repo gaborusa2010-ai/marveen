@@ -160,7 +160,7 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
-INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'node', 'perl', 'ruby', 'php'}
+INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash', 'node', 'perl', 'ruby', 'php'}
 SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
 # -p is node's print-eval and -E is perl's feature-enabled -e. They are in the
 # set only so the argument after them counts as CODE rather than prose. A flag
@@ -445,11 +445,18 @@ _STDIN_WRAPPERS = {
 # Launchers that start a shell reading the stdin when no command follows (#777 review 9):
 # `pkexec <<A`, `firejail <<A`, `fakeroot <<A`, `proot <<A`, `machinectl shell host <<A`, `setarch x86_64 <<A`, `newgrp grp <<A`.
 _SHELL_WITHOUT_COMMAND = ('pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp')
+# ...but not when they only print something (#777 review 10: `setarch --list`, `machinectl list`).
+_INFO_FLAGS = ('--help', '-h', '--version', '-V', '--list')
 # The program follows a marker word (#777 review 9): `gdb -batch -ex r --args prog`,
-# `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: gdb runs nothing,
-# distrobox enter / toolbox enter start a shell.
+# `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
+# toolbox enter start a shell, their other subcommands (create, list, rm) run nothing (#777 review 10).
 _MARKER_LAUNCHERS = {'gdb': ('--args', False), 'distrobox': ('--', True), 'distrobox-enter': ('--', True),
                      'toolbox': ('run', True)}
+_SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
+# gdb without -batch reads its stdin as gdb commands, and `shell CMD` runs CMD, with or without
+# --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
+_GDB_BATCH = ('-batch', '--batch', '-batch-silent', '--batch-silent')
+_GDB_INFO = ('--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration')
 _TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
 # su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 # the options) they start a shell that reads the stdin (#777 review 8).
@@ -469,7 +476,9 @@ _ARGV_FEEDERS = ('xargs', 'parallel')
 # `compose`/`container` elotaggal es globalis kapcsolokkal is) a kapcsolok elott all; ismeretlen
 # alparancsnal az elso ertelmezo-szo a program (a review-6 elotti alak). A sshpass-nak nincs
 # hostja: a kapcsoloi utani szo a program (rendszerint egy ssh, amit ugyanigy olvasunk).
-_REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl')
+_REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'rsh', 'dbclient', 'autossh', 'docker', 'podman', 'nerdctl', 'kubectl')
+# A remote login shell reads the stdin; the remote command line is re-parsed by a shell.
+_SSH_LIKE = ('ssh', 'mosh', 'plink', 'rsh', 'dbclient', 'autossh')
 _DOCKER_VALUE_FLAGS = ('-u', '--user', '-w', '--workdir', '-e', '--env', '--env-file', '--detach-keys', '-v', '--volume',
      '-p', '--publish', '--name', '--network', '--net', '--entrypoint', '-l', '--label', '--label-file',
      '--mount', '--cpus', '-m', '--memory', '--memory-swap', '-h', '--hostname', '--add-host', '--cap-add',
@@ -489,6 +498,10 @@ _RUNNER_VALUE_FLAGS = {
     'plink': ('-l', '-P', '-i', '-pw', '-pwfile', '-m', '-L', '-R', '-D', '-proxycmd', '-hostkey', '-nc',
               '-sercfg', '-sshlog', '-sshrawlog', '-loghost'),
     'sshpass': ('-p', '-f', '-d', '-P'),
+    'rsh': ('-l',),
+    'dbclient': ('-p', '-l', '-i', '-L', '-R', '-o', '-W', '-K', '-I', '-J', '-c', '-m', '-b', '-B'),
+    'autossh': ('-M', '-l', '-p', '-i', '-o', '-F', '-J', '-b', '-c', '-D', '-E', '-e', '-I', '-L', '-m', '-O', '-Q',
+                '-R', '-S', '-W', '-w', '-B', '-P'),
     'docker': _DOCKER_VALUE_FLAGS, 'podman': _DOCKER_VALUE_FLAGS, 'nerdctl': _DOCKER_VALUE_FLAGS,
     'kubectl': ('-n', '--namespace', '-c', '--container', '--context', '--kubeconfig', '--cluster', '--user', '--as',
      '--as-group', '--request-timeout', '-f', '--filename', '--pod-running-timeout', '-s', '--server',
@@ -578,7 +591,18 @@ def _via_launcher(words, j, depth, loose, argv):
 def _su_consumer(words, k, base, depth, loose, argv):
     """su/runuser/script (#777 review 8). `-c CMD` (also in a cluster: `-qc`) runs CMD through a
     shell; behind xargs the body may be that CMD. `runuser -u U -- cmd` execs cmd. Without a
-    command they start a shell that reads the stdin."""
+    command they start a shell that reads the stdin. `sg [-] group [-c] command` hands the
+    command to /bin/sh -c (#777 review 10: `sg grp cat` is data)."""
+    if base == 'sg':
+        rest = words[k + 1:]
+        if rest and rest[0][0] == '-':
+            rest = rest[1:]
+        cmd = rest[1:]
+        if cmd and cmd[0][0] == '-c':
+            cmd = cmd[1:]
+        if argv or not cmd or any(d for _x, d in cmd):
+            return base
+        return base if _any_runs_stdin(' '.join(x for x, _d in cmd), depth + 1) else ''
     j = k + 1
     while j < len(words):
         x, dyn = words[j]
@@ -618,7 +642,13 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         j = _after_stdin_wrapper(words, k, _STDIN_WRAPPERS[base])
         if j is None:
             # `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
-            return base if argv or base in _SHELL_WITHOUT_COMMAND or any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
+            if argv:
+                return base
+            if base in _SHELL_WITHOUT_COMMAND and not any(x in _INFO_FLAGS for x, _d in words[k + 1:]):
+                # `machinectl shell box <<A` reads the body; `machinectl list`/`status box` do not
+                if base != 'machinectl' or next((x for x, _d in words[k + 1:] if not x.startswith('-')), '') in ('shell', 'login'):
+                    return base
+            return base if any(x in _SHELL_FLAGS_OF.get(base, ()) for x, _ in words[k + 1:]) else ''
         return _via_launcher(words, j, depth, loose, argv)
     if base in _ARGV_FEEDERS:
         j = _after_feeder_options(words, k)
@@ -628,16 +658,16 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
             return base if base == 'parallel' else ''
         return _via_launcher(words, j, depth, loose, True)
     if base in _REMOTE_RUNNERS:
-        if argv and base in ('ssh', 'mosh', 'plink'):
+        if argv and base in _SSH_LIKE:
             # the body's words join the remote command line, whatever program it names (#777 review 9)
             return base
         j = _runner_program(words, k)
         if j is None:
             # `ssh host <<A`: the remote login shell reads the body; behind xargs the body is
             # the remote command (#777 review 7, 8). A container runner without a command runs nothing.
-            return base if base in ('ssh', 'mosh', 'plink') else ''
+            return base if base in _SSH_LIKE else ''
         c = _via_launcher(words, j, depth, loose, argv)
-        if not c and base in ('ssh', 'mosh', 'plink') and not argv:
+        if not c and base in _SSH_LIKE and not argv:
             # the remote shell re-parses the joined words: `ssh host "bash -s"`, `ssh host 'cd /; bash'`
             c = _body_consumer(' '.join(x for x, _d in words[j:]), None, depth + 1)
         return c
@@ -645,6 +675,11 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         return _su_consumer(words, k, base, depth, loose, argv)
     if base in _MARKER_LAUNCHERS:
         marker, shell = _MARKER_LAUNCHERS[base]
+        rest = [x for x, _d in words[k + 1:]]
+        if base == 'gdb' and not argv and not any(x in _GDB_BATCH or x in _GDB_INFO for x in rest):
+            return base
+        if base in _SHELL_SUBCOMMAND:
+            shell = next((x for x in rest if not x.startswith('-')), '') == _SHELL_SUBCOMMAND[base]
         j = next((i for i in range(k + 1, len(words)) if words[i][0] == marker), None)
         if j is not None and base == 'toolbox':
             j += 1
@@ -895,7 +930,7 @@ def _runs_words(words, k, depth, loose=False):
 # torzse program), a python3 -m modult futtat (a torzs annak a bemenete).
 _STDIN_SCRIPT_FLAGS = {
     'bash': ('-c', '--command'), 'sh': ('-c',), 'zsh': ('-c', '--command'), 'dash': ('-c',), 'ksh': ('-c',),
-    'rbash': ('-c', '--command'), 'ash': ('-c',), 'hush': ('-c',),
+    'rbash': ('-c', '--command'), 'ash': ('-c',), 'hush': ('-c',), 'mksh': ('-c',), 'yash': ('-c',),
     'python': ('-c', '-m'), 'python3': ('-c', '-m'),
     'node': ('-e', '-p', '--eval', '--print'), 'perl': ('-e', '-E'), 'ruby': ('-e',), 'php': ('-r',),
 }
@@ -903,10 +938,13 @@ _STDIN_SCRIPT_FLAGS = {
 # Egyszeru parancsok hatarai egy osszetett parancson (ciklus-torzs, fuggveny-torzs) belul.
 # A `>&1`, `<&0`, `&>log` `&`-je atiranyitas, nem parancshatar (#748: `bash 2>&1 <<SH`);
 # a `>|` `|`-je sem az (#775: `bash >| log <<SH`).
-_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(')
+# `{` and `}` are reserved WORDS: a mid-word brace (`/dev/std{i..i}n`, `${x}`, `a}b`) is part of
+# the word, and splitting there hid a dynamic redirect target (#777 review 10).
+_BRACE_WORD = r'(?<![^\s;&|()])[{}](?![^\s;&|()<>])'
+_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\||\$\(')
 # Ugyanaz, az elvalasztokat megtartva: [parancs, elvalaszto, parancs, ...] (#777 review 7: a
 # parancs UTANI `&` hatterbe teszi, akkor nem az orokolt stdin-t olvassa).
-_SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\()')
+_SIMPLE_SPLIT_KEEP = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;\n()`]|' + _BRACE_WORD + r'|(?<!>)\||\$\()')
 # A fej es a cso-tag hatarai a heredoc nyitojanak soran (lasd _heredoc_runs_body).
 _HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()')
 _TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>])&(?!>)')
@@ -1107,16 +1145,61 @@ def _function_bodies(cmd):
     for m in _FUNC_DEF_RE.finditer(cmd):
         name = m.group(1) or m.group(3)
         opener = m.group(2) or m.group(4)
-        closer = '}' if opener == '{' else ')'
-        depth, i = 1, m.end()
-        while i < len(cmd) and depth:
-            if cmd[i] == opener:
-                depth += 1
-            elif cmd[i] == closer:
-                depth -= 1
-            i += 1
-        out[name] = cmd[m.end():i - 1 if depth == 0 else i]
+        out[name] = cmd[m.end():_body_end(cmd, m.end(), opener)]
     return out
+
+
+def _body_end(cmd, start, opener):
+    """Where bash ends a function body opened by `opener` at `start` (len(cmd) when it does not).
+    Quotes, escapes and comments are skipped. `)` closes a `( )` body. A `}` closes only as a
+    reserved word in command position, after `;`, `&`, a newline or a closed `)`/`}`, with a
+    word end after it (measured in probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`,
+    `echo }` do not close). A `{` word opens a nested group. A `}` we do not recognize keeps
+    the body open: more body is over-block, never a missed consumer."""
+    depth, i, n = 1, start, len(cmd)
+    closed = -1                                  # index of the last closing `)`/`}`
+    while i < n:
+        c = cmd[i]
+        if c == '\\':
+            i += 2
+            continue
+        if c == "'":
+            j = cmd.find("'", i + 1)
+            i = n if j < 0 else j + 1
+            continue
+        if c == '"':
+            i += 1
+            while i < n and cmd[i] != '"':
+                i += 2 if cmd[i] == '\\' else 1
+            i += 1
+            continue
+        if c == '#' and (i == start or cmd[i - 1] in ' \t\n;&|(){}'):
+            j = cmd.find('\n', i)
+            i = n if j < 0 else j
+            continue
+        if opener == '(':
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if not depth:
+                    return i
+        elif c in '{}' and (i == start or cmd[i - 1] in ' \t\n;&|()') and (i + 1 >= n or cmd[i + 1] in ' \t\n;&|()<>'):
+            if c == '{':
+                depth += 1
+            else:
+                p = i - 1
+                while p >= start and cmd[p] in ' \t':
+                    p -= 1
+                if p < start or cmd[p] in ';&\n' or (cmd[p] in ')}' and p == closed):
+                    depth -= 1
+                    closed = i
+                    if not depth:
+                        return i
+        elif c == ')':
+            closed = i
+        i += 1
+    return n
 
 
 def _compound_text(cmd, end, closer):
@@ -1603,7 +1686,7 @@ _TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')
-_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush')
+_SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash')
 # A kapcsolok, amelyek KULON szoban hozzak az ertekuket (xargs -I {} / -n 1 / -P 4).
 _VALUE_FLAGS = ('-I', '-i', '-n', '-P', '-L', '-s', '-d', '-E', '-a',
                 '--max-args', '--max-procs', '--delimiter', '--replace', '--arg-file')

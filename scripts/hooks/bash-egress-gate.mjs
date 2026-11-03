@@ -103,9 +103,9 @@ const URL_ONLY_FETCHERS = new Set(['ffmpeg', 'ffplay', 'ffprobe'])
 // did exactly that.
 const NET_URL_RE = /^(https?|ftps?|rtmps?|rtsp|srt|tcp|udp|ws|wss):\/\/[^\s'"`]+$/i
 
-const INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush'])
+const INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash'])
 // The subset whose inline program IS a shell command line.
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush'])
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash'])
 // A heredoc body run by one of these is read as CODE (CODE_FETCHER_RE); any other
 // consumer (a shell, eval, source, a loop, a function, a dynamic name) runs it as a
 // shell command line, so it gets the shell reading below.

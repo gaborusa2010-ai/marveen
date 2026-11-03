@@ -1189,6 +1189,62 @@ check("gdb -batch -ex r --args bash <<'A' -> bash", _consumer("gdb -batch -ex r 
 check("xargs <<'A' -> '' (adat)", _consumer("xargs <<'A'\nx\nA") == [""])
 
 
+# --- 21. #777 review 10: kapcsos tartomany, a fuggvenytorzs vege, gdb stdin, tulblokk, futtato-tabla ---
+# (1) `{i..i}` kapcsos tartomany a celban: nem literal. (2) A `}` csak `;`/`&`/ujsor/`)`/`}` utan zar,
+# idezojelben, szo kozepen es kommentben nem. (3) gdb -batch nelkul a stdinrol olvas parancsot:
+# MERVE gdb 17.1-gyel a homokozoban (2026-11-03), `shell echo PWNED` LEFUTOTT -q -nx, -ex, --args,
+# -n mellett is; -batch/--batch/-batch-silent es --version mellett NEM. (4) Info-kapcsolo es nem
+# shellt indito alparancs nem blokkol (machinectl list, distrobox create, sg grp cat). (5) rsh,
+# dbclient, autossh tavoli futtato; mksh, yash shell.
+print()
+print("#777 review 10, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ bash </dev/std{i..i}n; }; f <<'A'", "f(){ bash </dev/std{i..i}n; }; f <<'A'"),
+    ("while :; do bash </dev/std{i..i}n; break; done <<'A'", "while :; do bash </dev/std{i..i}n; break; done <<'A'"),
+    ("f(){ echo a}b; bash; }; f <<'A'", "f(){ echo a}b; bash; }; f <<'A'"),
+    ("f(){ echo '}'; bash; }; f <<'A'", "f(){ echo '}'; bash; }; f <<'A'"),
+    ("f(){ bash </dev/null; echo }; bash; }; f <<'A'", "f(){ bash </dev/null; echo }; bash; }; f <<'A'"),
+    ("f(){ if true; then { :; }; fi; bash; }; f <<'A'", "f(){ if true; then { :; }; fi; bash; }; f <<'A'"),
+    ("f(){ # a; } / bash; }; f <<'A'", "f(){ # a; }\nbash; }; f <<'A'"),
+    ("gdb -q -nx prog <<'A' (gdb 17.1: lefutott)", "gdb -q -nx prog <<'A'"),
+    ("gdb -q -nx -ex r --args prog <<'A' (gdb 17.1: lefutott)", "gdb -q -nx -ex r --args prog <<'A'"),
+    ("gdb -batch -ex r --args bash <<'A'", "gdb -batch -ex r --args bash <<'A'"),
+    ("machinectl shell box <<'A'", "machinectl shell box <<'A'"),
+    ("setarch x86_64 <<'A'", "setarch x86_64 <<'A'"),
+    ("distrobox enter box <<'A'", "distrobox enter box <<'A'"),
+    ("toolbox enter <<'A'", "toolbox enter <<'A'"),
+    ("sg grp bash <<'A'", "sg grp bash <<'A'"),
+    ("sg grp -c bash <<'A'", "sg grp -c bash <<'A'"),
+    ("sg grp <<'A'", "sg grp <<'A'"),
+    ("xargs rsh host echo <<'A'", "xargs rsh host echo <<'A'"),
+    ("xargs dbclient host echo <<'A'", "xargs dbclient host echo <<'A'"),
+    ("autossh -M 0 host bash <<'A'", "autossh -M 0 host bash <<'A'"),
+    ("autossh -M 0 host <<'A'", "autossh -M 0 host <<'A'"),
+    ("mksh <<'A'", "mksh <<'A'"),
+    ("yash <<'A'", "yash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (review 10):")
+for label, cmd in [
+    ("gdb -batch prog <<'A' (gdb 17.1: nem futott)", "gdb -batch prog <<'A'"),
+    ("gdb --version <<'A' (gdb 17.1: nem futott)", "gdb --version <<'A'"),
+    ("machinectl list <<'A'", "machinectl list <<'A'"),
+    ("machinectl status box <<'A'", "machinectl status box <<'A'"),
+    ("setarch --list <<'A'", "setarch --list <<'A'"),
+    ("distrobox create box <<'A'", "distrobox create box <<'A'"),
+    ("toolbox list <<'A'", "toolbox list <<'A'"),
+    ("sg grp cat <<'A'", "sg grp cat <<'A'"),
+    ("f(){ cat; }; f <<'A'", "f(){ cat; }; f <<'A'"),
+    ("f(){ echo {a,b}; cat; }; f <<'A' (kapcsos szo, nem csoport)", "f(){ echo {a,b}; cat; }; f <<'A'"),
+    ("f(){ echo }; }; cat <<'A' (a `}` argumentum, a cat olvas)", "f(){ echo }; }; cat <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (review 10):")
+check("gdb -q -nx prog <<'A' -> gdb", _consumer("gdb -q -nx prog <<'A'\nx\nA") == ["gdb"])
+check("gdb -batch prog <<'A' -> '' (adat)", _consumer("gdb -batch prog <<'A'\nx\nA") == [""])
+check("xargs rsh host echo <<'A' -> rsh", _consumer("xargs rsh host echo <<'A'\nx\nA") == ["rsh"])
+check("mksh <<'A' -> mksh", _consumer("mksh <<'A'\nx\nA") == ["mksh"])
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

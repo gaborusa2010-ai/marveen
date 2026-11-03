@@ -3106,10 +3106,9 @@
    "name": "777_bash_c_xargs_i_bash_c_x",
    "cmd": "bash -c 'xargs -I{} bash -c {}' <<< 'X'",
    "expect": [
-    false
+    true
    ],
-   "bash_runs": true,
-   "bash_note": "KNOWN GAP (#777 follow-up): the program-side simple-command splitter cuts at `{`/`}`, so `xargs -I{} bash -c {}` inside a literal -c program is not read through; bash runs the body"
+   "bash_runs": true
   },
   {
    "name": "777_bash_c_bash_cat_x",
@@ -4187,6 +4186,214 @@
     false
    ],
    "bash_runs": null
+  },
+  {
+   "name": "777r10_brace_range_stdin",
+   "cmd": "f(){ bash </dev/std{i..i}n; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_range_while",
+   "cmd": "while :; do bash </dev/std{i..i}n; break; done <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_midword",
+   "cmd": "f(){ echo a}b; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_quoted",
+   "cmd": "f(){ echo '}'; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_arg",
+   "cmd": "f(){ bash </dev/null; echo }; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_group_in_if",
+   "cmd": "f(){ if true; then { :; }; fi; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_brace_in_comment",
+   "cmd": "f(){ # a; }\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r10_gdb_no_batch",
+   "cmd": "gdb -q -nx prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_gdb_ex_args",
+   "cmd": "gdb -q -nx -ex r --args prog <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_machinectl_shell",
+   "cmd": "machinectl shell box <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_distrobox_enter",
+   "cmd": "distrobox enter box <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_toolbox_enter",
+   "cmd": "toolbox enter <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_bash",
+   "cmd": "sg grp bash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_bare",
+   "cmd": "sg grp <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_xargs_rsh",
+   "cmd": "xargs rsh host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_xargs_dbclient",
+   "cmd": "xargs dbclient host echo <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_autossh_bare",
+   "cmd": "autossh -M 0 host <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_mksh",
+   "cmd": "mksh <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_yash",
+   "cmd": "yash <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_gdb_version",
+   "cmd": "gdb --version <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_machinectl_list",
+   "cmd": "machinectl list <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_setarch_list",
+   "cmd": "setarch --list <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r10_distrobox_create",
+   "cmd": "distrobox create box <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_sg_cat",
+   "cmd": "sg grp cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r10_func_brace_word",
+   "cmd": "f(){ echo {a,b}; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r10_func_echo_brace_cat",
+   "cmd": "f(){ echo }; }; cat <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
   }
  ]
 }

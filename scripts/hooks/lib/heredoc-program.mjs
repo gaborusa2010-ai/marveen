@@ -51,15 +51,15 @@
 import { find as findHeredocs, findAll, hereWord } from './heredoc-scan.mjs'
 
 /** Interpreters that run their stdin as a program when no script is named. */
-export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'node', 'perl', 'ruby', 'php'])
+export const INTERPRETERS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash', 'node', 'perl', 'ruby', 'php'])
 /** Flags after which the PROGRAM follows (stdin is data), per interpreter: bash -e is
  *  errexit, not a script; python3 -m runs a module whose input the body is. */
 export const STDIN_SCRIPT_FLAGS = {
-  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'], dash: ['-c'], ksh: ['-c'], rbash: ['-c', '--command'], ash: ['-c'], hush: ['-c'],
+  bash: ['-c', '--command'], sh: ['-c'], zsh: ['-c', '--command'], dash: ['-c'], ksh: ['-c'], rbash: ['-c', '--command'], ash: ['-c'], hush: ['-c'], mksh: ['-c'], yash: ['-c'],
   python: ['-c', '-m'], python3: ['-c', '-m'],
   node: ['-e', '-p', '--eval', '--print'], perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'],
 }
-export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush'])
+export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash'])
 
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
   'case', 'esac', 'in', 'select', 'function', 'coproc', '!', '{', '}', '(', ')', '[[', ']]'])
@@ -123,10 +123,17 @@ const WRAPPERS = {
 // Launchers that start a shell reading the stdin when no command follows (#777 review 9):
 // `pkexec <<A`, `firejail <<A`, `fakeroot <<A`, `proot <<A`, `machinectl shell host <<A`, `setarch x86_64 <<A`, `newgrp grp <<A`.
 const SHELL_WITHOUT_COMMAND = new Set(['pkexec', 'firejail', 'fakeroot', 'proot', 'machinectl', 'setarch', 'linux32', 'linux64', 'newgrp'])
+// ...but not when they only print something (#777 review 10: `setarch --list`, `machinectl list`).
+const INFO_FLAGS = ['--help', '-h', '--version', '-V', '--list']
 // The program follows a marker word (#777 review 9): `gdb -batch -ex r --args prog`,
-// `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: gdb runs nothing,
-// distrobox enter / toolbox enter start a shell.
+// `distrobox enter box -- prog`, `toolbox run [-c box] prog`. No marker: distrobox enter /
+// toolbox enter start a shell, their other subcommands (create, list, rm) run nothing (#777 review 10).
 const MARKER_LAUNCHERS = { gdb: ['--args', false], distrobox: ['--', true], 'distrobox-enter': ['--', true], toolbox: ['run', true] }
+const SHELL_SUBCOMMAND = { distrobox: 'enter', toolbox: 'enter' }
+// gdb without -batch reads its stdin as gdb commands, and `shell CMD` runs CMD, with or without
+// --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
+const GDB_BATCH = ['-batch', '--batch', '-batch-silent', '--batch-silent']
+const GDB_INFO = ['--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration']
 const TOOLBOX_VALUE_FLAGS = ['-c', '--container', '-d', '--distro', '-r', '--release']
 // su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 // the options) they start a shell that reads the stdin (#777 review 8).
@@ -145,7 +152,9 @@ const ARGV_FEEDERS = new Set(['xargs', 'parallel'])
 // before the options; an unknown subcommand falls back to the first interpreter word (the
 // pre-review-6 shape). sshpass has no host: the word after its options is the program
 // (usually an ssh, read the same way).
-const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl'])
+const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'rsh', 'dbclient', 'autossh', 'docker', 'podman', 'nerdctl', 'kubectl'])
+// A remote login shell reads the stdin; the remote command line is re-parsed by a shell.
+const SSH_LIKE = ['ssh', 'mosh', 'plink', 'rsh', 'dbclient', 'autossh']
 const DOCKER_VALUE_FLAGS = ['-u', '--user', '-w', '--workdir', '-e', '--env', '--env-file', '--detach-keys', '-v', '--volume',
      '-p', '--publish', '--name', '--network', '--net', '--entrypoint', '-l', '--label', '--label-file',
      '--mount', '--cpus', '-m', '--memory', '--memory-swap', '-h', '--hostname', '--add-host', '--cap-add',
@@ -164,6 +173,10 @@ const RUNNER_VALUE_FLAGS = {
   plink: ['-l', '-P', '-i', '-pw', '-pwfile', '-m', '-L', '-R', '-D', '-proxycmd', '-hostkey', '-nc', '-sercfg',
     '-sshlog', '-sshrawlog', '-loghost'],
   sshpass: ['-p', '-f', '-d', '-P'],
+  rsh: ['-l'],
+  dbclient: ['-p', '-l', '-i', '-L', '-R', '-o', '-W', '-K', '-I', '-J', '-c', '-m', '-b', '-B'],
+  autossh: ['-M', '-l', '-p', '-i', '-o', '-F', '-J', '-b', '-c', '-D', '-E', '-e', '-I', '-L', '-m', '-O', '-Q',
+    '-R', '-S', '-W', '-w', '-B', '-P'],
   docker: DOCKER_VALUE_FLAGS, podman: DOCKER_VALUE_FLAGS, nerdctl: DOCKER_VALUE_FLAGS,
   kubectl: ['-n', '--namespace', '-c', '--container', '--context', '--kubeconfig', '--cluster', '--user', '--as',
      '--as-group', '--request-timeout', '-f', '--filename', '--pod-running-timeout', '-s', '--server',
@@ -247,8 +260,17 @@ function viaLauncher(words, j, depth, loose, argv) {
 
 /** su/runuser/script (#777 review 8). `-c CMD` (also in a cluster: `-qc`) runs CMD through a
  *  shell; behind xargs the body may be that CMD. `runuser -u U -- cmd` execs cmd. Without a
- *  command they start a shell that reads the stdin. */
+ *  command they start a shell that reads the stdin. `sg [-] group [-c] command` hands the
+ *  command to /bin/sh -c (#777 review 10: `sg grp cat` is data). */
 function suConsumer(words, k, base, depth, loose, argv) {
+  if (base === 'sg') {
+    let rest = words.slice(k + 1)
+    if (rest.length && rest[0][0] === '-') rest = rest.slice(1)
+    let cmd = rest.slice(1)
+    if (cmd.length && cmd[0][0] === '-c') cmd = cmd.slice(1)
+    if (argv || !cmd.length || cmd.some(([, d]) => d)) return base
+    return anyRunsStdin(cmd.map(([x]) => x).join(' '), depth + 1) ? base : ''
+  }
   const hasUser = (end) => words.slice(k + 1, end).some(([w]) => w === '-u' || w === '--user')
   let j = k + 1
   while (j < words.length) {
@@ -283,8 +305,14 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
     const j = afterWrapper(words, k, WRAPPERS[base])
     if (j < 0) {
       // `xargs nice` runs the body line as a command; `sudo -s <<A` a shell
+      if (argv) return base
+      const rest = words.slice(k + 1).map(([x]) => x)
+      if (SHELL_WITHOUT_COMMAND.has(base) && !rest.some((x) => INFO_FLAGS.includes(x))) {
+        // `machinectl shell box <<A` reads the body; `machinectl list`/`status box` do not
+        if (base !== 'machinectl' || ['shell', 'login'].includes(rest.find((x) => !x.startsWith('-')) ?? '')) return base
+      }
       const shellFlags = SHELL_FLAGS_OF[base] ?? []
-      return argv || SHELL_WITHOUT_COMMAND.has(base) || words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
+      return rest.some((x) => shellFlags.includes(x)) ? base : ''
     }
     return viaLauncher(words, j, depth, loose, argv)
   }
@@ -297,13 +325,13 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
   }
   if (REMOTE_RUNNERS.has(base)) {
     // behind xargs the body's words join the remote command line, whatever program it names (#777 review 9)
-    if (argv && ['ssh', 'mosh', 'plink'].includes(base)) return base
+    if (argv && SSH_LIKE.includes(base)) return base
     const j = runnerProgram(words, k)
     // `ssh host <<A`: the remote login shell reads the body; behind xargs the body is the remote
     // command (#777 review 7, 8). A container runner without a command runs nothing.
-    if (j < 0) return ['ssh', 'mosh', 'plink'].includes(base) ? base : ''
+    if (j < 0) return SSH_LIKE.includes(base) ? base : ''
     let c = viaLauncher(words, j, depth, loose, argv)
-    if (!c && ['ssh', 'mosh', 'plink'].includes(base) && !argv) {
+    if (!c && SSH_LIKE.includes(base) && !argv) {
       // the remote shell re-parses the joined words: `ssh host "bash -s"`, `ssh host 'cd /; bash'`
       c = anyRunsStdin(words.slice(j).map(([x]) => x).join(' '), depth + 1)
     }
@@ -311,7 +339,10 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
   }
   if (SU_LIKE.has(base)) return suConsumer(words, k, base, depth, loose, argv)
   if (Object.hasOwn(MARKER_LAUNCHERS, base)) {
-    const [marker, shell] = MARKER_LAUNCHERS[base]
+    let [marker, shell] = MARKER_LAUNCHERS[base]
+    const rest = words.slice(k + 1).map(([x]) => x)
+    if (base === 'gdb' && !argv && !rest.some((x) => GDB_BATCH.includes(x) || GDB_INFO.includes(x))) return base
+    if (Object.hasOwn(SHELL_SUBCOMMAND, base)) shell = (rest.find((x) => !x.startsWith('-')) ?? '') === SHELL_SUBCOMMAND[base]
     let j = words.findIndex(([x], i) => i > k && x === marker)
     if (j >= 0 && base === 'toolbox') {
       j++
@@ -376,11 +407,13 @@ const BASH_LONG_OPT_VALUE = new Set(['rcfile', 'init-file'])
 const BASH_LONG_OPT_NO_RUN = new Set(['help', 'version', 'dump-po-strings', 'dump-strings', 'pretty-print', 'protected', 'wordexp', 'rpm-requires'])
 
 // The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`);
-// neither is the `|` of `>|` (`bash >| log <<SH`, #775).
-const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(/
+// neither is the `|` of `>|` (`bash >| log <<SH`, #775). `{` and `}` are reserved WORDS: a
+// mid-word brace (`/dev/std{i..i}n`, `${x}`, `a}b`) is part of the word, and splitting there hid
+// a dynamic redirect target (#777 review 10).
+const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n()`]|(?<![^\s;&|()])[{}](?![^\s;&|()<>])|(?<!>)\||\$\(/
 // the same, keeping its separators: [command, separator, command, ...] (#777 review 7: a `&`
 // AFTER the command backgrounds it, and then it does not read the inherited stdin)
-const SIMPLE_SPLIT_KEEP = /(\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\()/
+const SIMPLE_SPLIT_KEEP = /(\|\||&&|(?<![<>])&(?!>)|[;\n()`]|(?<![^\s;&|()])[{}](?![^\s;&|()<>])|(?<!>)\||\$\()/
 const HEAD_SPLIT = /(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()/
 const TAIL_SPLIT = /\|\||&&|;|(?<![<>])&(?!>)/
 const PIPE_SPLIT = /(?<!>)\|/
@@ -786,17 +819,61 @@ export function functionBodies(cmd) {
   for (const m of cmd.matchAll(FUNC_DEF_RE)) {
     const name = m[1] || m[3]
     const opener = m[2] || m[4]
-    const closer = opener === '{' ? '}' : ')'
-    let depth = 1
-    let i = m.index + m[0].length
-    while (i < cmd.length && depth) {
-      if (cmd[i] === opener) depth++
-      else if (cmd[i] === closer) depth--
-      i++
-    }
-    out[name] = cmd.slice(m.index + m[0].length, depth === 0 ? i - 1 : i)
+    const start = m.index + m[0].length
+    out[name] = cmd.slice(start, bodyEnd(cmd, start, opener))
   }
   return out
+}
+
+/** Where bash ends a function body opened by `opener` at `start` (cmd.length when it does not).
+ *  Quotes, escapes and comments are skipped. `)` closes a `( )` body. A `}` closes only as a
+ *  reserved word in command position, after `;`, `&`, a newline or a closed `)`/`}`, with a word
+ *  end after it (measured in probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`, `echo }` do
+ *  not close). A `{` word opens a nested group. A `}` we do not recognize keeps the body open:
+ *  more body is over-block, never a missed consumer. The Python twin's _body_end. */
+function bodyEnd(cmd, start, opener) {
+  const n = cmd.length
+  let depth = 1
+  let i = start
+  let closed = -1                                 // index of the last closing `)`/`}`
+  while (i < n) {
+    const c = cmd[i]
+    if (c === '\\') { i += 2; continue }
+    if (c === "'") {
+      const j = cmd.indexOf("'", i + 1)
+      i = j < 0 ? n : j + 1
+      continue
+    }
+    if (c === '"') {
+      i++
+      while (i < n && cmd[i] !== '"') i += cmd[i] === '\\' ? 2 : 1
+      i++
+      continue
+    }
+    if (c === '#' && (i === start || ' \t\n;&|(){}'.includes(cmd[i - 1]))) {
+      const j = cmd.indexOf('\n', i)
+      i = j < 0 ? n : j
+      continue
+    }
+    if (opener === '(') {
+      if (c === '(') depth++
+      else if (c === ')' && !--depth) return i
+    } else if ((c === '{' || c === '}') && (i === start || ' \t\n;&|()'.includes(cmd[i - 1])) &&
+               (i + 1 >= n || ' \t\n;&|()<>'.includes(cmd[i + 1]))) {
+      if (c === '{') depth++
+      else {
+        let p = i - 1
+        while (p >= start && ' \t'.includes(cmd[p])) p--
+        if (p < start || ';&\n'.includes(cmd[p]) || (')}'.includes(cmd[p]) && p === closed)) {
+          depth--
+          closed = i
+          if (!depth) return i
+        }
+      }
+    } else if (c === ')') closed = i
+    i++
+  }
+  return n
 }
 
 /** The compound command closed by `closer` (done/fi/esac/}) from its opener to `end`. */
