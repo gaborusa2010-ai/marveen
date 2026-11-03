@@ -225,6 +225,20 @@ def _quote_map(text):
                 continue
             elif closer == ')' and ch == ')':
                 depth -= 1
+        if q == 0 and text.startswith("$'", i):
+            # $'..' (ANSI-C): a backslash escapes the closing quote too (#777 review 11:
+            # `echo $'\''` read as '\' left the rest of the line, a heredoc body with it, "quoted")
+            state[i] = state[i + 1] = 0
+            i += 2
+            while i < n and text[i] != "'":
+                step = 2 if text[i] == '\\' and i + 1 < n else 1
+                for k in range(step):
+                    state[i + k] = 1
+                i += step
+            if i < n:
+                state[i] = 0
+                i += 1
+            continue
         if q == 0 and ch in ("'", '"'):
             q = 1 if ch == "'" else 2
             state[i] = 0            # maga a nyito jel nincs "belul"
@@ -457,6 +471,13 @@ _SHELL_SUBCOMMAND = {'distrobox': 'enter', 'toolbox': 'enter'}
 # --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
 _GDB_BATCH = ('-batch', '--batch', '-batch-silent', '--batch-silent')
 _GDB_INFO = ('--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration')
+_GDB_EX_FLAGS = ('-ex', '--ex', '-eval-command', '--eval-command', '-iex', '--iex',
+                 '-init-eval-command', '--init-eval-command')
+# gdb commands that hand their text to a shell or to Python (#777 review 11)
+_GDB_SHELL_CMD_RE = re.compile(r'\s*(?:shell\b|!|pipe\b|\|)(.*)', re.S)
+_GDB_PYTHON_CMD_RE = re.compile(r'\s*(?:python|python-interactive|py|pi)\b')
+_GDB_SCRIPT_FLAGS = ('-x', '--x', '-command', '--command', '-ix', '--ix', '-init-command', '--init-command')
+_GDB_SOURCE_STDIN_RE = re.compile(r'\s*source\s+(?:-\S+\s+)*(\S+)\s*$')
 _TOOLBOX_VALUE_FLAGS = ('-c', '--container', '-d', '--distro', '-r', '--release')
 # su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 # the options) they start a shell that reads the stdin (#777 review 8).
@@ -678,6 +699,10 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
         rest = [x for x, _d in words[k + 1:]]
         if base == 'gdb' and not argv and not any(x in _GDB_BATCH or x in _GDB_INFO for x in rest):
             return base
+        if base == 'gdb':
+            c = _gdb_command_consumer(rest, depth)
+            if c:
+                return c
         if base in _SHELL_SUBCOMMAND:
             shell = next((x for x in rest if not x.startswith('-')), '') == _SHELL_SUBCOMMAND[base]
         j = next((i for i in range(k + 1, len(words)) if words[i][0] == marker), None)
@@ -690,6 +715,57 @@ def _launcher_consumer(words, k, base, depth, loose, argv=False):
             return base if argv or shell else ''
         return _via_launcher(words, j + 1, depth, loose, argv)
     return ''
+
+
+def _gdb_command_consumer(rest, depth):
+    """The consumer behind gdb's -ex/-iex commands (words before --args): `shell CMD`, `!CMD`
+    and `pipe ... | CMD` run CMD in a shell that inherits gdb's stdin, so CMD is read like a
+    shell line; a `python` command runs arbitrary code, which may read stdin (#777 review 11:
+    `gdb -batch -ex 'shell bash' <<A` ran the body)."""
+    vals = []
+    i = 0
+    while i < len(rest) and rest[i] != '--args':
+        x = rest[i]
+        if x in _GDB_EX_FLAGS:
+            if i + 1 < len(rest):
+                vals.append(rest[i + 1])
+            i += 2
+            continue
+        if x in _GDB_SCRIPT_FLAGS:
+            if i + 1 < len(rest) and _STDIN_PATH_RE.match(rest[i + 1]):
+                return 'gdb'                     # `-x /dev/stdin`: the body is a gdb script
+            i += 2
+            continue
+        flag, eq, v = x.partition('=')
+        if eq and flag in _GDB_EX_FLAGS:
+            vals.append(v)
+        if eq and flag in _GDB_SCRIPT_FLAGS and _STDIN_PATH_RE.match(v):
+            return 'gdb'
+        i += 1
+    for v in vals:
+        src = _GDB_SOURCE_STDIN_RE.match(v)
+        if src and _STDIN_PATH_RE.match(src.group(1)):
+            return 'gdb'
+        m = _GDB_SHELL_CMD_RE.match(v)
+        if m:
+            c = _body_consumer(m.group(1), None, depth + 1)
+            if c:
+                return c
+        if _GDB_PYTHON_CMD_RE.match(v):
+            return 'gdb'
+    return ''
+
+
+def _gdb_shell_lines(body):
+    """The shell command lines of a gdb script read from the stdin: `shell CMD`, `!CMD`,
+    `pipe ..| CMD` and `| ..| CMD` lines, the gdb prefix removed (`shell rm -rf x` is `rm -rf x`
+    to the shell, the gate does not see it under the `shell` word)."""
+    out = []
+    for line in body.split('\n'):
+        m = _GDB_SHELL_CMD_RE.match(line)
+        if m and m.group(1).strip():
+            out.append(m.group(1))
+    return out
 
 
 def _runner_program(words, k):
@@ -1150,32 +1226,129 @@ def _function_bodies(cmd):
 
 
 def _body_end(cmd, start, opener):
-    """Where bash ends a function body opened by `opener` at `start` (len(cmd) when it does not).
-    Quotes, escapes and comments are skipped. `)` closes a `( )` body. A `}` closes only as a
-    reserved word in command position, after `;`, `&`, a newline or a closed `)`/`}`, with a
-    word end after it (measured in probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`,
-    `echo }` do not close). A `{` word opens a nested group. A `}` we do not recognize keeps
-    the body open: more body is over-block, never a missed consumer."""
+    """Where bash ends a function body opened by `opener` at `start` (len(cmd) when it does not):
+    the LATER of the parsed end and the old plain bracket count, so a parser error over-blocks
+    (#777 review 11: `f(){ echo ${x:- ; } ; bash; }` ended at the `}` inside ${...})."""
+    return max(_parsed_body_end(cmd, start, opener), _counted_body_end(cmd, start, opener))
+
+
+def _counted_body_end(cmd, start, opener):
+    """The pre-review-10 end: the bracket that balances `opener`, quotes not seen."""
+    closer = '}' if opener == '{' else ')'
+    depth = 1
+    for i in range(start, len(cmd)):
+        if cmd[i] == opener:
+            depth += 1
+        elif cmd[i] == closer:
+            depth -= 1
+            if not depth:
+                return i
+    return len(cmd)
+
+
+def _skip_quoted(cmd, i):
+    """The index after the escape, quote or expansion starting at `i` (`\\x`, '..', "..",
+    `..`, $'..', ${..}, $(..)), or -1 when none starts there."""
+    n = len(cmd)
+    c = cmd[i]
+    if c == '\\':
+        return i + 2
+    if c == "'":
+        j = cmd.find("'", i + 1)
+        return n if j < 0 else j + 1
+    if c in '"`':
+        i += 1
+        while i < n and cmd[i] != c:
+            j = _skip_quoted(cmd, i) if c == '"' and cmd[i] in '\\$`' else -1
+            i = j if j >= 0 else i + (2 if cmd[i] == '\\' else 1)
+        return i + 1
+    if c == '$' and i + 1 < n:
+        d = cmd[i + 1]
+        if d == "'":
+            i += 2
+            while i < n and cmd[i] != "'":
+                i += 2 if cmd[i] == '\\' else 1
+            return i + 1
+        if d == '(':
+            return _parsed_body_end(cmd, i + 2, '(') + 1
+        if d == '{':
+            depth, i = 1, i + 2
+            while i < n:
+                j = _skip_quoted(cmd, i)
+                if j >= 0:
+                    i = j
+                    continue
+                if cmd[i] == '{':
+                    depth += 1
+                elif cmd[i] == '}':
+                    depth -= 1
+                    if not depth:
+                        return i + 1
+                i += 1
+            return n
+    return -1
+
+
+_HEREDOC_OP_RE = re.compile(r'<<(-?)[ \t]*')
+
+
+def _heredoc_delimiter(cmd, i):
+    """(delimiter, end index) of the here-document word at `i`, quotes and escapes removed."""
+    out = []
+    n = len(cmd)
+    while i < n and cmd[i] not in ' \t\n;&|()<>':
+        c = cmd[i]
+        if c in '\'"':
+            j = cmd.find(c, i + 1)
+            j = n if j < 0 else j
+            out.append(cmd[i + 1:j])
+            i = j + 1
+        elif c == '\\':
+            out.append(cmd[i + 1:i + 2])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out), i
+
+
+def _parsed_body_end(cmd, start, opener):
+    """Where bash ends the body, parsed: quotes, escapes, expansions, comments and here-document
+    bodies are skipped. `)` closes a `( )` body. A `}` closes only as a reserved word in command
+    position, after `;`, `&`, a newline or a closed `)`/`}`, with a word end after it (measured in
+    probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`, `echo }` do not close). A `{` word
+    opens a nested group."""
     depth, i, n = 1, start, len(cmd)
     closed = -1                                  # index of the last closing `)`/`}`
+    pending = []                                 # here-documents whose body starts at the next newline
     while i < n:
         c = cmd[i]
-        if c == '\\':
-            i += 2
-            continue
-        if c == "'":
-            j = cmd.find("'", i + 1)
-            i = n if j < 0 else j + 1
-            continue
-        if c == '"':
-            i += 1
-            while i < n and cmd[i] != '"':
-                i += 2 if cmd[i] == '\\' else 1
-            i += 1
+        j = _skip_quoted(cmd, i)
+        if j >= 0:
+            i = j
             continue
         if c == '#' and (i == start or cmd[i - 1] in ' \t\n;&|(){}'):
             j = cmd.find('\n', i)
             i = n if j < 0 else j
+            continue
+        if cmd.startswith('<<<', i):
+            i += 3
+            continue
+        if cmd.startswith('<<', i):
+            m = _HEREDOC_OP_RE.match(cmd, i)
+            word, i = _heredoc_delimiter(cmd, m.end())
+            pending.append((word, bool(m.group(1))))
+            continue
+        if c == '\n' and pending:
+            for word, strip in pending:
+                while i < n:
+                    j = cmd.find('\n', i + 1)
+                    j = n if j < 0 else j
+                    line = cmd[i + 1:j]
+                    i = j
+                    if (line.lstrip('\t') if strip else line) == word:
+                        break
+            pending = []
             continue
         if opener == '(':
             if c == '(':
@@ -1407,6 +1580,8 @@ def _stdin_programs(text, depth=0):
                 out.append(h.text)
         elif depth < _MAX_NEST:
             body = text[h.body_start:h.body_end]
+            if os.path.basename(consumer) == 'gdb':
+                out.extend(_gdb_shell_lines(body))
             if '<<<' in body and not _code_consumer(consumer):
                 out.extend(_stdin_programs(body, depth + 1))
     return out

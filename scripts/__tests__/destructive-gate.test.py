@@ -1245,6 +1245,61 @@ check("gdb -batch prog <<'A' -> '' (adat)", _consumer("gdb -batch prog <<'A'\nx\
 check("xargs rsh host echo <<'A' -> rsh", _consumer("xargs rsh host echo <<'A'\nx\nA") == ["rsh"])
 check("mksh <<'A' -> mksh", _consumer("mksh <<'A'\nx\nA") == ["mksh"])
 
+# --- 22. #777 review 11: a fuggvenytorzs vege kifejtesben, heredocban; gdb -ex/-x/source ---------------
+# (1) A torzs vege a parse-olt es a regi zarojel-szamlalo KOZUL a kesobbi: a parser hibaja tultilt.
+# A parser atugorja a ${..}, $(..), $'..', backtick szoveget es a fuggvenyben allo heredoc-torzset
+# (`f(){ cat <<'X'\n}\nX\nbash; }`): probe-sandbox bash-sal merve, mind futtatja a `bash`-t.
+# (2) gdb -batch mellett az -ex/-iex `shell X`, `!X`, `pipe ..| X`, `| ..| X` erteke shell-sor, ami a
+# gdb stdinjet orokli; `python ..` tetszoleges kod. `-x /dev/stdin` es `source /dev/stdin`: a torzs
+# gdb-szkript. A stdinrol olvasott gdb-szkript `shell`/`!`/pipe sorai shell-sorok (`shell rm -rf x`).
+# gdb nincs telepitve: a gdb-szabalyok a gdb-dokumentaciora epulnek, nem mertuk.
+print()
+print("#777 review 11, MUST-BLOCK:")
+for label, cmd in [
+    ("f(){ echo ${x:- ; } ; bash; }; f <<'A'", "f(){ echo ${x:- ; } ; bash; }; f <<'A'"),
+    ("f(){ cat <<'X' / } / X / bash; }; f <<'A'", "f(){ cat <<'X'\n}\nX\nbash; }; f <<'A'"),
+    ("f(){ cat <<-X / <tab>} / <tab>X / bash; }; f <<'A'", "f(){ cat <<-X\n\t}\n\tX\nbash; }; f <<'A'"),
+    ("f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'", "f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'"),
+    ("f(){ echo \"${x:-; }}\"; bash; }; f <<'A'", "f(){ echo \"${x:-; }}\"; bash; }; f <<'A'"),
+    ("f(){ echo `echo ; }` ; bash; }; f <<'A'", "f(){ echo `echo ; }` ; bash; }; f <<'A'"),
+    ("gdb -batch -ex 'shell bash' <<'A'", "gdb -batch -ex 'shell bash' <<'A'"),
+    ("gdb -batch -ex '!bash' <<'A'", "gdb -batch -ex '!bash' <<'A'"),
+    ("gdb -batch --eval-command='shell bash' <<'A'", "gdb -batch --eval-command='shell bash' <<'A'"),
+    ("gdb -batch -iex 'shell sh -s' <<'A'", "gdb -batch -iex 'shell sh -s' <<'A'"),
+    ("gdb -batch -ex 'pipe info frame | bash' <<'A'", "gdb -batch -ex 'pipe info frame | bash' <<'A'"),
+    ("gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'",
+     "gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+for label, cmd in [
+    ("gdb -batch -x /dev/stdin <<'A' / shell RM", "gdb -batch -x /dev/stdin <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -batch --command=/dev/stdin <<'A' / !RM", "gdb -batch --command=/dev/stdin <<'A'\n!" + RMH + "\nA"),
+    ("gdb -batch -ex 'source /dev/stdin' <<'A' / shell RM",
+     "gdb -batch -ex 'source /dev/stdin' <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -q -nx prog <<'A' / shell RM", "gdb -q -nx prog <<'A'\nshell " + RMH + "\nA"),
+    ("gdb -q -nx prog <<'A' / pipe info frame | RM", "gdb -q -nx prog <<'A'\npipe info frame | " + RMH + "\nA"),
+]:
+    check(label, blocks(cmd))
+print("negativ kontroll (review 11):")
+for label, cmd in [
+    ("f(){ echo ${x:-a}; cat; }; f <<'A'", "f(){ echo ${x:-a}; cat; }; f <<'A'"),
+    ("f(){ cat <<'X' / } / X / }; f <<'A'", "f(){ cat <<'X'\n}\nX\n}; f <<'A'"),
+    ("f(){ echo $'a\\'b'; cat; }; f <<'A'", "f(){ echo $'a\\'b'; cat; }; f <<'A'"),
+    ("f(){ echo $((1+2)); cat; }; f <<'A'", "f(){ echo $((1+2)); cat; }; f <<'A'"),
+    ("gdb -batch -nx <<'A'", "gdb -batch -nx <<'A'"),
+    ("gdb -batch -ex 'shell echo hi' <<'A'", "gdb -batch -ex 'shell echo hi' <<'A'"),
+    ("gdb -batch -ex 'print 1' prog <<'A'", "gdb -batch -ex 'print 1' prog <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+check("gdb -batch -x cmds.gdb prog <<'A' / shell RM (a szkript fajlbol jon, a torzs adat)",
+      not blocks("gdb -batch -x cmds.gdb prog <<'A'\nshell " + RMH + "\nA"))
+check("gdb -q -nx prog <<'A' / shell echo hi / bt", not blocks("gdb -q -nx prog <<'A'\nshell echo hi\nbt\nA"))
+check("cat <<'A' / shell RM (adat)", not blocks("cat <<'A'\nshell " + RMH + "\nA"))
+print("a fogyaszto szo (review 11):")
+check("gdb -batch -ex 'shell bash' <<'A' -> bash", _consumer("gdb -batch -ex 'shell bash' <<'A'\nx\nA") == ["bash"])
+check("gdb -batch -x /dev/stdin <<'A' -> gdb", _consumer("gdb -batch -x /dev/stdin <<'A'\nx\nA") == ["gdb"])
+check("gdb -batch -nx <<'A' -> '' (adat)", _consumer("gdb -batch -nx <<'A'\nx\nA") == [""])
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")

@@ -4394,6 +4394,202 @@
     false
    ],
    "bash_runs": false
+  },
+  {
+   "name": "777r11_func_param_exp",
+   "cmd": "f(){ echo ${x:- ; } ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_heredoc_brace",
+   "cmd": "f(){ cat <<'Z'\n}\nZ\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_heredoc_dash_brace",
+   "cmd": "f(){ cat <<-Z\n\t}\n\tZ\nbash; }; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_ansi_c_quote",
+   "cmd": "f(){ echo $'\\''; echo '; } '; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_cmdsub",
+   "cmd": "f(){ echo $(echo ; }) ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": false,
+   "bash_note": "accepted over-block: bash rejects the line (syntax error near `}` inside $( )), nothing runs; the gate reads the body as run"
+  },
+  {
+   "name": "777r11_func_dq_param",
+   "cmd": "f(){ echo \"${x:-; }}\"; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_backtick",
+   "cmd": "f(){ echo `echo ; }` ; bash; }; f <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": true
+  },
+  {
+   "name": "777r11_func_param_ok",
+   "cmd": "f(){ echo ${x:-a}; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_heredoc_ok",
+   "cmd": "f(){ cat <<'Z'\n}\nZ\n}; f <<'A'\nX\nA",
+   "expect": [
+    false,
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_ansi_c_ok",
+   "cmd": "f(){ echo $'a\\'b'; cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_func_arith_ok",
+   "cmd": "f(){ echo $((1+2)); cat; }; f <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": false
+  },
+  {
+   "name": "777r11_gdb_batch_ex_shell",
+   "cmd": "gdb -batch -ex 'shell bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_ex_bang",
+   "cmd": "gdb -batch -ex '!bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_eval_eq",
+   "cmd": "gdb -batch --eval-command='shell bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_iex_sh",
+   "cmd": "gdb -batch -iex 'shell sh -s' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_pipe",
+   "cmd": "gdb -batch -ex 'pipe info frame | bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_bar",
+   "cmd": "gdb -batch -ex '| info frame | bash' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_python",
+   "cmd": "gdb -batch -ex 'python import os; os.system(\"bash\")' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_x_stdin",
+   "cmd": "gdb -batch -x /dev/stdin <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_source_stdin",
+   "cmd": "gdb -batch -ex 'source /dev/stdin' <<'A'\nX\nA",
+   "expect": [
+    true
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_nx",
+   "cmd": "gdb -batch -nx <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_ex_echo",
+   "cmd": "gdb -batch -ex 'shell echo hi' <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_ex_print",
+   "cmd": "gdb -batch -ex 'print 1' prog <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
+  },
+  {
+   "name": "777r11_gdb_batch_x_file",
+   "cmd": "gdb -batch -x cmds.gdb prog <<'A'\nX\nA",
+   "expect": [
+    false
+   ],
+   "bash_runs": null
   }
  ]
 }

@@ -134,6 +134,12 @@ const SHELL_SUBCOMMAND = { distrobox: 'enter', toolbox: 'enter' }
 // --args/-ex (17.1, measured in probe-sandbox, #777 review 10); -batch exits after -ex/-x.
 const GDB_BATCH = ['-batch', '--batch', '-batch-silent', '--batch-silent']
 const GDB_INFO = ['--help', '-help', '-h', '--version', '-version', '-v', '--configuration', '-configuration']
+const GDB_EX_FLAGS = ['-ex', '--ex', '-eval-command', '--eval-command', '-iex', '--iex', '-init-eval-command', '--init-eval-command']
+// gdb commands that hand their text to a shell or to Python (#777 review 11)
+const GDB_SHELL_CMD_RE = /^\s*(?:shell\b|!|pipe\b|\|)([\s\S]*)/
+const GDB_PYTHON_CMD_RE = /^\s*(?:python|python-interactive|py|pi)\b/
+const GDB_SCRIPT_FLAGS = ['-x', '--x', '-command', '--command', '-ix', '--ix', '-init-command', '--init-command']
+const GDB_SOURCE_STDIN_RE = /^\s*source\s+(?:-\S+\s+)*(\S+)\s*$/
 const TOOLBOX_VALUE_FLAGS = ['-c', '--container', '-d', '--distro', '-r', '--release']
 // su/runuser/script: `-c CMD` runs CMD through a shell; without -c (runuser -u: the command after
 // the options) they start a shell that reads the stdin (#777 review 8).
@@ -342,6 +348,10 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
     let [marker, shell] = MARKER_LAUNCHERS[base]
     const rest = words.slice(k + 1).map(([x]) => x)
     if (base === 'gdb' && !argv && !rest.some((x) => GDB_BATCH.includes(x) || GDB_INFO.includes(x))) return base
+    if (base === 'gdb') {
+      const c = gdbCommandConsumer(rest, depth)
+      if (c) return c
+    }
     if (Object.hasOwn(SHELL_SUBCOMMAND, base)) shell = (rest.find((x) => !x.startsWith('-')) ?? '') === SHELL_SUBCOMMAND[base]
     let j = words.findIndex(([x], i) => i > k && x === marker)
     if (j >= 0 && base === 'toolbox') {
@@ -353,6 +363,52 @@ function launcherConsumer(words, k, base, depth, loose, argv = false) {
     return viaLauncher(words, j + 1, depth, loose, argv)
   }
   return ''
+}
+
+/** The consumer behind gdb's -ex/-iex commands (words before --args): `shell CMD`, `!CMD` and
+ *  `pipe ... | CMD` run CMD in a shell that inherits gdb's stdin, so CMD is read like a shell
+ *  line; a `python` command runs arbitrary code, which may read stdin (#777 review 11:
+ *  `gdb -batch -ex 'shell bash' <<A` ran the body). The Python twin's _gdb_command_consumer. */
+function gdbCommandConsumer(rest, depth) {
+  const vals = []
+  for (let i = 0; i < rest.length && rest[i] !== '--args'; i++) {
+    const x = rest[i]
+    if (GDB_EX_FLAGS.includes(x)) {
+      if (i + 1 < rest.length) vals.push(rest[i + 1])
+      i++
+      continue
+    }
+    if (GDB_SCRIPT_FLAGS.includes(x)) {
+      if (i + 1 < rest.length && STDIN_PATH_RE.test(rest[i + 1])) return 'gdb'   // `-x /dev/stdin`: the body is a gdb script
+      i++
+      continue
+    }
+    const eq = x.indexOf('=')
+    if (eq >= 0 && GDB_EX_FLAGS.includes(x.slice(0, eq))) vals.push(x.slice(eq + 1))
+    if (eq >= 0 && GDB_SCRIPT_FLAGS.includes(x.slice(0, eq)) && STDIN_PATH_RE.test(x.slice(eq + 1))) return 'gdb'
+  }
+  for (const v of vals) {
+    const src = GDB_SOURCE_STDIN_RE.exec(v)
+    if (src && STDIN_PATH_RE.test(src[1])) return 'gdb'
+    const m = GDB_SHELL_CMD_RE.exec(v)
+    if (m) {
+      const c = anyRunsStdin(m[1], depth + 1)
+      if (c) return c
+    }
+    if (GDB_PYTHON_CMD_RE.test(v)) return 'gdb'
+  }
+  return ''
+}
+
+/** The shell command lines of a gdb script read from the stdin: `shell CMD`, `!CMD`, `pipe ..| CMD`
+ *  and `| ..| CMD` lines, the gdb prefix removed. The Python twin's _gdb_shell_lines. */
+export function gdbShellLines(body) {
+  const out = []
+  for (const line of body.split('\n')) {
+    const m = GDB_SHELL_CMD_RE.exec(line)
+    if (m && m[1].trim()) out.push(m[1])
+  }
+  return out
 }
 
 /** The PROGRAM of the remote/container runner at word `k`, -1 when none: the subcommand
@@ -825,34 +881,130 @@ export function functionBodies(cmd) {
   return out
 }
 
-/** Where bash ends a function body opened by `opener` at `start` (cmd.length when it does not).
- *  Quotes, escapes and comments are skipped. `)` closes a `( )` body. A `}` closes only as a
- *  reserved word in command position, after `;`, `&`, a newline or a closed `)`/`}`, with a word
- *  end after it (measured in probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`, `echo }` do
- *  not close). A `{` word opens a nested group. A `}` we do not recognize keeps the body open:
- *  more body is over-block, never a missed consumer. The Python twin's _body_end. */
+/** Where bash ends a function body opened by `opener` at `start` (cmd.length when it does not):
+ *  the LATER of the parsed end and the old plain bracket count, so a parser error over-blocks
+ *  (#777 review 11: `f(){ echo ${x:- ; } ; bash; }` ended at the `}` inside ${...}).
+ *  The Python twin's _body_end. */
 function bodyEnd(cmd, start, opener) {
+  return Math.max(parsedBodyEnd(cmd, start, opener), countedBodyEnd(cmd, start, opener))
+}
+
+/** The pre-review-10 end: the bracket that balances `opener`, quotes not seen. */
+function countedBodyEnd(cmd, start, opener) {
+  const closer = opener === '{' ? '}' : ')'
+  let depth = 1
+  for (let i = start; i < cmd.length; i++) {
+    if (cmd[i] === opener) depth++
+    else if (cmd[i] === closer && !--depth) return i
+  }
+  return cmd.length
+}
+
+/** The index after the escape, quote or expansion starting at `i` (`\x`, '..', "..", `..`,
+ *  $'..', ${..}, $(..)), or -1 when none starts there. */
+function skipQuoted(cmd, i) {
+  const n = cmd.length
+  const c = cmd[i]
+  if (c === '\\') return i + 2
+  if (c === "'") {
+    const j = cmd.indexOf("'", i + 1)
+    return j < 0 ? n : j + 1
+  }
+  if (c === '"' || c === '`') {
+    i++
+    while (i < n && cmd[i] !== c) {
+      const j = c === '"' && '\\$`'.includes(cmd[i]) ? skipQuoted(cmd, i) : -1
+      i = j >= 0 ? j : i + (cmd[i] === '\\' ? 2 : 1)
+    }
+    return i + 1
+  }
+  if (c === '$' && i + 1 < n) {
+    const d = cmd[i + 1]
+    if (d === "'") {
+      i += 2
+      while (i < n && cmd[i] !== "'") i += cmd[i] === '\\' ? 2 : 1
+      return i + 1
+    }
+    if (d === '(') return parsedBodyEnd(cmd, i + 2, '(') + 1
+    if (d === '{') {
+      let depth = 1
+      i += 2
+      while (i < n) {
+        const j = skipQuoted(cmd, i)
+        if (j >= 0) { i = j; continue }
+        if (cmd[i] === '{') depth++
+        else if (cmd[i] === '}' && !--depth) return i + 1
+        i++
+      }
+      return n
+    }
+  }
+  return -1
+}
+
+/** [delimiter, end index] of the here-document word at `i`, quotes and escapes removed. */
+function heredocDelimiter(cmd, i) {
+  const n = cmd.length
+  let out = ''
+  while (i < n && !' \t\n;&|()<>'.includes(cmd[i])) {
+    const c = cmd[i]
+    if (c === "'" || c === '"') {
+      let j = cmd.indexOf(c, i + 1)
+      if (j < 0) j = n
+      out += cmd.slice(i + 1, j)
+      i = j + 1
+    } else if (c === '\\') {
+      out += cmd.slice(i + 1, i + 2)
+      i += 2
+    } else {
+      out += c
+      i++
+    }
+  }
+  return [out, i]
+}
+
+/** Where bash ends the body, parsed: quotes, escapes, expansions, comments and here-document
+ *  bodies are skipped. `)` closes a `( )` body. A `}` closes only as a reserved word in command
+ *  position, after `;`, `&`, a newline or a closed `)`/`}`, with a word end after it (measured in
+ *  probe-sandbox, #777 review 10: `echo a}b`, `echo '}'`, `echo }` do not close). A `{` word
+ *  opens a nested group. The Python twin's _parsed_body_end. */
+function parsedBodyEnd(cmd, start, opener) {
   const n = cmd.length
   let depth = 1
   let i = start
   let closed = -1                                 // index of the last closing `)`/`}`
+  let pending = []                                // here-documents whose body starts at the next newline
   while (i < n) {
     const c = cmd[i]
-    if (c === '\\') { i += 2; continue }
-    if (c === "'") {
-      const j = cmd.indexOf("'", i + 1)
-      i = j < 0 ? n : j + 1
-      continue
-    }
-    if (c === '"') {
-      i++
-      while (i < n && cmd[i] !== '"') i += cmd[i] === '\\' ? 2 : 1
-      i++
-      continue
-    }
+    const j = skipQuoted(cmd, i)
+    if (j >= 0) { i = j; continue }
     if (c === '#' && (i === start || ' \t\n;&|(){}'.includes(cmd[i - 1]))) {
-      const j = cmd.indexOf('\n', i)
-      i = j < 0 ? n : j
+      const e = cmd.indexOf('\n', i)
+      i = e < 0 ? n : e
+      continue
+    }
+    if (cmd.startsWith('<<<', i)) { i += 3; continue }
+    if (cmd.startsWith('<<', i)) {
+      const m = /<<(-?)[ \t]*/y
+      m.lastIndex = i
+      const mm = m.exec(cmd)
+      const [word, e] = heredocDelimiter(cmd, m.lastIndex)
+      pending.push([word, mm[1] === '-'])
+      i = e
+      continue
+    }
+    if (c === '\n' && pending.length) {
+      for (const [word, strip] of pending) {
+        while (i < n) {
+          let e = cmd.indexOf('\n', i + 1)
+          if (e < 0) e = n
+          const line = cmd.slice(i + 1, e)
+          i = e
+          if ((strip ? line.replace(/^\t+/, '') : line) === word) break
+        }
+      }
+      pending = []
       continue
     }
     if (opener === '(') {
@@ -1198,7 +1350,11 @@ export function programHeredocs(cmd) {
   const out = []
   for (const h of heredocs) {
     const consumer = heredocRunsBody(s, h, funcs)
-    if (consumer) out.push({ consumer: baseName(consumer), body: s.slice(h.bodyStart, h.bodyEnd).replace(/\n$/, '') })
+    if (!consumer) continue
+    const body = s.slice(h.bodyStart, h.bodyEnd).replace(/\n$/, '')
+    out.push({ consumer: baseName(consumer), body })
+    // a gdb script from the stdin: its `shell`/`!`/pipe lines are shell command lines (#777 review 11)
+    if (baseName(consumer) === 'gdb') for (const line of gdbShellLines(body)) out.push({ consumer: 'sh', body: line })
   }
   return out
 }
