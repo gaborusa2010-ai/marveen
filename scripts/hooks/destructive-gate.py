@@ -291,12 +291,17 @@ def _skip_prefix(words, k):
             k += 1
         elif os.path.basename(w) in _TRANSPARENT:
             k = _after_transparent(words, k, os.path.basename(w))
-        elif re.match(r'^([0-9]*[<>]|&>)', w):
+        elif _REDIR_GLUED_RE.match(w):
             # atiranyitas a parancsnev elott; a puszta operator a kovetkezo szot viszi
-            k += 2 if re.match(r'^([0-9]*[<>]+&?|&>>?)$', w) else 1
+            k += 2 if _REDIR_OP_RE.match(w) else 1
         else:
             break
     return k
+
+
+# Egy shell-szo: idezetlen jel, visszaperjeles jel, "..." vagy '...' darabok sorozata.
+# Egy parjatlan idezojel kimarad (a szegmens egy helyettesites hataran is lehet vagva).
+_SHELL_WORD_RE = re.compile(r'(?:[^\s"\'\\]|\\.|"(?:[^"\\]|\\.)*"|\'[^\']*\')+')
 
 
 def _cmd_word(seg):
@@ -305,7 +310,9 @@ def _cmd_word(seg):
     k == len(szavak), ha nincs parancsnev. Az alhejet vagy folyamat-helyettesitest zaro
     `)` lezarja az egyszeru parancsot (`(bash) <<EOF`, `tee >(bash) <<EOF`, #748 review):
     az utana allo szavak nem az operandusai."""
-    words = [_word(t) for t in re.split(r'\s+', seg.replace(')', ' ) ').strip()) if t]
+    # Idezojel-tudatos szavakra bontas: `bash > "o 775" <<EOF` celja egy szo, nem ketto
+    # (a masodik fele programfajlnak latszott, #775). A `)` szokozzel korbeveve kulon szo.
+    words = [_word(t) for t in _SHELL_WORD_RE.findall(seg.replace(')', ' ) '))]
     k = _skip_prefix(words, 0)
     for i in range(k + 1, len(words)):
         if words[i][0] == ')':
@@ -351,6 +358,33 @@ _ARGV_FEEDERS = ('xargs', 'parallel')
 _REMOTE_RUNNERS = ('ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl')
 # Egy utvonal, ami MAGA a standard bemenet: `bash /dev/stdin <<EOF` a torzset futtatja.
 _STDIN_PATH_RE = re.compile(r'^/(?:dev/stdin|(?:dev|proc/self)/fd/0+)$')
+# Atiranyitas-operator KULON szoban (a kovetkezo szo a celja: `> log`, `2>&1`-nel nincs
+# cel) es az osszeirt alak (`>log`, `2>&1`). A `>|` (clobber) is operator: a `|`-je nem
+# csohatar (#775, a #773 review maradeka).
+_REDIR_OP_RE = re.compile(r'^([0-9]*[<>]+&?|[0-9]*>\||&>>?)$')
+_REDIR_GLUED_RE = re.compile(r'^([0-9]*[<>]|&>)')
+# Egy shell-kapcsolocsoport (`-xo`, `+O`, `-xoo`): MINDEN benne allo o/O egy ertekszot visz
+# (`bash -xo pipefail`, `bash -c -xoo pipefail errexit "$l"`, merve valodi bash-sal, #775 review).
+_OPT_CLUSTER_RE = re.compile(r'^[-+][A-Za-z]+$')
+
+
+def _opt_values(word):
+    """Hany ertekszot visz egy shell-kapcsolocsoport (az o/O szama benne), 0 ha nem az."""
+    return word.count('o') + word.count('O') if _OPT_CLUSTER_RE.match(word) else 0
+
+
+# A bash GNU hosszu opcioi, egy VAGY ket kotojellel (`bash -norc`, `bash --rcfile F`): a bash
+# csak az argumentumlista ELEJEN olvassa oket, az elso rovid kapcsolo utan mar nem (`bash -x
+# --norc`: invalid option; `bash -x -norc`: n,o,r,c csoport). Egyik sem -c csoport es egyik
+# o-ja sem visz erteket; a rcfile/init-file egy ertekszot visz (`--rcfile=F` ervenytelen).
+# Nehany nem futtatja a torzset (help, version, dump-*, pretty-print, wordexp, protected,
+# rpm-requires). Merve valodi bash-sal, 61 alak (#775 2. kor review).
+_BASH_LONG_OPT_RE = re.compile(r'^--?(debug|debugger|dump-po-strings|dump-strings|help|init-file|login'
+                               r'|noediting|noprofile|norc|posix|pretty-print|protected|rcfile|restricted'
+                               r'|verbose|version|wordexp|rpm-requires)$')
+_BASH_LONG_OPT_VALUE = ('rcfile', 'init-file')
+_BASH_LONG_OPT_NO_RUN = ('help', 'version', 'dump-po-strings', 'dump-strings', 'pretty-print', 'protected',
+                         'wordexp', 'rpm-requires')
 
 
 def _after_stdin_wrapper(words, k, spec):
@@ -384,9 +418,9 @@ def _last_operand(words):
     j = len(words) - 1
     while j >= 0:
         w = words[j][0]
-        if re.match(r'^([0-9]*[<>]|&>)', w) and not re.match(r'^([0-9]*[<>]+&?|&>>?)$', w):
+        if _REDIR_GLUED_RE.match(w) and not _REDIR_OP_RE.match(w):
             j -= 1
-        elif j >= 1 and re.match(r'^([0-9]*[<>]+&?|&>>?)$', words[j - 1][0]):
+        elif j >= 1 and _REDIR_OP_RE.match(words[j - 1][0]):
             j -= 2
         else:
             break
@@ -425,27 +459,63 @@ def _runs_words(words, k, depth, loose=False):
         return False
     shell = base in _SHELLS
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
+    long_opts = base == 'bash'     # a GNU hosszu opciok csak a lista elejen (lasd _BASH_LONG_OPT_RE)
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
         if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x):
             return True
-        if re.match(r'^([0-9]*[<>]+&?|&>>?)$', x):
+        if _REDIR_OP_RE.match(x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
             continue
-        if re.match(r'^([0-9]*[<>]|&>)', x):
+        if _REDIR_GLUED_RE.match(x):
             j += 1                 # osszeirt atiranyitas (2>&1, >log): nem operandus
             continue
+        if long_opts:
+            lm = _BASH_LONG_OPT_RE.match(x)
+            if lm:
+                if lm.group(1) in _BASH_LONG_OPT_NO_RUN:
+                    return False   # `bash --version <<EOF`: a torzs olvasatlan marad
+                j += 1 + (lm.group(1) in _BASH_LONG_OPT_VALUE)   # `--rcfile F`, `-init-file F`
+                continue
+            long_opts = False
+        if base == 'bash' and x.startswith('--') and len(x) > 2:
+            return False           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
         if x in flags or (shell and re.match(r'^-[A-Za-z]*c', x)):
             # a program a kapcsolo utani szoveg (bash -c, -ec, python3 -m); olvaso torzsben
-            # dinamikus programszo = a torzs egy sora. Egy `--` a kapcsolo utan csak az
-            # opciok veget jelzi (`bash -c -- "$l"`), a program az utana allo szo.
-            m = j + 1
-            if m < len(words) and words[m][0] == '--' and not words[m][1]:
-                m += 1
+            # dinamikus programszo = a torzs egy sora. A shell a -c utan meg olvas opciot
+            # (`bash -c -x "$l"`, `-o pipefail`, `+x`), egy `-` vagy `--` zarja az opciokat
+            # (`bash -c - "$l"`, `bash -c -- "$l"`), es atiranyitas is allhat kozben
+            # (`bash -c 2>/dev/null "$l"`): a program az ezek utani szo (#773, #775). Egy
+            # `--szo` hosszu opciot a -c utan a bash elutasit (`bash -c --norc "$l"`: nem
+            # fut semmi), ez adat. A python/perl/node a -c utani ELSO szot futtatja
+            # (`python3 -c -- "$l"`: a program a `--`), ott csak atiranyitas lephet kozbe.
+            # Az o/O a -c csoportjaban is erteket visz (`bash -co pipefail "$l"`, `-oc`, `-cO`):
+            # a program az ertekszo(k) utan all.
+            m = j + 1 + (_opt_values(x) if shell else 0)
+            ended = not shell      # az opciok vege: mar csak atiranyitas lephet kozbe
+            while m < len(words) and not words[m][1]:
+                y = words[m][0]
+                if _REDIR_OP_RE.match(y):
+                    m += 2
+                elif _REDIR_GLUED_RE.match(y):
+                    m += 1
+                elif ended:
+                    break
+                elif y in ('-', '--'):
+                    m += 1
+                    ended = True   # `bash -c -- 2>/dev/null "$l"`: a program az atiranyitas utan
+                elif _opt_values(y):
+                    m += 1 + _opt_values(y)   # `-o pipefail`, `-xo pipefail`, `-xoo pipefail errexit`
+                elif y.startswith('--'):
+                    return False
+                elif y.startswith(('-', '+')):
+                    m += 1
+                else:
+                    break
             return bool(loose and m < len(words) and words[m][1])
-        if shell and re.match(r'^[-+][oO]$', x):
-            j += 2                 # `-o pipefail`, `+O extglob`: a kapcsolo erteket visz
+        if shell and _opt_values(x):
+            j += 1 + _opt_values(x)   # `-o pipefail`, `+O extglob`, `-xo pipefail`: ertekszo(k) a csoport utan
             continue
         if x.startswith('-') or (shell and x.startswith('+')):
             j += 1
@@ -464,8 +534,13 @@ _STDIN_SCRIPT_FLAGS = {
 }
 
 # Egyszeru parancsok hatarai egy osszetett parancson (ciklus-torzs, fuggveny-torzs) belul.
-# A `>&1`, `<&0`, `&>log` `&`-je atiranyitas, nem parancshatar (#748: `bash 2>&1 <<SH`).
-_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;|\n(){}`]|\$\(')
+# A `>&1`, `<&0`, `&>log` `&`-je atiranyitas, nem parancshatar (#748: `bash 2>&1 <<SH`);
+# a `>|` `|`-je sem az (#775: `bash >| log <<SH`).
+_SIMPLE_SPLIT = re.compile(r'\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(')
+# A fej es a cso-tag hatarai a heredoc nyitojanak soran (lasd _heredoc_runs_body).
+_HEAD_SPLIT = re.compile(r'(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()')
+_TAIL_SPLIT = re.compile(r'\|\||&&|[;]|(?<![<>])&(?!>)')
+_PIPE_SPLIT = re.compile(r'(?<!>)\|')
 # `nev() { ... }`, `nev() ( ... )`, `function nev { ... }`: a nev es a nyito zarojel.
 _FUNC_DEF_RE = re.compile(
     r'(?:\bfunction\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*([{(])'
@@ -479,11 +554,52 @@ _COMPOUND_TOKEN_RE = re.compile(r'(?<![\w$-])(while|until|for|select|done|if|fi|
 _READS_STDIN_RE = re.compile(r'(?<![\w$-])(read|mapfile|readarray)(?![\w-])')
 
 
+def _sub_blanked(text):
+    """A szoveg, amelyben minden LEZART `$(...)` es `...` helyettesites egyetlen
+    dinamikus szo, `$SUB`. A lezaratlan (a heredoc a helyettesites BELSEJEBEN all)
+    valtozatlan marad: azt az _enclosing_runs olvassa. Igy `bash -c "$(echo "$l")"` a
+    `bash -c "$SUB"` alakban latszik (dinamikus program), es a fejben allo lezart
+    helyettesites nem olvasodik a kulso parancs helyett (#775)."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '$' and text.startswith('$(', i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text[j] == '(':
+                    depth += 1
+                elif text[j] == ')':
+                    depth -= 1
+                j += 1
+            if depth:
+                out.append(text[i:])
+                break
+            out.append('$SUB')
+            i = j
+        elif ch == '`':
+            j = text.find('`', i + 1)
+            if j < 0:
+                out.append(text[i:])
+                break
+            out.append('$SUB')
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
 def _any_runs_stdin(text):
     """Az osszetett szoveg (ciklus- vagy fuggveny-torzs) barmelyik egyszeru parancsa
-    a stdin-t programkent futtatja-e. `$l` parancsnevkent dinamikus, tehat igen."""
+    a stdin-t programkent futtatja-e. `$l` parancsnevkent dinamikus, tehat igen.
+    Ketszer olvassuk: ahogy van (a helyettesites BELSEJEBEN allo `x=$(bash -c "$l")`
+    is fut), es a lezart helyettesitesekkel egy-egy dinamikus szova vonva
+    (`bash -c "$(echo "$l")"` programja a helyettesites, #775)."""
     loose = bool(_READS_STDIN_RE.search(text))
-    return any(_cmd_runs_stdin(p, loose) for p in _SIMPLE_SPLIT.split(text) if p.strip())
+    blanked = _sub_blanked(text)
+    return any(_cmd_runs_stdin(p, loose)
+               for t in ((text, blanked) if blanked != text else (text,))
+               for p in _SIMPLE_SPLIT.split(t) if p.strip())
 
 
 def _function_bodies(cmd):
@@ -649,14 +765,16 @@ def _heredoc_runs_body(cmd, h, funcs=None):
             n = fd.group(1).lstrip('0')
             path = r'/(?:dev|proc/self)/fd/0*%s(?![0-9])' % n
             dup = r'(?:^|\s)0?<&\s*0*%s-?(?=\s|$)' % n
-            line = head + ' ' + re.split(r'\|\||&&|[;]|(?<![<>])&(?!>)', cmd[h.tail_start:h.line_end])[0]
+            line = head + ' ' + _TAIL_SPLIT.split(cmd[h.tail_start:h.line_end])[0]
             if not re.search(path, line) and not re.search(dup, line):
                 return False
             line = re.sub(dup, ' ', re.sub(path, '-', line))
-            return _simple_runs(line, funcs)
-    parts = re.split(r'(\|\||&&|(?<![<>])&(?!>)|[;|(`]|\$\()', head)
-    tail = re.split(r'\|\||&&|[;]|(?<![<>])&(?!>)', cmd[h.tail_start:h.line_end])[0]
-    pipe = tail.split('|')
+            # az utolso egyszeru parancs, a zarojaval egyutt (`{ bash; } 2>&1 3<<EOF <&3`,
+            # #775): ugyanugy, mint a stdin-heredoc fejenel lent
+            return _simple_runs(_HEAD_SPLIT.split(_sub_blanked(line))[-1], funcs, cmd, h.start)
+    parts = _HEAD_SPLIT.split(_sub_blanked(head))
+    tail = _TAIL_SPLIT.split(cmd[h.tail_start:h.line_end])[0]
+    pipe = _PIPE_SPLIT.split(tail)
     if _simple_runs(parts[-1] + ' ' + pipe[0], funcs, cmd, h.start):
         return True
     if any(_simple_runs(p, funcs) for p in pipe[1:]):
