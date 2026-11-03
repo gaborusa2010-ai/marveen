@@ -171,7 +171,8 @@ describe('#243 starvation check on the tick paths', () => {
     expect(alerts[0][0]).toBe(AGENT)
     expect(alerts[0][2]).toContain(`"${STALE.name}"`)
     expect(alerts[0][2]).toContain('2 EGYMAS UTANI')
-    expect(alerts[0][2]).toContain('missed')
+    // The task name is in the text too, so match 'missed' inside the reasons part.
+    expect(alerts[0][2]).toMatch(/Okok a naplo szerint: [^.]*\bmissed\b/)
   })
 
   it("missed branch control: the 'missed' row is only the 1st skip -> no alert yet", async () => {
