@@ -198,6 +198,142 @@ with tempfile.TemporaryDirectory() as td:
     run(work, env)
     check('merge refused repeat: one notification', notes(work) == 1, notes(work))
 
+# --- 8. upstream adds files that exist here UNTRACKED (#746) ------------------
+# merge-tree cannot see the working tree, so it said clean; the real merge then
+# refused ("Please move or remove them before you merge") and the error report
+# lost the file names. Now the dry run names them and no merge runs.
+def add_n_dx(seed):
+    write(os.path.join(seed, 'n'), 'upstream\n')
+    os.makedirs(os.path.join(seed, 'd'))
+    write(os.path.join(seed, 'd', 'x'), 'upstream\n')
+    git(seed, 'add', 'n', 'd/x')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_n_dx)
+    npath = os.path.join(work, 'n')
+    os.makedirs(os.path.join(work, 'd'))
+    write(npath, 'mine, untracked\n')
+    write(os.path.join(work, 'd', 'x'), 'mine too\n')
+    before = (open(npath).read(), os.stat(npath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    p = run(work)
+    st = state(work)
+    check('untracked clobber: exit 0', p.returncode == 0, p.stderr)
+    check('untracked clobber: state blocked naming n and d/x',
+          st['result'] == 'blocked' and {'n', 'd/x'} <= set(st['detail'].split()), st)
+    after = (open(npath).read(), os.stat(npath).st_mtime_ns, git(work, 'rev-parse', 'HEAD'))
+    check('untracked clobber: n bytes, mtime and HEAD unchanged', before == after, (before, after))
+    check('untracked clobber: no merge was run', 'reset: moving to HEAD' not in git(work, 'reflog')
+          and not os.path.exists(os.path.join(work, '.git', 'MERGE_HEAD')))
+    note_text = open(os.path.join(work, 'store', 'notify.log')).read()
+    check('untracked clobber: one notification naming the files',
+          notes(work) == 1 and {'n', 'd/x'} <= set(note_text.split()), (notes(work), note_text))
+    run(work)
+    check('untracked clobber repeat: quiet', notes(work) == 1 and state(work)['result'] == 'blocked', notes(work))
+
+# --- 9. upstream adds a file that exists here IGNORED (#746) ------------------
+# The real merge OVERWRITES an ignored file without a word (measured 2026-11-02),
+# so this one is data loss, not a refusal: it must block the same way.
+def add_i(seed):
+    write(os.path.join(seed, 'i'), 'upstream\n')
+    git(seed, 'add', 'i')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_i)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\ni\n')
+    ipath = os.path.join(work, 'i')
+    write(ipath, 'mine, ignored\n')
+    p = run(work)
+    st = state(work)
+    check('ignored clobber: state blocked naming i as ignored',
+          st['result'] == 'blocked' and 'i (ignored)' in st['detail'], st)
+    check('ignored clobber: i kept, no merge run',
+          open(ipath).read() == 'mine, ignored\n' and 'reset: moving to HEAD' not in git(work, 'reflog')
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, open(ipath).read())
+    check('ignored clobber: one notification', notes(work) == 1, notes(work))
+    run(work)
+    check('ignored clobber repeat: quiet', notes(work) == 1, notes(work))
+
+# --- 10. an unrelated untracked file: still merges, file kept ----------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_n_dx)
+    write(os.path.join(work, 'u'), 'unrelated\n')
+    p = run(work)
+    st = state(work)
+    check('unrelated untracked: merged, u kept, n and d/x created',
+          st['result'] == 'merged' and open(os.path.join(work, 'u')).read() == 'unrelated\n'
+          and open(os.path.join(work, 'n')).read() == 'upstream\n'
+          and os.path.exists(os.path.join(work, 'd', 'x')), (st, p.stderr))
+
+# --- 11. ignored FILE d here, upstream adds d/x (#746 review) ---------------
+# Equal-name matching passed this: the real merge turned the ignored file into
+# a directory without a word. A parent of an added path is a collision too.
+def add_dx(seed):
+    os.makedirs(os.path.join(seed, 'd'))
+    write(os.path.join(seed, 'd', 'x'), 'upstream\n')
+    git(seed, 'add', 'd/x')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_dx)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\nd\n')
+    dpath = os.path.join(work, 'd')
+    write(dpath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('ignored parent file: state blocked naming d as ignored',
+          st['result'] == 'blocked' and 'd (ignored)' in st['detail'], (st, p.stderr))
+    check('ignored parent file: d still a file with my bytes, no merge',
+          os.path.isfile(dpath) and open(dpath).read() == 'mine\n'
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, os.path.isfile(dpath))
+    check('ignored parent file: one notification', notes(work) == 1, notes(work))
+
+# --- 12. ignored d/y here, upstream adds a FILE d (#746 review) -------------
+def add_d(seed):
+    write(os.path.join(seed, 'd'), 'upstream\n')
+    git(seed, 'add', 'd')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_d)
+    write(os.path.join(work, '.git', 'info', 'exclude'), 'scripts/\nstore/\nd/\n')
+    os.makedirs(os.path.join(work, 'd'))
+    ypath = os.path.join(work, 'd', 'y')
+    write(ypath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('ignored child: state blocked naming d/y as ignored',
+          st['result'] == 'blocked' and 'd/y (ignored)' in st['detail'], (st, p.stderr))
+    check('ignored child: d/y kept, no merge',
+          os.path.isfile(ypath) and open(ypath).read() == 'mine\n'
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2, os.path.isfile(ypath))
+    check('ignored child: one notification', notes(work) == 1, notes(work))
+
+# --- 13. UNTRACKED file d here, upstream adds d/x (#746 review) -------------
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_dx)
+    dpath = os.path.join(work, 'd')
+    write(dpath, 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('untracked parent file: state blocked naming d, not as ignored',
+          st['result'] == 'blocked' and 'd' in st['detail'].split() and '(ignored)' not in st['detail'], (st, p.stderr))
+    check('untracked parent file: d kept, no merge run',
+          os.path.isfile(dpath) and open(dpath).read() == 'mine\n'
+          and 'reset: moving to HEAD' not in git(work, 'reflog')
+          and len(git(work, 'rev-list', '--parents', '-n', '1', 'HEAD').split()) == 2)
+    check('untracked parent file: one notification', notes(work) == 1, notes(work))
+
+# --- 14. a name with a space comes out whole ---------------------------------
+def add_spaced(seed):
+    write(os.path.join(seed, 'my file'), 'upstream\n')
+    git(seed, 'add', 'my file')
+
+with tempfile.TemporaryDirectory() as td:
+    work = repo(td, None, local_file='h', upstream=add_spaced)
+    write(os.path.join(work, 'my file'), 'mine\n')
+    p = run(work)
+    st = state(work)
+    check('spaced name: blocked and named whole',
+          st['result'] == 'blocked' and 'my file' in st['detail'], (st, p.stderr))
+
 print()
 if FAILS:
     print('%d FAILED: %s' % (len(FAILS), FAILS), file=sys.stderr)
