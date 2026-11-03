@@ -25,14 +25,30 @@ task bypasses the quota gate and does not live in a session.
     python3 scripts/heti-mentes-cmd.py --verify-only <archive.tar.gz>
                                                   checks b + d on an existing
                                                   upload, writes nothing
+    python3 scripts/heti-mentes-cmd.py --resume-interrupted
+                                                  rerun a run that was killed
+                                                  half-way (#765, systemd timer)
+
+Interrupted runs (#765, d02d5092): the runner replays a MISSED 20:00 slot on
+startup, but a run that started and was then killed (2026-11-01: machine shut
+down mid-backup) counts as fired, so nothing retried it for 24 hours. A due run
+writes store/.backup-running and removes it when it ends, failed or not, while
+holding a flock on store/.backup-run.lock. A marker with a free lock means the
+run was killed; --resume-interrupted (systemd timer marveen-mentes-potlas,
+hourly and after boot) starts it again, at most once. Not a scheduler task: a
+command task's silent exit 0 after an alert would read as "recovered".
 """
-import argparse, datetime, glob, hashlib, os, subprocess, sys, time
+import argparse, datetime, fcntl, glob, hashlib, json, os, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUPS = os.path.join(ROOT, "backups")
 STATE = os.path.join(ROOT, "store", ".last-backup-ok")
 PASSFILE = os.path.join(ROOT, "store", ".backup-passphrase")
 LOG = os.path.join(ROOT, "store", "heti-mentes-cmd.log")
+RUNNING = os.path.join(ROOT, "store", ".backup-running")
+RUN_LOCK = os.path.join(ROOT, "store", ".backup-run.lock")
+# One retry: a run killed by the 3 h timeout (a hung upload) is not retried forever.
+RESUME_MAX_ATTEMPTS = 2
 FOLDER = "Marveen Backups"
 
 sys.path.insert(0, os.path.join(ROOT, "scripts", "muhely"))
@@ -55,7 +71,9 @@ def log(msg):
 def run(cmd, what):
     """Run a step with its output appended to the log. Returns stdout."""
     log(f"start: {what}")
-    p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    # BACKUP_LOG: backup.sh names this file in its failure alert (#765).
+    env = dict(os.environ, BACKUP_LOG=os.path.relpath(LOG, ROOT))
+    p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env)
     try:
         with open(LOG, "a") as fh:
             fh.write(p.stdout[-20000:] + p.stderr[-20000:])
@@ -115,15 +133,121 @@ def check_drive_md5(gpg_path):
     log(f"check d ok: md5 {local}")
 
 
+def read_marker():
+    try:
+        with open(RUNNING) as fh:
+            m = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return {}  # unreadable marker: still a sign of a run that did not end
+    return m if isinstance(m, dict) else {}
+
+
+def marker_attempt(m):
+    try:
+        return int(m.get("attempt", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def write_marker(attempt):
+    with open(RUNNING, "w") as fh:
+        json.dump({"pid": os.getpid(), "started": f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}",
+                   "attempt": attempt}, fh)
+
+
+def clear_marker():
+    try:
+        os.remove(RUNNING)
+    except FileNotFoundError:
+        pass
+
+
+def take_run_lock(wait=False):
+    """Flock held for the whole run; None if another run holds it (wait=False).
+
+    The kernel drops it when the holder dies, so "lock free + marker present"
+    is the proof of a killed run, with no pid guessing (a pid can be reused
+    after a reboot, even by the resume process itself)."""
+    fd = os.open(RUN_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def resume_interrupted():
+    if read_marker() is None:
+        return 0  # nothing was interrupted: silent, every hour
+    lock = take_run_lock()
+    if lock is None:
+        return 0  # the run is still going
+    try:
+        m = read_marker()  # re-read under the lock: the holder may have just finished
+        if m is None:
+            return 0
+        attempt = marker_attempt(m) + 1
+        if attempt > RESUME_MAX_ATTEMPTS:
+            clear_marker()
+            raise Fail(f"a mentes {RESUME_MAX_ATTEMPTS}x egymas utan felbemaradt (inditva: {m.get('started', '?')}), "
+                       "tobbszor nem inditom ujra")
+        log(f"resume: a {m.get('started', '?')}-kor indult mentes felbemaradt, ujrainditas, {attempt}. probalkozas")
+        # Count the attempt before anything else can be killed: a kill between
+        # here and the backup body must not make the interruption forgotten,
+        # and a step that keeps failing early still runs out of attempts.
+        write_marker(attempt)
+        try:
+            return locked_run(attempt)
+        except BaseException:
+            # A failure before the body (backup-due.py, an OSError) is a failure,
+            # not a kill: leave no marker, or the next hour reports a second
+            # "interrupted twice". A real kill never reaches this line.
+            clear_marker()
+            raise
+    finally:
+        os.close(lock)
+
+
 def nightly():
+    lock = take_run_lock()
+    if lock is None:
+        # A resumed run is going. Wait for it instead of exiting 0: the runner
+        # reads a quiet exit 0 as "recovered" while the resume may still fail.
+        # After it, backup-due.py decides. A failed resume leaves the run due and
+        # this run does the backup; after a good one, any change since (a new
+        # message or card, minutes in this fleet) still makes it due, so this is
+        # usually a short diff backup, not a skip.
+        m = read_marker() or {}
+        log(f"wait: a {m.get('started', '?')}-kor indult mentes meg fut, megvarom")
+        lock = take_run_lock(wait=True)
+    try:
+        return locked_run(1)
+    finally:
+        os.close(lock)
+
+
+def locked_run(attempt):
     due = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "backup-due.py")],
                          cwd=ROOT, capture_output=True, text=True)
     if due.returncode == 1:
+        clear_marker()  # a good copy exists: an old interruption no longer matters
         return 0  # not due: silent, no log line either (every quiet evening)
     if due.returncode != 0:
         raise Fail(f"a backup-due.py hibaval allt le (exit {due.returncode})")
     log("due: " + " | ".join(due.stdout.strip().splitlines()[-3:]))
 
+    write_marker(attempt)
+    try:
+        return run_backup()
+    finally:
+        # Reached on success and on Fail; NOT on a kill or a shutdown, which is the point.
+        clear_marker()
+
+
+def run_backup():
     before = set(glob.glob(os.path.join(BACKUPS, "*.tar.gz")))
     run(["bash", "scripts/backup.sh"], "a backup.sh")
     new = sorted(set(glob.glob(os.path.join(BACKUPS, "*.tar.gz"))) - before, key=os.path.getmtime)
@@ -167,6 +291,7 @@ def nightly():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--verify-only", metavar="ARCHIVE")
+    ap.add_argument("--resume-interrupted", action="store_true")
     a = ap.parse_args()
     try:
         if a.verify_only:
@@ -176,11 +301,34 @@ def main():
             check_decrypts(gpg_path, os.path.basename(a.verify_only))
             check_drive_md5(gpg_path)
             return 0
+        if a.resume_interrupted:
+            return resume_interrupted()
         return nightly()
-    except Fail as e:
-        log(f"FAIL: {e}")
-        print(f"Mentes: {e}. Addig nincs friss gepen kivuli masolat.", file=sys.stderr)
+    except Exception as e:
+        if not a.resume_interrupted and not isinstance(e, Fail):
+            raise  # the 20:00 runner alerts on the traceback's non-zero exit
+        reason = str(e) if isinstance(e, Fail) else f"varatlan hiba: {type(e).__name__}: {str(e)[:120]}"
+        log(f"FAIL: {reason}")
+        print(f"Mentes: {reason}. Addig nincs friss gepen kivuli masolat.", file=sys.stderr)
+        if a.resume_interrupted:
+            # The resume runs from a systemd timer, which tells nobody about a
+            # non-zero exit; the command-task runner's alert does not cover it.
+            alert(f"[MENTES] A felbemaradt mentes potlasa elbukott: {reason}. "
+                  "Nincs friss gepen kivuli masolat (store/heti-mentes-cmd.log).")
         return 1
+
+
+def alert(text):
+    """Queue a message to marveen; a lost alert at least leaves a log line."""
+    try:
+        p = subprocess.run(["bash", "scripts/agent-msg.sh", "marveen", "marveen", text],
+                           cwd=ROOT, capture_output=True, text=True)
+        ok = p.returncode == 0 and "OK id=" in (p.stdout or "")
+        why = f"exit {p.returncode}: {((p.stdout or '') + (p.stderr or '')).strip()[-120:]}"
+    except Exception as e:
+        ok, why = False, f"{type(e).__name__}: {e}"
+    if not ok:
+        log(f"ALERT NOT QUEUED ({why}): {text}")
 
 
 if __name__ == "__main__":

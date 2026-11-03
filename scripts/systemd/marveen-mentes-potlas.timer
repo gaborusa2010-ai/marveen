@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly and after boot: look for a killed Marveen backup (card #765)
+
+[Timer]
+OnCalendar=*:20
+# No Persistent=: after downtime it fires at once, before the dashboard and
+# the network are up, and burns an attempt on a doomed upload. OnBootSec covers boot.
+OnBootSec=10min
+
+[Install]
+WantedBy=timers.target

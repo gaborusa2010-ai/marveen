@@ -1,0 +1,14 @@
+[Unit]
+Description=Rerun a Marveen nightly backup that was killed half-way (card #765)
+# No Wants=marveen-dashboard: this starts hourly and would bring back a
+# dashboard stopped on purpose. The timer's OnBootSec gives it time to come up.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/gabor/marveen
+Environment=PATH=/home/gabor/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/gabor
+Environment=TZ=Europe/London
+ExecStart=/usr/bin/python3 /home/gabor/marveen/scripts/heti-mentes-cmd.py --resume-interrupted
+# Same budget as the 20:00 command task (timeoutMs 10800000) plus slack.
+TimeoutStartSec=4h

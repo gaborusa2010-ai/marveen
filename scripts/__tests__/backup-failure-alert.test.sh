@@ -44,6 +44,15 @@ check "  ... queues exactly one alert" "$(calls "$T")" "1"
 check "  ... from the default main agent" "$(arg "$T" 1)" "marveen"
 check "  ... to the default main agent" "$(arg "$T" 2)" "marveen"
 check "  ... text is the [MENTES] failure notice" "$(arg "$T" 3 | grep -c '^\[MENTES\] A napi mentes ellenorzese ELBUKOTT')" "1"
+check "  ... points at logs/backup.log by default" "$(arg "$T" 3 | grep -c 'reszletek: logs/backup.log)')" "1"
+rm -rf "$T"
+
+# #765: a caller that keeps the output elsewhere names that file in BACKUP_LOG.
+T="$(mkrepo 0)"; break_staging "$T"
+rc="$( ( cd "$T" && HOME="$T/home" BACKUP_DIR="$T/bk" KEEP=1 BACKUP_LOG=store/heti-mentes-cmd.log bash scripts/backup.sh >"$T/out.log" 2>&1 ); echo $? )"
+chmod 600 "$T/store/unreadable.txt"
+check "BACKUP_LOG set: exits 6" "$rc" "6"
+check "  ... alert points at that log" "$(arg "$T" 3 | grep -c 'reszletek: store/heti-mentes-cmd.log)')" "1"
 rm -rf "$T"
 
 # The recipient comes from .env the way the app reads it: last definition wins,

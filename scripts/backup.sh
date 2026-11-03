@@ -958,6 +958,9 @@ if [[ "${missing}" -gt 0 ]]; then
   echo "backup: FAILED verification -- ${missing} problem(s) for ${ARCHIVE}: $((missing - STAGE_FAILS)) missing from the manifest check, ${STAGE_FAILS} staging failure(s) (one file can be in both)." >&2
   echo "backup: the archive is kept for inspection, but do NOT treat it as a good copy." >&2
   # launchd sends this script's output to logs/backup.log, which nobody opens.
+  # A caller that keeps the output elsewhere names that file in BACKUP_LOG
+  # (heti-mentes-cmd.py on Linux: store/heti-mentes-cmd.log, #765), so the
+  # alert never points at a log that does not exist on this install.
   # A loud failure into an unread file is the same silence the verification
   # above exists to break, so the failure also goes onto the agent message
   # queue, where it survives the agent being asleep at 04:30 and gets read on
@@ -982,7 +985,7 @@ if [[ "${missing}" -gt 0 ]]; then
     # sent until then was dropped on the floor. MAIN_AGENT_ID is resolved from
     # .env above (the launchd block), with the same "marveen" default.
     bash "${REPO_ROOT}/scripts/agent-msg.sh" "${MAIN_AGENT_ID}" "${MAIN_AGENT_ID}" \
-      "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} hiba: $((missing - STAGE_FAILS)) hianyzo tetel, ${STAGE_FAILS} masolasi hiba, egy fajl mindkettoben szerepelhet (reszletek: logs/backup.log). Az archivum NEM tekintheto jo masolatnak." \
+      "[MENTES] A napi mentes ellenorzese ELBUKOTT ${STAMP}-kor: ${missing} hiba: $((missing - STAGE_FAILS)) hianyzo tetel, ${STAGE_FAILS} masolasi hiba, egy fajl mindkettoben szerepelhet (reszletek: ${BACKUP_LOG:-logs/backup.log}). Az archivum NEM tekintheto jo masolatnak." \
       >/dev/null 2>&1 || echo "backup: WARN could not queue the failure alert for ${MAIN_AGENT_ID}" >&2
   else
     echo "backup: WARN no scripts/agent-msg.sh -- the failure alert for ${MAIN_AGENT_ID} was not queued" >&2
