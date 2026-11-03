@@ -218,13 +218,18 @@ fi
 # ignored d/y vanishing when upstream added a file named d. So every local
 # untracked/ignored path is matched against the added path, its parent
 # directories, and its descendants. NUL-separated on both sides: a name with a
-# space or a newline must come out whole.
-CLOBBER="$(/usr/bin/python3 - "$MT_TREE" <<'PY'
+# space or a newline must come out whole (the newline is shown as \n).
+CLOBBER="$(/usr/bin/python3 - "$MT_TREE" 2>"$MT_ERRF" <<'PY'
 import bisect, subprocess, sys
 
 def paths(*args):
-    out = subprocess.run(['git', *args], check=True, capture_output=True).stdout
-    return [p for p in out.decode('utf-8', 'surrogateescape').split('\0') if p]
+    r = subprocess.run(['git', *args], capture_output=True)
+    if r.returncode != 0:
+        # git's own words, not a traceback: the state file and the notification
+        # show the last lines of stderr (#776).
+        sys.stderr.write('git %s: %s\n' % (args[0], r.stderr.decode('utf-8', 'replace').strip() or 'rc=%d' % r.returncode))
+        sys.exit(1)
+    return [p for p in r.stdout.decode('utf-8', 'surrogateescape').split('\0') if p]
 
 added = paths('diff', '--name-only', '-z', '--diff-filter=A', '--no-renames', 'HEAD', sys.argv[1])
 if not added:
@@ -247,9 +252,26 @@ for label, local in (('', paths('ls-files', '-z', '--others', '--exclude-standar
             found.add(local_sorted[k])
             k += 1
     hits.extend(p + label for p in sorted(found))
-sys.stdout.buffer.write(''.join(h + '\n' for h in hits).encode('utf-8', 'surrogateescape'))
+# One name per line for the shell; a newline INSIDE a name is shown escaped, so
+# the state and the notification keep it as one word (#776).
+sys.stdout.buffer.write(''.join(h.replace('\n', '\\n') + '\n' for h in hits).encode('utf-8', 'surrogateescape'))
 PY
 )"
+CLOBBER_RC=$?
+if [ "$CLOBBER_RC" -ne 0 ]; then
+  # The check itself failed (git error, python error): an empty CLOBBER would mean
+  # "nothing collides" and the real merge would run, overwriting an ignored file
+  # it never looked for (#776, measured in the #746 review). Fail closed, like the
+  # merge-tree failure above: state + one notification per distinct cause, no merge.
+  REASON="$(sed '/^$/d' "$MT_ERRF" | tail -n 3 | tr '\n' ' ')"
+  NEWSTATE="utkozes-ellenorzes hiba (rc=$CLOBBER_RC): ${REASON:-ismeretlen}"
+  if [ "$PREV_RESULT" != "error" ] || [ "$PREV_DETAIL" != "$NEWSTATE" ]; then
+    notify "[UPSTREAM-SYNC] A helyi fajlok utkozes-ellenorzese hibaval allt meg, ezert nem fesultem ossze semmit (egy ignored fajlt szo nelkul felulirhatott volna). A hiba: ${REASON:-ismeretlen}"
+  fi
+  state error "$NEWSTATE"
+  echo "$TS CLOBBER CHECK FAILED rc=$CLOBBER_RC: ${REASON:-unknown}" >&2
+  exit 0
+fi
 if [ -n "$CLOBBER" ]; then
   DETAIL="$(echo "$CLOBBER" | tr '\n' ' ')"
   blocked_report "kovetetlen helyi fajlt irna felul: $DETAIL" "by untracked files: $DETAIL" "$(printf '%s\n' \
