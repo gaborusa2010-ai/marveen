@@ -100,9 +100,43 @@ const SHELL_FLAGS_OF = { sudo: ['-s', '-i', '--shell', '--login'], doas: ['-s'] 
 // These turn the body into ARGUMENTS of the command they run (`xargs -I{} sh -c {}`):
 // the body is a program whenever an interpreter stands anywhere behind them.
 const ARGV_FEEDERS = new Set(['xargs', 'parallel'])
-// Remote and container runners: the command is the first interpreter word behind
-// them, their own option shapes (host, image, -v, -p, ...) are not modelled.
+// Remote and container runners (#777 review 7): the program is the first non-option word after
+// the host/container, and the values of their value-taking options are skipped (`ssh -l python3
+// host bash`: the value is not the host, the host is not the program; `ssh host python3 - bash`:
+// python3 is the program, bash only its argument). docker/podman/nerdctl and kubectl carry a
+// subcommand (exec/run/create/debug, also behind `compose`/`container` and global options)
+// before the options; an unknown subcommand falls back to the first interpreter word (the
+// pre-review-6 shape). sshpass has no host: the word after its options is the program
+// (usually an ssh, read the same way).
 const REMOTE_RUNNERS = new Set(['ssh', 'mosh', 'sshpass', 'plink', 'docker', 'podman', 'nerdctl', 'kubectl'])
+const DOCKER_VALUE_FLAGS = ['-u', '--user', '-w', '--workdir', '-e', '--env', '--env-file', '--detach-keys', '-v', '--volume',
+     '-p', '--publish', '--name', '--network', '--net', '--entrypoint', '-l', '--label', '--label-file',
+     '--mount', '--cpus', '-m', '--memory', '--memory-swap', '-h', '--hostname', '--add-host', '--cap-add',
+     '--cap-drop', '--device', '--dns', '--dns-search', '--dns-option', '--domainname', '--expose', '--gpus',
+     '--ipc', '--log-driver', '--log-opt', '--pid', '--platform', '--pull', '--restart', '--security-opt',
+     '--shm-size', '--stop-signal', '--stop-timeout', '--sysctl', '--tmpfs', '--ulimit', '--userns', '--uts',
+     '--volumes-from', '--cidfile', '--cgroup-parent', '--ip', '--ip6', '--mac-address', '--index', '--link',
+     '--runtime', '--storage-opt', '--group-add', '--isolation', '--pids-limit', '--cpu-shares',
+     '--cpuset-cpus', '--cpuset-mems', '--oom-score-adj', '--health-cmd', '--health-interval', '--profile',
+     '-f', '--file', '--project-directory', '--project-name', '-H', '--host', '--context', '-c',
+     '--config', '-L', '--log-level', '--connection', '--url', '--namespace', '--address']
+const RUNNER_VALUE_FLAGS = {
+  ssh: ['-l', '-p', '-i', '-o', '-F', '-J', '-b', '-c', '-D', '-E', '-e', '-I', '-L', '-m', '-O', '-Q', '-R',
+    '-S', '-W', '-w', '-B', '-P'],
+  mosh: ['-p', '--port', '--ssh', '--server', '--predict', '--family', '--bind-server', '--experimental-remote-ip'],
+  plink: ['-l', '-P', '-i', '-pw', '-pwfile', '-m', '-L', '-R', '-D', '-proxycmd', '-hostkey', '-nc', '-sercfg',
+    '-sshlog', '-sshrawlog', '-loghost'],
+  sshpass: ['-p', '-f', '-d', '-P'],
+  docker: DOCKER_VALUE_FLAGS, podman: DOCKER_VALUE_FLAGS, nerdctl: DOCKER_VALUE_FLAGS,
+  kubectl: ['-n', '--namespace', '-c', '--container', '--context', '--kubeconfig', '--cluster', '--user', '--as',
+     '--as-group', '--request-timeout', '-f', '--filename', '--pod-running-timeout', '-s', '--server',
+     '--token', '--image', '--env', '--port', '--overrides', '--restart', '--labels', '-l',
+     '--image-pull-policy', '--serviceaccount', '--target', '--profile', '--copy-to', '--set-image',
+     '--cache-dir', '--certificate-authority', '--client-certificate', '--client-key', '-v'],
+}
+const SUBCOMMAND_RUNNERS = new Set(['docker', 'podman', 'nerdctl', 'kubectl'])
+const RUNNER_SUBCOMMANDS = new Set(['exec', 'run', 'create', 'debug'])
+const RUNNER_SUBCOMMAND_PREFIX = new Set(['compose', 'container'])
 // xargs/parallel options that take their value in a SEPARATE word: the value is not the
 // command (#777 review 6: `xargs -a python3 sh <<A`, `parallel -a python3 sh <<A` run sh).
 // xargs' deprecated `-i` carries its value glued only, so it is not here.
@@ -125,15 +159,56 @@ function afterFeederOptions(words, k) {
   return j
 }
 
-/** The wrapped PROGRAM among the words from `j` on: the first shell word when there is one,
- *  else the first interpreter word; -1 when neither (#777 review 6: `ssh python3 bash <<A`,
- *  `docker exec -i python3 bash <<A` name a host/container, bash reads the body;
- *  `ssh host python3 - <<A` has no shell word, python3 is the program). */
-function programWord(words, j) {
-  const idx = []
-  for (let i = j; i < words.length; i++) if (INTERPRETERS.has(baseName(words[i][0]))) idx.push(i)
-  const shell = idx.find((i) => SHELLS.has(baseName(words[i][0])))
-  return shell ?? (idx.length ? idx[0] : -1)
+/** The first interpreter word from `j` on, -1 when none: the fallback for a runner of unknown
+ *  shape (#777 review 7). */
+function firstInterpreter(words, j) {
+  for (let i = j; i < words.length; i++) if (INTERPRETERS.has(baseName(words[i][0]))) return i
+  return -1
+}
+
+/** The PROGRAM behind an xargs/parallel's options, -1 when none: the first word past the
+ *  prefixes (assignments, transparent prefixes, known wrappers with their options). The body
+ *  becomes this word's ARGUMENTS, so its name decides, not a later word's (#777 review 7:
+ *  `xargs python3 tool.py sh` runs python3, sh is only an argument; review 6's "shell word
+ *  wins" over-blocked here). */
+function argvProgram(words, j) {
+  for (;;) {
+    j = skipPrefix(words, j)
+    if (j >= words.length) return -1
+    const base = baseName(words[j][0])
+    if (!Object.hasOwn(WRAPPERS, base)) return j
+    const nj = afterWrapper(words, j, WRAPPERS[base])
+    if (nj < 0) return j
+    j = nj
+  }
+}
+
+/** The PROGRAM of the remote/container runner at word `k`, -1 when none: the subcommand
+ *  (docker/podman/nerdctl/kubectl), the options (value-taking ones with their value), the
+ *  host/container/pod, then the next word; `--` ends the options. An unknown subcommand falls
+ *  back to the first interpreter word (#777 review 7). */
+function runnerProgram(words, k) {
+  const base = baseName(words[k][0])
+  const flags = RUNNER_VALUE_FLAGS[base] ?? []
+  let j = k + 1
+  let skip = base === 'sshpass' ? 0 : 1
+  if (SUBCOMMAND_RUNNERS.has(base)) {
+    while (j < words.length && (words[j][0].startsWith('-') || RUNNER_SUBCOMMAND_PREFIX.has(words[j][0]))) j += flags.includes(words[j][0]) ? 2 : 1
+    if (j >= words.length || !RUNNER_SUBCOMMANDS.has(words[j][0])) return firstInterpreter(words, k + 1)
+    j++
+  }
+  while (j < words.length) {
+    const x = words[j][0]
+    if (x === '--') {
+      j++
+      if (skip) { skip--; j++; continue }
+      return j < words.length ? j : -1
+    }
+    if (x.startsWith('-')) { j += flags.includes(x) ? 2 : 1; continue }
+    if (skip) { skip--; j++; continue }
+    return j
+  }
+  return -1
 }
 
 // A path that IS the standard input: `bash /dev/stdin <<EOF` runs the body.
@@ -162,6 +237,12 @@ const BASH_LONG_OPT_NO_RUN = new Set(['help', 'version', 'dump-po-strings', 'dum
 // The `&` of `>&1`, `<&0`, `&>log` is a redirect, not a command boundary (`bash 2>&1 <<SH`);
 // neither is the `|` of `>|` (`bash >| log <<SH`, #775).
 const SIMPLE_SPLIT = /\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\(/
+// the same, keeping its separators: [command, separator, command, ...] (#777 review 7: a `&`
+// AFTER the command backgrounds it, and then it does not read the inherited stdin)
+const SIMPLE_SPLIT_KEEP = /(\|\||&&|(?<![<>])&(?!>)|[;\n(){}`]|(?<!>)\||\$\()/
+// an own input redirect at the start of a word (`<f`, `0<f`, `<<<x`, `<<T`, `< <(..)`); a `<&n`
+// dup is NOT one, it may be the inherited stdin itself
+const OWN_STDIN_RE = /^0?(<<<|<<|<>|<)(?!&)/
 const HEAD_SPLIT = /(\|\||&&|(?<![<>])&(?!>)|[;(`]|(?<!>)\||\$\()/
 const TAIL_SPLIT = /\|\||&&|;|(?<![<>])&(?!>)/
 const PIPE_SPLIT = /(?<!>)\|/
@@ -330,12 +411,16 @@ function runsWords(words, k, depth, loose) {
       return words.slice(k + 1).some(([x]) => shellFlags.includes(x)) ? base : ''
     }
     if (ARGV_FEEDERS.has(base)) {
-      const j = programWord(words, afterFeederOptions(words, k))
-      return j >= 0 ? baseName(words[j][0]) : ''
+      const j = argvProgram(words, afterFeederOptions(words, k))
+      const pb = j >= 0 ? baseName(words[j][0]) : ''
+      return INTERPRETERS.has(pb) ? pb : ''
     }
     if (REMOTE_RUNNERS.has(base)) {
-      const j = programWord(words, k + 1)
-      return j >= 0 ? runsWords(words, j, depth + 1, loose) : ''
+      const j = runnerProgram(words, k)
+      // `ssh host <<A` with no command: the remote login shell reads the body (#777 review 7);
+      // a container runner without a command does not start.
+      if (j < 0) return ['ssh', 'mosh', 'plink'].includes(base) ? base : ''
+      return runsWords(words, j, depth + 1, loose)
     }
     return ''                         // an unknown command: its ARGUMENTS are not a program
   }
@@ -484,18 +569,62 @@ function subBlanked(text) {
  *  program? Read twice: as is (`x=$(bash -c "$l")` runs INSIDE the substitution), and with
  *  the closed substitutions collapsed (`bash -c "$(echo "$l")"`: the program is the
  *  substitution, #775). */
-function anyRunsStdin(text, depth = 0) {
-  if (depth > MAX_NEST) return 'nested'   // what cannot be followed is not waved through
+/** The simple command has its OWN stdin and does not read the inherited one: an own input
+ *  redirect (OWN_STDIN_RE) or backgrounded (`&`: non-interactive bash gives it /dev/null).
+ *  Measured with bash (probe-sandbox, #777 review 7): `f(){ cat & wait; }; f <<<B` prints
+ *  nothing; `x=$(cat)`, `(cat)`, `cat <&0`, the second `cat` after an own-redirect command and
+ *  the second `cat` after a pipeline print B. */
+function ownStdin(piece, nextSep) {
+  if (nextSep === '&') return true
+  const toks = piece.match(SHELL_WORD_RE) ?? []
+  for (let i = 0; i < toks.length; i++) {
+    const m = OWN_STDIN_RE.exec(toks[i])
+    if (!m) continue
+    // the target: the glued rest of the token, else the next token (unquoted)
+    const target = word(toks[i].slice(m[0].length) || toks[i + 1] || '')[0]
+    if (m[1] === '<' && STDIN_PATH_RE.test(target)) continue      // `bash </dev/stdin`: the inherited stdin itself
+    if (m[1] === '<<<' && target === '$STDIN') continue           // `bash <<< "$(cat)"` (collapsed): its content
+    return true
+  }
+  return false
+}
+
+/** A code interpreter (python/node/ruby/perl/php), not a shell: the same rule as
+ *  nestedPrograms' and the Python twin's _code_consumer. */
+const codeConsumer = (c) => INTERPRETERS.has(baseName(c)) && !SHELLS.has(baseName(c))
+
+/** Which word of a compound text (function or loop body) runs the INHERITED stdin as a
+ *  program: '' when none, 'nested' at the depth cap (what cannot be followed is not waved
+ *  through). EVERY simple command of the body counts (#777 review 7, the first consumer was
+ *  not enough): own-stdin and backgrounded commands are skipped; a function word resolves
+ *  through its own body, recursively (the depth cap closes it); when ANY consumer is a shell,
+ *  eval, source, a dynamic word, a closer or the cap, that word is it (the body is shell-read);
+ *  else the first interpreter word, when every consumer is a code interpreter. The right side
+ *  of a pipe counts as inherited (`cat | bash` runs the body): the conservative side. Read
+ *  twice: as is (an `x=$(bash -c "$l")` INSIDE a substitution runs too, and `$(cat)` reads the
+ *  inherited stdin), and with the closed substitutions collapsed into dynamic words (#775). */
+function anyRunsStdin(text, depth = 0, funcs = {}) {
+  if (depth > MAX_NEST) return 'nested'
   const loose = READS_STDIN_RE.test(text)
   const blanked = subBlanked(text)
+  let interp = ''
   for (const t of blanked !== text ? [text, blanked] : [text]) {
-    for (const p of t.split(SIMPLE_SPLIT)) {
+    const parts = t.split(SIMPLE_SPLIT_KEEP)
+    for (let i = 0; i < parts.length; i += 2) {
+      const p = parts[i]
       if (!p.trim()) continue
-      const c = runsStdinAsProgram(p, loose, depth)
-      if (c) return c
+      const [words, k] = cmdWord(p)
+      let c = ''
+      if (k < words.length && !words[k][1] && Object.hasOwn(funcs, words[k][0]) && !functionBypassed(words, k)) {
+        c = anyRunsStdin(funcs[words[k][0]], depth + 1, funcs)
+      }
+      c = c || runsWords(words, k, depth, loose)
+      if (!c || ownStdin(p, parts[i + 1] ?? '')) continue
+      if (!codeConsumer(c)) return c
+      if (!interp) interp = c
     }
   }
-  return ''
+  return interp
 }
 
 /** {name: body text} for every `name() { ... }` / `name() ( ... )` / `function name { ... }`. */
@@ -538,13 +667,13 @@ function simpleRuns(seg, funcs, cmd, end) {
     // The function shadows PATH (#777 review 6: `python3(){ bash; }; python3 <<A` is read by
     // bash), so the function comes FIRST and its BODY's consumer is the word: the name
     // (python3, f) does not say whether code or a shell reads the body.
-    const c = anyRunsStdin(funcs[words[k][0]])
+    const c = anyRunsStdin(funcs[words[k][0]], 0, funcs)
     if (c) return c
   }
   const direct = runsStdinAsProgram(seg)
   if (direct) return direct
   const last = lastOperand(words)
-  if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) return anyRunsStdin(compoundText(cmd, end, last)) ? last : ''
+  if (cmd !== undefined && Object.hasOwn(CLOSERS, last)) return anyRunsStdin(compoundText(cmd, end, last), 0, funcs) ? last : ''
   return ''
 }
 
@@ -577,7 +706,7 @@ function enclosingRuns(parts, funcs) {
       const base = baseName(w)
       if (dyn || base === 'source' || base === '.' || base === 'eval') return w
       if (Object.hasOwn(funcs, w)) {
-        const c = anyRunsStdin(funcs[w])
+        const c = anyRunsStdin(funcs[w], 0, funcs)
         if (c) return c
       }
       const flags = STDIN_SCRIPT_FLAGS[base] ?? []

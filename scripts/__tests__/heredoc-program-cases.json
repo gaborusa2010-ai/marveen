@@ -3688,19 +3688,19 @@
    "name": "777_bash_c_bash_dev_null_x",
    "cmd": "bash -c 'bash </dev/null' <<< 'X'",
    "expect": [
-    true
+    false
    ],
    "bash_runs": false,
-   "bash_note": "inside the -c program the shell takes its stdin from a redirect of its own, not from the fed body (over-block, accepted)"
+   "bash_note": "#777 review 7: an own redirect/here-string inside the -c program is skipped, matches bash"
   },
   {
    "name": "777_bash_c_bash_echo_a_x",
    "cmd": "bash -c 'bash <<< \"echo a\"' <<< 'X'",
    "expect": [
-    true
+    false
    ],
    "bash_runs": false,
-   "bash_note": "inside the -c program the shell takes its stdin from a here-string of its own (over-block, accepted)"
+   "bash_note": "#777 review 7: an own redirect/here-string inside the -c program is skipped, matches bash"
   },
   {
    "name": "777_bash_c_bash_eof_echo_a_eof_x",

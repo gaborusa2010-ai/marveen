@@ -61,6 +61,19 @@ describe('heredoc-program twin: JS reads every case like the Python side', () =>
     expect(consumers("xargs -a python3 sh <<'A'\nls\nA")).toEqual(['sh'])
     expect(consumers("ssh python3 bash <<'A'\nls\nA")).toEqual(['bash'])
     expect(consumers("ssh host python3 - <<'A'\nprint(1)\nA")).toEqual(['python3'])
+    // #777 review 7: EVERY command of a function body counts (own-stdin and backgrounded ones
+    // skipped, nested function words resolved); a runner's program is the word after its flags and host
+    expect(consumers("g(){ bash; }; f(){ g; }; f <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("f(){ cat </dev/null; bash; }; f <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("f(){ python3 -; bash; }; f <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("f(){ bash </dev/stdin; }; f <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("f(){ python3 - <<<''; }; f <<'A'\nls\nA")).toEqual([])
+    expect(consumers("ssh -l python3 host bash <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("ssh host <<'A'\nls\nA")).toEqual(['ssh'])
+    expect(consumers("ssh host python3 - bash <<'A'\nprint(1)\nA")).toEqual(['python3'])
+    expect(consumers("kubectl exec -i python3 -- bash <<'A'\nls\nA")).toEqual(['bash'])
+    expect(consumers("xargs python3 tool.py sh <<'A'\nprint(1)\nA")).toEqual(['python3'])
+    expect(consumers("sshpass -p python3 ssh host bash <<'A'\nls\nA")).toEqual(['bash'])
     expect(consumers('cat > f <<EOF\nls\nEOF')).toEqual([])
   })
 

@@ -1024,6 +1024,57 @@ check("ssh python3 bash <<'A' -> bash", _consumer("ssh python3 bash <<'A'\nx\nA"
 check("ssh host python3 - <<'A' -> python3", _consumer("ssh host python3 - <<'A'\nx\nA") == ["python3"])
 
 
+# --- 18. #777 review 7: a torzs MINDEN parancsa; a futtato programja a kapcsolok es a host utan ---
+# (1) `g(){ bash; }; f(){ g; }; f <<A`: a torzs fogyasztoja az ELSO fogyaszto-szo volt. Most a
+# torzs minden egyszeru parancsat nezzuk: a fuggveny-szo a sajat torzsevel oldodik fel rekurzivan,
+# a sajat stdin-u (`<f`, `<<<x`, `<<T`) es a hatterbe tett (`&`) parancs kimarad (bash-sal merve,
+# probe-sandbox: `f(){ cat & wait; }; f <<<B` semmit nem ir, `f(){ cat </dev/null; cat; }; f <<<B`
+# B-t ir), es ha BARMELYIK fogyaszto shell, az a szo. A `</dev/stdin` es a `<<< "$(cat)"` NEM sajat
+# stdin: az orokolt maga, illetve a tartalma.
+# (2) `ssh -l python3 host bash <<A`: az "elso shell-szo nyer" az ertelmezo ARGUMENTUMAT is
+# programnak vette (`ssh host python3 - bash`). Most a futtato kapcsolo-ertekei es a host kimaradnak,
+# es a kovetkezo szo a program; `ssh host <<A` parancs nelkul a tavoli login shell olvassa a torzset.
+print()
+print("#777 review 7, MUST-BLOCK (a torzs kesobbi parancsa shell; a futtato programja a host utan):")
+for label, cmd in [
+    ("g(){ bash; }; f(){ g; }; f <<'A' (fuggveny a fuggvenyben)", "g(){ bash; }; f(){ g; }; f <<'A'"),
+    ("f(){ cat </dev/null; bash; }; f <<'A' (sajat stdin, aztan shell)", "f(){ cat </dev/null; bash; }; f <<'A'"),
+    ("f(){ sleep 1 & bash; }; f <<'A' (hatterben, aztan shell)", "f(){ sleep 1 & bash; }; f <<'A'"),
+    ("f(){ python3 - <<<''; bash; }; f <<'A' (sajat itt-string, aztan shell)", "f(){ python3 - <<<''; bash; }; f <<'A'"),
+    ("f(){ python3 -; bash; }; f <<'A' (a shell nyer az ertelmezo utan is)", "f(){ python3 -; bash; }; f <<'A'"),
+    ("f(){ bash </dev/stdin; }; f <<'A' (az orokolt stdin utvonalon)", "f(){ bash </dev/stdin; }; f <<'A'"),
+    ("ssh -l python3 host bash <<'A'", "ssh -l python3 host bash <<'A'"),
+    ("ssh host <<'A' (parancs nelkul: a login shell)", "ssh host <<'A'"),
+    ("ssh -p 22 host <<'A'", "ssh -p 22 host <<'A'"),
+    ("kubectl exec -i python3 -- bash <<'A'", "kubectl exec -i python3 -- bash <<'A'"),
+    ("sshpass -p python3 ssh host bash <<'A'", "sshpass -p python3 ssh host bash <<'A'"),
+]:
+    check(label + " / bash <<< 'RM' / A", blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("negativ kontroll (a program az ertelmezo, a shell-nevu szo az argumentuma; nyers torzs):")
+for label, cmd in [
+    ("ssh host python3 - bash <<'A'", "ssh host python3 - bash <<'A'"),
+    ("docker exec -i c python3 - bash <<'A'", "docker exec -i c python3 - bash <<'A'"),
+    ("docker exec -i c python3 script.py bash <<'A'", "docker exec -i c python3 script.py bash <<'A'"),
+    ("xargs python3 tool.py sh <<'A'", "xargs python3 tool.py sh <<'A'"),
+    ("kubectl exec -i pod -- python3 - <<'A'", "kubectl exec -i pod -- python3 - <<'A'"),
+    ("f(){ python3 - <<<''; }; f <<'A' (a torzs semmit nem olvas az orokoltbol)", "f(){ python3 - <<<''; }; f <<'A'"),
+]:
+    check(label, not blocks(cmd + "\nbash <<< '" + RMH + "'\nA"))
+print("a fogyaszto szo (a torzs barmelyik shellje; a futtato programja):")
+check("g(){ bash; }; f(){ g; }; f <<'A' -> bash", _consumer("g(){ bash; }; f(){ g; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ cat </dev/null; bash; }; f <<'A' -> bash", _consumer("f(){ cat </dev/null; bash; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ python3 -; bash; }; f <<'A' -> bash", _consumer("f(){ python3 -; bash; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ bash </dev/stdin; }; f <<'A' -> bash", _consumer("f(){ bash </dev/stdin; }; f <<'A'\nx\nA") == ["bash"])
+check("f(){ python3 - <<<''; }; f <<'A' -> [python3 (az itt-string), '' (a heredoc adat)]",
+      _consumer("f(){ python3 - <<<''; }; f <<'A'\nx\nA") == ["python3", ""])
+check("ssh -l python3 host bash <<'A' -> bash", _consumer("ssh -l python3 host bash <<'A'\nx\nA") == ["bash"])
+check("ssh host <<'A' -> ssh", _consumer("ssh host <<'A'\nx\nA") == ["ssh"])
+check("ssh host python3 - bash <<'A' -> python3", _consumer("ssh host python3 - bash <<'A'\nx\nA") == ["python3"])
+check("kubectl exec -i python3 -- bash <<'A' -> bash", _consumer("kubectl exec -i python3 -- bash <<'A'\nx\nA") == ["bash"])
+check("xargs python3 tool.py sh <<'A' -> python3", _consumer("xargs python3 tool.py sh <<'A'\nx\nA") == ["python3"])
+check("sshpass -p python3 ssh host bash <<'A' -> bash", _consumer("sshpass -p python3 ssh host bash <<'A'\nx\nA") == ["bash"])
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")
