@@ -359,6 +359,8 @@ describe('self-pace-gate: the runner task directory (#630)', () => {
       `{ ${J}; } | bash`, `if ${J}; then :; fi | bash`, `{ ${J}; } > /tmp/s.sh`,
       `${J} 1>/tmp/s.sh`, `${J} &> /tmp/s.sh`, `${J} >> /tmp/s.sh`, `${J} >& /tmp/s.sh`, `${J} > >(bash)`,
       `${J} || bash /tmp/s.sh`,
+      `bash <(${J})`, `source <(${J})`, `. <(${J})`, `eval "$(${J})"`, `bash -c "$(${J})"`,
+      `x=$(${J}); eval "$x"`, 'eval "`' + J + '`"', `bash < <(${J})`, `coproc ${J}`,
     ]) expect(note(cmd), cmd).toBe(true)
   })
   it('denies a script that only has the right name (#728 review 2)', () => {
