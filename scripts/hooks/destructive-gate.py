@@ -2978,9 +2978,9 @@ def _importlib_aliases(payload):
         loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', lst)
     for m in re.finditer(r'(?<![\w.])import\s+((?:[^()\n;\\]|\\\n?)*)', payload):
         modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1).replace('\\\n', ' '))
-    loaders += re.findall(r'(?<![\w.])(\w+)\s*=\s*(?:importlib\s*\.\s*)?import_module(?!\s*[\w(.])', payload)
-    imports += re.findall(r'(?<![\w.])(\w+)\s*=\s*__import__(?!\s*[\w(.])', payload)
-    modules += re.findall(r'(?<![\w.])(\w+)\s*=\s*importlib(?!\s*[\w(.])', payload)
+    loaders += re.findall(r'(?<![\w.])(\w+)\s*=\s*(?:importlib\s*\.\s*)?import_module(?![ \t]*[\w(.])', payload)
+    imports += re.findall(r'(?<![\w.])(\w+)\s*=\s*__import__(?![ \t]*[\w(.])', payload)
+    modules += re.findall(r'(?<![\w.])(\w+)\s*=\s*importlib(?![ \t]*[\w(.])', payload)
     for alias in loaders:
         payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', 'import_module(', payload)
     for alias in imports:

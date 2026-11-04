@@ -2008,7 +2008,7 @@ function importlibAliases(payload) {
   const modules = []
   const imports = []
   const NB = String.raw`(?<![\p{L}\p{N}_.])`
-  const NOT_USED = String.raw`(?!\s*[\p{L}\p{N}_(.])`
+  const NOT_USED = String.raw`(?![ \t]*[\p{L}\p{N}_(.])`
   for (const m of payload.matchAll(new RegExp(NB + String.raw`from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))`, 'gu'))) {
     const list = (m[1] ?? m[2]).replaceAll('\\\n', ' ')
     for (const a of list.matchAll(new RegExp(String.raw`(?:^|,)\s*import_module\s+as\s+(${PY_ID}+)`, 'gu'))) loaders.push(a[1])
