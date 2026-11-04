@@ -4,6 +4,8 @@ import { homedir, tmpdir } from 'node:os'
 import {
   saveMemory,
   decayMemories as dbDecay,
+  demoteStaleHotMemories,
+  autoCloseStaleNotifications,
   pruneAuditLogs,
   pruneTokenUsage,
   getMemoriesCreatedSince,
@@ -117,6 +119,8 @@ export async function saveConversationTurn(
 
 export function runDecaySweep(): void {
   dbDecay()
+  const hotDemoted = demoteStaleHotMemories()
+  const notificationsClosed = autoCloseStaleNotifications()
   pruneAuditLogs()
   const tokenRowsPruned = pruneTokenUsage()
   const convRowsPruned = pruneConversationLog()
@@ -128,6 +132,8 @@ export function runDecaySweep(): void {
   const compact = checkpointAndCompact()
   logger.info(
     {
+      hotDemoted,
+      notificationsClosed,
       tokenRowsPruned,
       convRowsPruned,
       spanRowsPruned,

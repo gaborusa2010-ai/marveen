@@ -2532,6 +2532,41 @@ export function decayMemories(): void {
   db.prepare('UPDATE memories SET salience = MAX(salience * 0.995, 0.01) WHERE created_at < ?').run(oneWeekAgo)
 }
 
+// Hot -> warm demotion for hot memories nobody has read for N days (#638,
+// rebuild 3). Hot is the "in flight right now" tier; a row that has not been
+// recalled for days is not in flight, it is a hot list that stopped being
+// pruned by hand. Measured 2026-11-04 on the owner store: 65 hot rows, 21 of
+// them untouched for 3+ days (kiron 11 of 13). Keyed on accessed_at, NOT
+// created_at: 45 of the 65 were created 3+ days ago, including live ones that
+// are re-read every session (marveen 25 created vs 6 untouched).
+//
+// Opt-in through HOT_MEMORY_DEMOTE_DAYS (0 / unset = never demote). Each move
+// goes through the same version snapshot as updateMemory, so a demotion is a
+// recorded, restorable write attributed to 'decay', never a silent one.
+// Retracted rows are left alone: they are out of every listing anyway.
+export function demoteStaleHotMemories(): number {
+  const days = Number(getEffectiveSettingValue('HOT_MEMORY_DEMOTE_DAYS'))
+  if (!Number.isFinite(days) || days <= 0) return 0
+  const now = Math.floor(Date.now() / 1000)
+  const cutoff = now - Math.floor(days * 86400)
+  const rows = db
+    .prepare("SELECT id, agent_id, category, keywords, content, updated_at FROM memories WHERE category = 'hot' AND retracted_at IS NULL AND accessed_at < ?")
+    .all(cutoff) as Array<MemoryRow & { updated_at: number | null }>
+  if (rows.length === 0) return 0
+  const move = db.prepare("UPDATE memories SET category = 'warm', updated_at = ?, updated_by = 'decay' WHERE id = ? AND category = 'hot'")
+  const moved = db.transaction(() => {
+    let n = 0
+    for (const row of rows) {
+      snapshotMemoryVersion(row, 'update', now)
+      // Strictly increasing stamp, same reason as updateMemory (MEMVERSION930).
+      n += move.run(Math.max(now, (row.updated_at ?? 0) + 1), row.id).changes
+    }
+    return n
+  })()
+  if (moved > 0) clearMemoryCache()
+  return moved
+}
+
 export function getMemoriesForChat(chatId: string, limit = 10, offset = 0, category?: string, range?: TsRange): Memory[] {
   // id DESC tie-break (#947): accessed_at has 1-second granularity, so a bulk
   // import leaves hundreds of rows sharing one value; without a stable
@@ -8341,6 +8376,58 @@ export function pruneAgentMessages(): number {
   return db
     .prepare("DELETE FROM agent_messages WHERE created_at < ? AND status IN ('done','failed')")
     .run(cutoff)
+    .changes
+}
+
+// Content prefixes of pure notifications from the system: nobody answers
+// them and nothing waits on their status, so a delivered one older than the
+// cutoff is noise in the recipient's open list, not unfinished work. Actionable
+// system messages ([APPROVAL_REQUEST], [SYSTEM-DIREKTIVA], [ellenorzes],
+// [kanban-lejart], [kanban-kovetkezo], new-agent notices) are deliberately NOT
+// here: an unanswered one is a signal and stays open.
+const CONTEXT_GUARD_PREFIX = '[CONTEXT-GUARD]'
+export const AUTO_CLOSE_NOTIFICATION_PREFIXES = [
+  CONTEXT_GUARD_PREFIX,
+  '[handoff-failure]',
+  '[session-stuck]',
+  '[RESTART-WAKE]',
+  '[permission-prompt]',
+  '[delivery-unconfirmed]',
+] as const
+
+export const AUTO_CLOSED_RESULT = 'auto-closed: notification older than NOTIFICATION_AUTOCLOSE_DAYS'
+
+// Close old delivered notifications (#638, rebuild 3). Two classes:
+//  - completion reports ([Eredmény] ...) from ANY sender: auto-generated
+//    receipts that agents are told never to close, so they stay 'delivered'
+//    forever (1909 of 3926 old delivered rows, measured 2026-11-04);
+//  - system notices with one of AUTO_CLOSE_NOTIFICATION_PREFIXES (the
+//    context-guard restart notice is written under the restarted agent's own
+//    name, so that prefix matches regardless of sender).
+// Written straight to the row: no [Eredmény] ack is generated (that happens
+// only in the PUT route), so closing a receipt cannot spawn another receipt.
+// pending rows are never touched: undelivered is a delivery problem.
+// Opt-in through NOTIFICATION_AUTOCLOSE_DAYS (0 / unset = never).
+export function autoCloseStaleNotifications(): number {
+  const days = Number(getEffectiveSettingValue('NOTIFICATION_AUTOCLOSE_DAYS'))
+  if (!Number.isFinite(days) || days <= 0) return 0
+  const now = Math.floor(Date.now() / 1000)
+  const cutoff = now - Math.floor(days * 86400)
+  // substr() comparison instead of LIKE: '_' is a LIKE wildcard and the
+  // prefixes are matched literally.
+  const params: unknown[] = [now, AUTO_CLOSED_RESULT, cutoff]
+  const byPrefix = (p: string) => { params.push(p.length, p); return 'substr(content, 1, ?) = ?' }
+  const receipt = byPrefix(COMPLETION_REPORT_PREFIX)
+  // The context-guard notice is written under the restarted agent's own name.
+  const guard = byPrefix(CONTEXT_GUARD_PREFIX)
+  const system = AUTO_CLOSE_NOTIFICATION_PREFIXES.map(byPrefix).join(' OR ')
+  return db
+    .prepare(
+      `UPDATE agent_messages SET status = 'done', completed_at = ?, result = COALESCE(result, ?)
+        WHERE status = 'delivered' AND created_at < ?
+          AND (${receipt} OR ${guard} OR (from_agent = 'system' AND (${system})))`,
+    )
+    .run(...params)
     .changes
 }
 
