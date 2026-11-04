@@ -169,7 +169,9 @@ export function tokenizeDetailed(cmd) {
   let quoted = false
   let started = false
   let quote = null
+  let rawOp = false // the last character of `cur` is an UNQUOTED, unescaped `>` or `<`
   const push = () => {
+    rawOp = false
     if (started) out.push({ text: cur, quoted })
     cur = ''
     quoted = false
@@ -179,6 +181,7 @@ export function tokenizeDetailed(cmd) {
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
     if (quote) {
+      rawOp = false
       // CONTLINE901 (Marveen, 2026-09-06, merve): backslash + ujsor a shellben
       // SORFOLYTATAS -- mindket karakter eltunik --, nem escape-elt ujsor. Ez
       // ketto idezojelen BELUL is igy van. Aposztrofon belul viszont mindketto
@@ -202,7 +205,7 @@ export function tokenizeDetailed(cmd) {
     // dontes `not-allowed` lesz -- ugyanugy blokk, csak a helyes indokkal.
     if (ch === '\\' && s[i + 1] === '\n') { i++; continue }
     if (ch === '\\' && s[i + 1] === '\r' && s[i + 2] === '\n') { i += 2; continue }
-    if (ch === '\\' && i + 1 < s.length) { cur += s[++i]; started = true; continue }
+    if (ch === '\\' && i + 1 < s.length) { cur += s[++i]; started = true; rawOp = false; continue }
     // NEWLINE901 (found 2026-09-01 by USING the gate, not by testing it): a
     // newline ends a command in shell, exactly like `;`. It was falling into the
     // generic whitespace branch and vanishing, so `\n` -- already listed in
@@ -226,6 +229,14 @@ export function tokenizeDetailed(cmd) {
     // single segment whose verb read as `cd`, and the skill gate let a real
     // write through -- measured live, the directory was created. A separator
     // that only counts when someone typed a space around it is not a separator.
+    // #779 round 6 (Marveen comment 3846): the `&` of a redirect (`2>&1`, `>&2`, `<&0`, `&>f`,
+    // `&>>f`) and the `|` of `>|f` belong to the word. Cut there, `python3 2>&1 -c '<fetch>'`
+    // became `python3 2>` plus a segment whose verb was `1`, and its program was never read.
+    if ((ch === '&' && ((rawOp && /[<>]$/.test(cur)) || s[i + 1] === '>')) || (ch === '|' && rawOp && cur.endsWith('>'))) {
+      cur += ch
+      started = true
+      continue
+    }
     if (ch === ';' || ch === '|' || ch === '&') {
       push()
       let op = ch
@@ -236,6 +247,7 @@ export function tokenizeDetailed(cmd) {
     }
     cur += ch
     started = true
+    rawOp = ch === '>' || ch === '<'
   }
   push()
   return out

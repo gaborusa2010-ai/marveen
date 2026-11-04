@@ -49,6 +49,20 @@ describe('shell reader: separators are separators even when glued to a word', ()
   })
 })
 
+describe('shell reader: the & of a redirect is not a separator (#779 round 6)', () => {
+  it('keeps 2>&1, >&2, <&0, &>f and >|f in one word', () => {
+    expect(tokenize("python3 2>&1 -c 'x'")).toEqual(['python3', '2>&1', '-c', 'x'])
+    expect(tokenize('a >&2 & b')).toEqual(['a', '>&2', '&', 'b'])
+    expect(tokenize('a <&0 &>/dev/null; b')).toEqual(['a', '<&0', '&>/dev/null', ';', 'b'])
+    expect(tokenize('x >|f | y')).toEqual(['x', '>|f', '|', 'y'])
+  })
+  it('still splits on a background & right after a redirect, and after a quoted or escaped >', () => {
+    expect(tokenize('a 2>&1&b')).toEqual(['a', '2>&1', '&', 'b'])
+    expect(tokenize('echo "a>"& b')).toEqual(['echo', 'a>', '&', 'b'])
+    expect(tokenize('echo a\\>& b')).toEqual(['echo', 'a>', '&', 'b'])
+  })
+})
+
 describe('shell reader: what a command SENDS is not where it is aimed', () => {
   // The first two false positives, in both gates: a legitimate localhost POST
   // whose JSON body quoted a foreign URL / a protected path.

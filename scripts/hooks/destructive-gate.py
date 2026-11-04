@@ -77,11 +77,12 @@ Regresszios teszt: scripts/__tests__/destructive-gate.test.py
 
 Blokkolas: exit 2 + indoklas a stderr-re (a Claude Code ezt visszaadja az agensnek).
 """
-import fnmatch, json, os, re, sys
+import fnmatch, json, os, re, shlex, sys
 
 # Parancsok, amelyeket nem az agens dont el. Nem stilus-kerdes: mindegyik adatot vagy
 # allapotot semmisit meg visszafordithatatlanul.
-BANNED_CMDS = {'rm', 'mv', 'shred', 'sudo', 'mkfs', 'dd'}
+BANNED_CMDS = {'rm', 'mv', 'shred', 'sudo', 'doas', 'pkexec', 'mkfs', 'dd'}
+# doas and pkexec run a command as another user just like sudo (#779 round 4).
 # 'rm' a listan marad, de NEM feltetel nelkul: sajat, szukebb szabalya van lentebb
 # (_rm_allowed). A halmazban azert all, hogy egy jovobeli szerkesztes ne felejtse el:
 # ez tovabbra is destruktiv parancs, csak nem mindig tiltott.
@@ -161,7 +162,36 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
 INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash', 'node', 'perl', 'ruby', 'php'}
-SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
+SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval', '--print'}
+# A versioned interpreter name is the same interpreter (#779 round 4: /usr/bin/python3.14 exists
+# here): python3.14, python3.14t, python2.7, node22, nodejs, perl5.36, ruby3.2, php8.2. The JS
+# twin: lib/heredoc-program.mjs canonInterp. db-write-gate and global-skill-write-gate keep their
+# own interpreter lists (not the three gates of #779).
+_VERSIONED_INTERP_RE = re.compile(r'(python|perl|ruby|php|node)(\d+(?:\.\d+)*)[a-z]?')
+# Interpreter flags whose VALUE is the next word (`python3 -W ignore`, `node -r mod`, `ruby -r lib`):
+# that word is not a program file.
+_INTERP_VALUE_FLAGS = {
+    'python': ('-W', '-X'), 'python3': ('-W', '-X'),
+    'node': ('-r', '--require', '--import', '--loader', '--experimental-loader'),
+    'ruby': ('-r', '-I'),
+}
+
+
+def _canon_interp(name):
+    """The interpreter a (basename) word names: `python3.14` -> python3, `node22` -> node."""
+    if name == 'nodejs':
+        return 'node'
+    m = _VERSIONED_INTERP_RE.fullmatch(name)
+    if not m:
+        return name
+    if m.group(1) == 'python':
+        return 'python3' if m.group(2).split('.')[0] == '3' else 'python'
+    return m.group(1)
+
+
+def _base(word):
+    """basename + canonical interpreter name; any other word is its plain basename."""
+    return _canon_interp(os.path.basename(word))
 # -p is node's print-eval and -E is perl's feature-enabled -e. They are in the
 # set only so the argument after them counts as CODE rather than prose. A flag
 # that does not actually take a script (perl -pe, bash -p) is harmless here:
@@ -370,8 +400,8 @@ def _skip_prefix(words, k):
         w = words[k][0]
         if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS:
             k += 1
-        elif os.path.basename(w) in _TRANSPARENT:
-            k = _after_transparent(words, k, os.path.basename(w))
+        elif _base(w) in _TRANSPARENT:
+            k = _after_transparent(words, k, _base(w))
         elif _REDIR_GLUED_RE.match(w):
             # atiranyitas a parancsnev elott; a puszta operator a kovetkezo szot viszi
             k += 2 if _REDIR_OP_RE.match(w) else 1
@@ -620,7 +650,7 @@ def _after_feeder_options(words, k):
 def _first_interpreter(words, j):
     """A j-tol allo szavak kozul az elso ertelmezo-szo indexe (None, ha nincs): a tartalek egy
     ismeretlen alaku futtatonal (#777 review 7)."""
-    return next((i for i in range(j, len(words)) if os.path.basename(words[i][0]) in INTERPRETERS), None)
+    return next((i for i in range(j, len(words)) if _base(words[i][0]) in INTERPRETERS), None)
 
 
 _LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | set(_SU_LIKE) | set(_MARKER_LAUNCHERS) | set(_GDB_NAMES)
@@ -629,7 +659,7 @@ _LAUNCHERS = set(_STDIN_WRAPPERS) | set(_ARGV_FEEDERS) | set(_REMOTE_RUNNERS) | 
 def _shell_word_after(words, j):
     """The first shell word after index j ('' if none): the conservative answer when a launcher
     runs a program we do not model (review-6 rule, #777 review 8: `chrt 1 bash`, `firejail bash`)."""
-    return next((os.path.basename(x) for x, _d in words[j + 1:] if os.path.basename(x) in _SHELLS), '')
+    return next((_base(x) for x, _d in words[j + 1:] if _base(x) in _SHELLS), '')
 
 
 def _via_launcher(words, j, depth, loose, argv):
@@ -639,11 +669,11 @@ def _via_launcher(words, j, depth, loose, argv):
     j0, j = j, _skip_prefix(words, j)
     if j >= len(words):
         # behind xargs a bare `env`/`nohup`/`time` execs the body's words (#777 review 9)
-        return next((os.path.basename(x) for x, _d in words[j0:] if os.path.basename(x) in _TRANSPARENT), '') if argv else ''
+        return next((_base(x) for x, _d in words[j0:] if _base(x) in _TRANSPARENT), '') if argv else ''
     x, dyn = words[j]
     if dyn:
         return x
-    base = os.path.basename(x)
+    base = _base(x)
     if base in _LAUNCHERS:
         return _launcher_consumer(words, j, base, depth + 1, loose, argv)
     if argv:
@@ -767,7 +797,7 @@ def _gdb_ex_runs(seg):
     toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
     words = [_word(t) for t in toks]
     for g, (w, _d) in enumerate(words):
-        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', w))):
+        if not _is_gdb(_base(re.sub(r'^[$(`{]+', '', w))):
             continue           # `(gdb -ex ..)`: the subshell paren is not part of the name (#777 review 14)
         j = g + 1
         while j < len(words):
@@ -860,7 +890,7 @@ def _gdb_args_programs(seg):
     toks = toks[:next((i for i, t in enumerate(toks) if t.startswith('#')), len(toks))]
     out = []
     for g, t in enumerate(toks):
-        if not _is_gdb(os.path.basename(re.sub(r'^[$(`{]+', '', _word(t)[0]))):
+        if not _is_gdb(_base(re.sub(r'^[$(`{]+', '', _word(t)[0]))):
             continue
         rest = toks[g + 1:]
         a = next((i for i, t in enumerate(rest) if _GDB_ARGS_RE.match(_word(t)[0])), None)
@@ -874,7 +904,7 @@ def _runner_program(words, k):
     alparancs (docker/podman/nerdctl/kubectl), a kapcsolok (az ertekesek az ertekukkel), a
     host/kontener/pod, majd a kovetkezo szo; egy `--` az opciok veget jelzi. Ismeretlen
     alparancsnal az elso ertelmezo-szo (#777 review 7)."""
-    base = os.path.basename(words[k][0])
+    base = _base(words[k][0])
     flags = _RUNNER_VALUE_FLAGS.get(base, ())
     j = k + 1
     skip = 0 if base == 'sshpass' else 1
@@ -987,7 +1017,7 @@ def _runs_words(words, k, depth, loose=False):
     if k >= len(words) or depth > _MAX_NEST:
         return ''
     w, dyn = words[k]
-    base = os.path.basename(w)
+    base = _base(w)
     if dyn:
         return w
     if base == 'eval':
@@ -1014,7 +1044,7 @@ def _runs_words(words, k, depth, loose=False):
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
-        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x) or x.startswith('<('):
+        if xdyn or (x == '-' and not shell) or x == '-s' or _STDIN_PATH_RE.match(x) or x.startswith('<('):
             return base            # `bash <(cat)`: the script file is a pipe, it may be the stdin (#777 review 8)
         if _REDIR_OP_RE.match(x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
@@ -1032,7 +1062,9 @@ def _runs_words(words, k, depth, loose=False):
             long_opts = False
         if base in ('bash', 'rbash') and x.startswith('--') and len(x) > 2:
             return ''           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
-        if shell and x == '--':
+        if shell and x in ('--', '-'):
+            # A shell treats a lone `-` like `--` (measured in sh, dash, bash: `bash - f.sh` runs
+            # the FILE, a lone `-` reads the stdin; #779 round 2).
             # `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE
             # (even `-x`), only redirections may follow (#777 review 2). The file may be
             # the stdin itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
@@ -1097,6 +1129,9 @@ def _runs_words(words, k, depth, loose=False):
             return _program_consumer(words[m][0], base, depth) if shell else ''
         if shell and _opt_values(x):
             j += 1 + _opt_values(x)   # `-o pipefail`, `+O extglob`, `-xo pipefail`: ertekszo(k) a csoport utan
+            continue
+        if x in _INTERP_VALUE_FLAGS.get(base, ()):
+            j += 2                    # `python3 -W ignore`, `node -r mod`: the value is no program file (#779 r4)
             continue
         if x.startswith('-') or (shell and x.startswith('+')):
             j += 1
@@ -1316,7 +1351,7 @@ def _function_bypassed(words, k):
     """A k-adik szo elott allo atlatszo elotag (command, builtin, exec, env, nohup) a shell-
     fuggvenyt megkeruli, a PATH-beli parancs fut (bash-sal merve, #777 review 6); a `time`
     kulcsszo a fuggvenyt futtatja."""
-    return any(os.path.basename(x) in _TRANSPARENT and os.path.basename(x) != 'time'
+    return any(_base(x) in _TRANSPARENT and _base(x) != 'time'
                for x, _d in words[:k])
 
 
@@ -1553,7 +1588,7 @@ def _enclosing_runs(parts, funcs):
         words, k = _cmd_word(outer)
         if k < len(words):
             w, dyn = words[k]
-            base = os.path.basename(w)
+            base = _base(w)
             if dyn or base in ('source', '.', 'eval'):
                 return w
             if w in funcs:
@@ -1594,7 +1629,7 @@ def _heredoc_runs_body(cmd, h, funcs=None):
     # a code consumer from the plain cut may be a word of a quoted value (#777 review 13:
     # `timeout 5 bash -s 'a;python3' <<A` is read by bash): a shell from the quoted cut wins
     quoted = _heredoc_runs_split(cmd, h, funcs, _quoted_split)
-    if plain and os.path.basename(quoted) not in _SHELLS and not _is_gdb(os.path.basename(quoted)):
+    if plain and _base(quoted) not in _SHELLS and not _is_gdb(_base(quoted)):
         return plain           # the quoted cut misreads a line that starts inside an earlier quote
     return quoted or plain
 
@@ -1821,7 +1856,7 @@ def _stdin_programs(text, depth=0):
         consumer = _heredoc_runs_body(text, h, funcs)
         if not consumer:
             continue
-        if os.path.basename(consumer) == 'gdb':
+        if _base(consumer) == 'gdb':
             block('gdb olvas heredocot vagy itt-stringet: a parancsnyelve (shell/she/!, pipe, python, '
                   'eval, interpreter-exec, guile, -x /dev/stdin) a torzset sokfelekeppen futtathatja, '
                   'ezert a kapu egeszben nem engedi at (#777 review 12). A gdb-parancsokat irasd '
@@ -1848,7 +1883,7 @@ _DYNAMIC_CONSUMER_RE = re.compile(r'[$`*?\[{]')
 
 def _strong_consumer(c):
     """A consumer that BLOCKs whole: gdb, or a word that may expand to gdb."""
-    return bool(c) and (os.path.basename(c) == 'gdb' or _dynamic_gdb(c))
+    return bool(c) and (_base(c) == 'gdb' or _dynamic_gdb(c))
 
 
 def _program_consumer(text, base, depth):
@@ -1893,7 +1928,7 @@ def _assigned_non_gdb(text, consumer, end):
             if not pre or not _STATEMENT_START_RE.search(pre.group(1)):
                 return False
             words = re.match(r'[ \t]+in((?:[ \t]+[A-Za-z0-9_./-]+)+)[ \t]*(?:;|\n)', head[j:])
-            if not words or any(_is_gdb(os.path.basename(w)) for w in words.group(1).split()):
+            if not words or any(_is_gdb(_base(w)) for w in words.group(1).split()):
                 return False
             writes += 1
             continue
@@ -1903,7 +1938,7 @@ def _assigned_non_gdb(text, consumer, end):
         if not value:
             return False
         w = next(g for g in value.groups() if g is not None)
-        if not w or _DYNAMIC_CONSUMER_RE.search(w) or _is_gdb(os.path.basename(w.split()[0])):
+        if not w or _DYNAMIC_CONSUMER_RE.search(w) or _is_gdb(_base(w.split()[0])):
             return False
         writes += 1
     return writes > 0
@@ -1923,7 +1958,7 @@ def _code_consumer(consumer):
     ruby <<A`, `$SHELL <<A; : python3`, `eval "$(cat <<A # node`, `node -v; \\<ujsor>source
     /dev/stdin <<A` fogyasztoja source/$SHELL/eval, a torzs fut, a ruby/python3/node csak egy
     szo a soron). Ugyanaz a szabaly, mint a JS iker nestedPrograms-e: INTERPRETERS es nem shell."""
-    base = os.path.basename(consumer)
+    base = _base(consumer)
     return base in INTERPRETERS and base not in _SHELLS
 
 
@@ -2031,21 +2066,109 @@ def _prose_quote_ranges(text, keep_ranges, code_ranges=()):
 
 
 def _script_arg_ranges(text):
-    """Az ertelmezonek -c/-e utan atadott idezett szkript tartomanyai: ez FUTO KOD."""
+    """Az ertelmezonek -c/-e utan atadott idezett szkript tartomanyai: ez FUTO KOD.
+    #779 5. kor (Marveen msg 17489): a parancs-elvalasztoig MINDEN -c/-e/-E/-p/--eval/--command
+    (csoportban is: `-le`, `-Ic`, es `--eval='...'`) szamit, barhol all; ismeretlen kapcsolo vagy
+    kapcsolo-ertek (`--input-type=module`, `-r json`, `-MPOSIX=floor`) nem allitja meg a keresest.
+    A tulolvasas (egy szkript-argumentum, ami eppen -c) vallalt. A JS iker: scriptArgPrograms."""
+    return [(a, b) for group in _script_arg_groups(text) for a, b, _ansi in group]
+
+
+def _script_arg_groups(text):
+    """A _script_arg_ranges szkriptjei csoportonkent: egy csoport az egymashoz tapado idezett
+    darabok sora (`-c "a"'b'` egy program), darabonkent (kezdo, veg, ansi) -- ansi a `$'..'`.
+    #779 6. kor (Marveen comment 3846): a redirect `&`-ja (`2>&1`, `&>f`, `>&2`, `<&0`) es a
+    `>|` nem elvalaszto, a backslash-ujsor sorfolytatas; az ertelmezo neve idezve is az
+    (`'python3' -c`), a kapcsolo is (`"-c"`), a program tapadhat a kapcsolohoz (`-c'..'`,
+    `-Ic'..'`, `perl -e'..'`), es `$'..'` is lehet; a `--print` a `-p` hosszu alakja.
+    #779 7. kor (Marveen comment 3861): a sorfolytatas (`\\<NL>`) BARHOL all (a kapcsolo es a program
+    kozott, egy szo vegere tapadva: `-I\\<NL> -c`), a bash kiveszi, tehat a szo osszeer; az
+    ertelmezo utvonala is lehet idezve (`"/usr/bin/python3" -c`), a kapcsolo reszben is (`-"c"`),
+    az egesz kapcsolo=program szo is (`"--eval=..."`, `"-c..."`), es `$"..."` is program."""
     out = []
     state = _quote_map(text)
-    for m in re.finditer(r'(?<![\w-])(python3?|bash|sh|zsh|node|perl|ruby|php)\s+(-\w|--\w+)', text):
-        if m.group(2) not in SCRIPT_FLAGS:
-            continue
-        k = m.end()
-        while k < len(text) and text[k] in ' \t':
-            k += 1
-        if k < len(text) and text[k] in ('"', "'"):
-            k += 1
-            j = k
-            while j < len(text) and state[j]:
+    n = len(text)
+
+    def sep(i):
+        c = text[i]
+        if state[i] or c not in ';&|\n':
+            return False
+        if c == '&' and ((i and text[i - 1] in '<>') or (i + 1 < n and text[i + 1] == '>')):
+            return False
+        if c == '|' and i and text[i - 1] == '>':
+            return False
+        return True
+
+    def cont(i):
+        """Idezojelen kivuli sorfolytatas (`\\<NL>`) i-n: a bash mindket karaktert kiveszi."""
+        return not state[i] and text[i] == '\\' and i + 1 < n and text[i + 1] == '\n'
+
+    def skip(p):
+        while p < n and (text[p] in ' \t' or cont(p)):
+            p += 2 if cont(p) else 1
+        return p
+
+    def program(p, group=None):
+        """Az idezett darabok p-tol, amig egymashoz tapadnak; p egy idezojelen, `$'`-on vagy `$"`-on all."""
+        group = list(group or [])
+        while p < n:
+            ansi = text[p] == '$' and p + 1 < n and text[p + 1] == "'"
+            if text[p] == '$' and p + 1 < n and text[p + 1] in '"\'':
+                p += 1
+            if text[p] not in ('"', "'"):
+                break
+            j = p + 1
+            while j < n and state[j]:
                 j += 1
-            out.append((k, j))
+            group.append((p + 1, j, ansi))
+            p = j + 1
+        if group:
+            out.append(group)
+
+    def starts_program(p):
+        return p < n and (text[p] in ('"', "'") or (text[p] == '$' and p + 1 < n and text[p + 1] in '"\''))
+
+    # #779 round 8 (Marveen comment 3865 A, B): a path piece may hold `$`, `{}`, `@`, `+`, `~`
+    # (`"$HOME/venv/bin/python3"`, `"/opt/py@3/.."`); `\w` is Unicode, the JS twin uses \p{L}\p{N}.
+    for m in re.finditer(r'(?<![\w-])([\'"]?)(?:[\w.@${}+~-]*/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
+                         r'|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)', text):
+        k = m.end()
+        while True:
+            k = skip(k)
+            if k >= n or sep(k):
+                break
+            j = k
+            while j < n:
+                if cont(j):
+                    j += 2
+                elif state[j] or (text[j] not in ' \t\n' and not sep(j)):
+                    j += 1
+                else:
+                    break
+            word = text[k:j]
+            flat = word.replace('\\\n', '')
+            unq = flat.replace('"', '').replace("'", '')
+            bare = unq if re.fullmatch(r'[\w\'"-]+', flat) and re.fullmatch(r'-[\w-]+', unq) else flat
+            if bare in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', bare):
+                p = skip(j)
+                if starts_program(p):
+                    program(p)
+            else:
+                # round 8: the flag name alone quoted (`"--eval"="..."`), the quote after the
+                # dashes (`--"eval=..."`, `-"c..."`)
+                eq = re.match(r'(?:(?P<q>[\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?P=q)'
+                              r'|(?P<r>[\'"])--(?:eval|command|print)(?P=r)='
+                              r'|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=[\'"]|\$[\'"])', word)
+                whole = re.match(r'(?:([\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])'
+                                 r'|--([\'"])(?:eval|command|print)=|-([\'"])[A-Za-z]*[ceE])(?=[^\'"])', word)
+                if eq:
+                    program(k + eq.end())
+                elif whole:
+                    a = b = k + whole.end()
+                    while b < n and state[b]:
+                        b += 1
+                    program(b + 1, [(a, b, False)])
+            k = j
     return out
 
 
@@ -2082,6 +2205,10 @@ def _segment_spans(text):
     while i < len(text):
         if state[i]:
             i += 1
+            continue
+        if text.startswith('\\\n', i):
+            # #779 round 6: a backslash-newline continues the line (`bash \\<NL> -c 'X'`)
+            i += 2
             continue
         hit = next((d for d in DELIMS if text.startswith(d, i)), None)
         if hit is None and text[i] == '&' and text[i + 1:i + 2] != '>' and text[i - 1:i] not in ('<', '>'):
@@ -2129,6 +2256,11 @@ def _tokens(seg):
             had_space = had_space or bool(re.search(r'\s', dec))
             cur.extend(dec)
             i = j + 1
+            continue
+        if not state[i] and ch == '$' and seg.startswith('"', i + 1):
+            # $"..": a locale string, bash reads it as a double quote (#779 round 8, Marveen
+            # comment 3865 E: `bash -c $"rm .."` read as `$rm ..`); the JS twin drops the $ too
+            i += 1
             continue
         if not state[i] and ch in ('"', "'"):
             i += 1
@@ -2184,6 +2316,7 @@ _KEYWORDS = ('if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
              'case', 'esac', 'in', 'select', 'function', 'coproc',
              '!', '{', '}', '(', ')', '[[', ']]')
 _TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
+_TRANSPARENT_VALUE_FLAGS = {('env', '-u'), ('env', '--unset'), ('env', '-C'), ('env', '--chdir'), ('exec', '-a')}
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')
@@ -2230,12 +2363,18 @@ def command_index(toks):
             i += 1
         if i >= len(toks):
             return None
-        base = os.path.basename(toks[i][0])
+        base = _base(toks[i][0])
         if toks[i][0] in _KEYWORDS and not toks[i][1]:
             i += 1
             continue
         if base in _TRANSPARENT:
+            # #779: the prefix's own options are not the command (`env -i rm`, `env -u X
+            # rm`, `exec -a name rm`, `time -p rm`); `-u`, `-C` and `-a` take a value word.
             i += 1
+            while i < len(toks) and toks[i][0].startswith('-') and not toks[i][1]:
+                if base == 'command' and toks[i][0] in ('-v', '-V'):
+                    return None     # a lookup, it runs nothing
+                i += 2 if (base, toks[i][0]) in _TRANSPARENT_VALUE_FLAGS else 1
             continue
         if base in _PREFIX_WRAPPERS:
             nxt = _after_wrapper(toks, i)
@@ -2252,7 +2391,46 @@ def shell_c_programs(cmd):
     (#777). A check_bash ugyanezen az uton megy; a kozos esetfajl
     (scripts/__tests__/shell-c-program-cases.json) erre es a JS iker shellCPrograms-ara van pinelve."""
     _text, light = _scannable_pair(cmd)
-    return [p for a, b in _segment_spans(light) for p in _c_programs(light[a:b])]
+    return [p for a, b in _segment_spans(light) for p in _c_programs(light[a:b])] + _piped_programs(light)
+
+
+def _piped_programs(light):
+    """#779 (Marveen comment 3627d): `echo 'X' | bash`, `printf '%s\\n' 'X' | sh -s` -- a literal
+    echo/printf piped into a shell that reads its program from stdin; the program is the
+    echoed text. A producer that is not echo/printf (`cat f`, `$X`) stays out of reach.
+    The JS twin is lib/heredoc-program.mjs pipedPrograms (via shellCPrograms)."""
+    spans = _segment_spans(light)
+    out = []
+    for k in range(1, len(spans)):
+        if light[spans[k - 1][1]:spans[k][0]].strip() not in ('|', '|&'):
+            continue
+        # the heredoc consumer resolver decides, so wrappers (`| sudo bash`), `bash -`, `sh -s`
+        # read the same way as for a body (#779 review 3833: `| bash -` and `| sudo bash` passed)
+        if _base(_cmd_runs_stdin(light[spans[k][0]:spans[k][1]])) not in _SHELLS:
+            continue
+        prog = _echoed_text(_bare_tokens(light[spans[k - 1][0]:spans[k - 1][1]]))
+        if prog and prog.strip():
+            out.append(prog)
+    return out
+
+
+def _echoed_text(toks):
+    """The text a literal echo/printf writes, or None."""
+    idx = command_index(toks)
+    if idx is None:
+        return None
+    base, args = _base(toks[idx][0]), [t for t, _sp in toks[idx + 1:]]
+    if base == 'echo':
+        while args and re.fullmatch(r'-[neE]+', args[0]):
+            args = args[1:]
+        return ' '.join(args)
+    if base == 'printf':
+        if args and args[0] == '--':
+            args = args[1:]
+        if not args or args[0] == '-v':
+            return None
+        return '\n'.join(args[1:]) if len(args) > 1 else args[0].replace('\\n', '\n')
+    return None
 
 
 def _c_programs(seg):
@@ -2263,13 +2441,13 @@ def _c_programs(seg):
     Ures lista, ha a parancs nem shell, vagy a programja egy FAJL / a stdin."""
     bare = _bare_tokens(seg)
     idx = command_index(bare)
-    if idx is None or bare[idx][1] or os.path.basename(bare[idx][0]) not in _SHELLS:
+    if idx is None or bare[idx][1] or _base(bare[idx][0]) not in _SHELLS:
         return []
     full = _tokens(seg.replace(')', ' ) '))   # a zaro `)` kulon szo (`echo "$(bash -c 'x')"`), mint a JS ikerben
     f = next((i for i, (t, _sp) in enumerate(full) if t.lstrip('(') == bare[idx][0]), None)
     if f is None:
         return []
-    base = os.path.basename(bare[idx][0])
+    base = _base(bare[idx][0])
     flags = _STDIN_SCRIPT_FLAGS.get(base, ())
     long_opts = base in ('bash', 'rbash')
     j = f + 1
@@ -2564,12 +2742,45 @@ _SHELLOUT_RE = re.compile(
     # A puszta `system`, `exec`, `qx` viszont tul altalanos: azok elott a pont-tiltas marad,
     # kulonben minden `foo.exec(` talalat lenne.
     r'(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|'
-    r'require\(\s*[\'"]child_process[\'"]\s*\)\s*\.\s*'
+    r'require\(\s*(?:\(\s*)*[\'"](?:node:)?child_process[\'"]\s*(?:\)\s*)+\.\s*'
     r'(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|'
-    r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|subprocess\.(?:run|call|'
-    r'check_call|check_output|Popen|getoutput)|child_process\.(?:exec|execSync|'
-    r'execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
-    r'Open3\.(?:capture2|capture3|popen3)|system|exec|qx))\s*\(')
+    r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|'
+    r'subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|'
+    r'child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
+    r'Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|'
+    # #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
+    # #779 round 5: spaces before the parenthesis, and a bare import_module (`from importlib import import_module`)
+    r'(?:__import__|(?:importlib\s*\.\s*)?import_module)\s*\(\s*[\'"](?:os|subprocess|pty)[\'"]\s*\)\s*\.\s*'
+    r'(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|'
+    r'getstatusoutput)|'
+    # #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
+    r'Kernel\.(?:system|exec|spawn)|Process\.spawn|system|exec|qx))\s*\(')
+# #779 review 3835: perl/ruby call without parentheses (`system "X"`, `exec 'X', 'a'`)
+_SHELLOUT_BARE_RE = re.compile(r'(?<![\w.$>:])(?:Kernel\.)?(?:system|exec)[ \t]+(?=[\'"])')
+# #779: an import can rename the call (`from subprocess import run`, `import os, subprocess
+# as sp`, `const cp = require("child_process")`, `const {spawn} = require(..)`, `import {exec
+# as run} from "node:child_process"`); those names are shell-outs too. The JS twin (lib/heredoc-program.mjs
+# shellOutCommands) reads the same table; scripts/__tests__/shell-out-cases.json pins both.
+_SHELLOUT_MEMBERS = {
+    'subprocess': r'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
+    'os': r'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
+    'pty': r'spawn',
+    'child_process': r'exec|execFile|spawn|execSync|execFileSync|spawnSync',
+}
+_IMPORT_LIST_RE = re.compile(r'(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)')
+_CP_MODULE = r'[\'"](?:node:)?child_process[\'"]'
+_JS_CP_ALIAS_RE = re.compile(
+    # #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
+    # #779 round 6: nested parentheses around the module (`require( ( "node:child_process" ) )`)
+    r'(?<![\w$.])([\w$]+)\s*=\s*require\(\s*(?:\(\s*)*' + _CP_MODULE + r'\s*(?:\)\s*)*\)(?![\s)]*\.)')
+# an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
+_JS_CP_IMPORT_RE = re.compile(
+    r'(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*' + _CP_MODULE)
+_JS_CP_NAMED_RE = re.compile(
+    r'(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*(?:\(\s*)*' + _CP_MODULE + r'\s*(?:\)\s*)*\)')
+# #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
+_FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))')
+_EXEC_FAMILY_RE = re.compile(r'(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($')
 _STR_LIT_RE = re.compile(r"(['\"])((?:\\.|(?!\1).)*)\1")
 
 
@@ -2607,17 +2818,40 @@ def interpreter_payloads(cmd):
     text = _blank_ranges(text, _comment_ranges(text))
     # Bizonytalan olvasasnal a tobbi torzs is lehet program: azt is kodkent nezzuk.
     out = [text[a:b] for a, b in code + ([] if certain else plain)]
-    out += [text[a:b] for a, b in _script_arg_ranges(text)]
-    out += [text[a:b] for a, b in _stdin_pipe_ranges(text)]
+    for group in _script_arg_groups(text):
+        out += [text[a:b] for a, b, _ansi in group]
+        # #779 round 6: `-c "a"'b'` is one program, `$'..'` decodes its escapes
+        if len(group) > 1 or any(ansi for _a, _b, ansi in group):
+            out.append(''.join(_c_unescape(text[a:b]) if ansi else text[a:b] for a, b, ansi in group))
+    for a, b in _stdin_pipe_ranges(text):
+        out.append(text[a:b])
+        # #779 round 5/6: `printf 'import os\nos.system(..)' | python3` (also \x0a, \012)
+        dec = _c_unescape(text[a:b])
+        if dec != text[a:b]:
+            out.append(dec)
     return [p for p in out if p.strip()]
+
+
+def _c_unescape(s):
+    """#779 round 6: the escapes printf, echo -e and $'..' turn into characters: \\n \\t \\r,
+    \\xHH, and octal \\NNN / \\0NNN. The JS twin: cUnescape."""
+    def rep(m):
+        e = m.group(1)
+        if e in ('n', 't', 'r'):
+            return {'n': '\n', 't': '\t', 'r': '\r'}[e]
+        return chr(int(e[1:], 16) if e[0] == 'x' else int(e, 8))
+    return re.sub(r'\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr])', rep, s)
 
 
 def _stdin_pipe_ranges(text):
     """`echo "<kod>" | python3 -` -- az ertelmezo a STDIN-rol olvas.
 
     Csak akkor ad vissza tartomanyt, ha a cso EGYIK szakaszanak parancsa ertelmezo
-    ES a szakaszban ott all a puszta `-`. Enelkul minden idezett szoveget kodnak
+    ES a szakasz a stdin-t programkent futtatja. Enelkul minden idezett szoveget kodnak
     kellene tekinteni, ami a prozaszures ellentetje volna.
+    #779 round 4: the bare `-` is not needed: `| python3`, `| python3 -I`, `| node`, `| perl`
+    read the program from the stdin as well. The decision is the heredoc one (_cmd_runs_stdin):
+    `| python3 -m json.tool`, `| python3 script.py`, `| python3 -c '..'` read DATA.
     """
     state = _quote_map(text)
     bars = [i for i in range(len(text)) if not state[i] and text[i] == '|'
@@ -2632,7 +2866,7 @@ def _stdin_pipe_ranges(text):
         toks = [t for t, _sp in _tokens(text[a:b])]
         if not toks or k == 0:
             continue
-        if os.path.basename(toks[0]) in INTERPRETERS and '-' in toks[1:]:
+        if _base(_cmd_runs_stdin(text[a:b])) in INTERPRETERS:
             pa, pb = parts[k - 1]
             prev_state = _quote_map(text[pa:pb])
             i = 0
@@ -2648,6 +2882,185 @@ def _stdin_pipe_ranges(text):
     return out
 
 
+def _imported_shellout_re(payload):
+    """The shell-out names an import introduces in this payload (#779): a Python `import ..
+    as`/`from .. import`, a node `require("child_process")` alias or destructuring, an ES
+    `import .. from "child_process"`. None when there are none."""
+    names = []
+    for items in _IMPORT_LIST_RE.findall(payload):
+        for item in items.split(','):
+            parts = item.split()
+            if len(parts) == 3 and parts[0] in ('subprocess', 'os', 'pty'):
+                names.append(re.escape(parts[2]) + r'\.(?:' + _SHELLOUT_MEMBERS[parts[0]] + ')')
+    named = _JS_CP_NAMED_RE.findall(payload)
+    aliases = _JS_CP_ALIAS_RE.findall(payload)
+    for clause in _JS_CP_IMPORT_RE.findall(payload):
+        brace = re.search(r'\{([^}]*)\}', clause)
+        if brace:
+            named.append(brace.group(1))
+        aliases += re.findall(r'(?:^|\bas\s+)([\w$]+)\s*(?:,|$)', clause.strip())
+    for alias in aliases:
+        names.append(re.escape(alias) + r'\.(?:' + _SHELLOUT_MEMBERS['child_process'] + ')')
+    for items in named:
+        for item in items.split(','):
+            m = re.fullmatch(r'\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*', item)
+            if m and re.fullmatch(_SHELLOUT_MEMBERS['child_process'], m.group(1)):
+                names.append(re.escape(m.group(2) or m.group(1)))
+    for mod, paren, bare in _FROM_IMPORT_RE.findall(payload):
+        for item in (paren or bare).replace('\\', ' ').split(','):
+            parts = item.split()
+            if parts and re.fullmatch(_SHELLOUT_MEMBERS[mod], parts[0]):
+                names.append(re.escape(parts[2] if len(parts) == 3 and parts[1] == 'as' else parts[0]))
+    if not names:
+        return None
+    return re.compile(r'(?<![\w.$])(?:' + '|'.join(names) + r')\s*\(')
+
+
+def _literal_spans(payload):
+    """The closed string literals of a code payload, as (start, end) spans: triple quotes,
+    '...', "..." (not across a newline) and `...`. A quote after a backslash opens nothing
+    (an escaped shell quote of a `-c "..."` payload); an unclosed quote is not a literal.
+    The JS twin is lib/heredoc-program.mjs literalSpans."""
+    spans, i, n = [], 0, len(payload)
+    while i < n:
+        ch = payload[i]
+        if ch not in '\'"`' or (i and payload[i - 1] == '\\'):
+            i += 1
+            continue
+        if ch != '`' and payload.startswith(ch * 3, i):
+            j = payload.find(ch * 3, i + 3)
+            if j < 0:
+                break
+            spans.append((i, j + 3))
+            i = j + 3
+            continue
+        j = i + 1
+        while j < n and payload[j] != ch and (ch == '`' or payload[j] != '\n'):
+            j += 2 if payload[j] == '\\' else 1
+        if j < n and payload[j] == ch:
+            spans.append((i, j + 1))
+            i = j + 1
+        else:
+            i += 1
+    return spans
+
+
+def _perl_quotes(payload):
+    """#779 round 5: perl's quote operators with parentheses as plain calls and literals:
+    `qx(X)` runs X, so it reads as `system("X")`; `qq(X)` / `q(X)` is the literal "X". Only the
+    parenthesis form without nesting, also with a space (`qx (X)`, #779 round 6); qx{..}, qx/../ and
+    backticks are a known limit, pinned in scripts/__tests__/shell-out-cases.json."""
+    def lit(body):
+        q = '"' if '"' not in body else ("'" if "'" not in body else None)
+        return q and q + body + q
+
+    def rep(m):
+        s = lit(m.group(2))
+        if s is None:
+            return m.group(0)
+        return f'system({s})' if m.group(1) == 'x' else s
+    return re.sub(r'(?<![\w$@%])q([qx]?)\s*\(([^()\n]*)\)', rep, payload)
+
+
+def _importlib_aliases(payload):
+    """#779 round 6: `from importlib import import_module as im` and `import importlib as il`
+    rename the module loader; the alias reads as the loader (`im("os")` -> `import_module("os")`).
+    The JS twin: importlibAliases.
+    #779 round 7: the name may stand anywhere in an import list, also in parentheses
+    (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
+    An identifier is Python's: `\\w` is Unicode here, `[\\p{L}\\p{N}_]` with the u flag in JS.
+    #779 round 8 (Marveen comment 3865 C, D): a parenthesised list may span lines, a bare list
+    may continue with `\\<NL>`; an assignment renames too (`im = importlib.import_module`,
+    `f = __import__`, `il = importlib`)."""
+    loaders, modules, imports = [], [], []
+    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))', payload):
+        lst = (m.group(1) if m.group(1) is not None else m.group(2)).replace('\\\n', ' ')
+        loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', lst)
+    for m in re.finditer(r'(?<![\w.])import\s+((?:[^()\n;\\]|\\\n?)*)', payload):
+        modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1).replace('\\\n', ' '))
+    loaders += re.findall(r'(?<![\w.])(\w+)\s*=\s*(?:importlib\s*\.\s*)?import_module(?![ \t]*[\w(.])', payload)
+    imports += re.findall(r'(?<![\w.])(\w+)\s*=\s*__import__(?![ \t]*[\w(.])', payload)
+    modules += re.findall(r'(?<![\w.])(\w+)\s*=\s*importlib(?![ \t]*[\w(.])', payload)
+    for alias in loaders:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', 'import_module(', payload)
+    for alias in imports:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', '__import__(', payload)
+    for alias in modules:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\.\s*import_module\b', 'importlib.import_module', payload)
+    return payload
+
+
+def shell_out_commands(payload):
+    """The shell commands a code payload hands to a shell or exec: the string literals in
+    the arguments of a known shell-out call (#779). One literal is a shell string; several
+    are an argv, joined with the space-holding words quoted so `["bash", "-c", "rm -rf x"]`
+    keeps its -c program. An exec/spawn call's leading file literal is dropped when argv[0]
+    repeats it (`os.execvp("bash", ["bash", "-c", X])`). A string built at run time
+    (concatenation, an f-string with a variable, base64) is NOT read: obfuscation, a known
+    limit kept in scripts/__tests__/shell-out-cases.json. A call written INSIDE a string
+    literal is data, not a call (`note = 'os.system("claude -p ..")'`, a card comment)."""
+    payload = _importlib_aliases(_perl_quotes(payload))
+    out = []
+    rxs = [_SHELLOUT_RE] + [r for r in (_imported_shellout_re(payload),) if r]
+    hits = sorted({(m.start(), m.end()): m for rx in rxs for m in rx.finditer(payload)}.items())
+    spans = _literal_spans(payload) if hits else []
+    for (start, end), m in hits:
+        if any(a < start < b for a, b in spans):
+            continue
+        arg = _balanced_arg(payload, payload.index('(', end - 1))
+        words = [g2 for _g1, g2 in _STR_LIT_RE.findall(arg)]
+        if (len(words) >= 2 and _EXEC_FAMILY_RE.search(m.group(0))
+                and _base(words[0]) == _base(words[1])):
+            words = words[1:]
+        inner = _argv_text(words)
+        if inner and inner not in out:
+            out.append(inner)
+    for m in _SHELLOUT_BARE_RE.finditer(payload):
+        if any(a < m.start() < b for a, b in spans or _literal_spans(payload)):
+            continue
+        inner = _argv_text(_bare_args(payload, m.end()))
+        if inner and inner not in out:
+            out.append(inner)
+    return out
+
+
+def _argv_text(words):
+    """One literal is a shell string; several are an argv, the space-holding words quoted."""
+    if len(words) == 1:
+        return words[0].strip()
+    return ' '.join(shlex.quote(w) if re.search(r'\s', w) else w for w in words).strip()
+
+
+def _bare_args(payload, i):
+    """The string literals of a call without parentheses (`system "a", 'b'`), up to the first
+    thing that is not a literal or a comma."""
+    words = []
+    while True:
+        m = _STR_LIT_RE.match(payload, i)
+        if not m:
+            return words
+        words.append(m.group(2))
+        sep = re.compile(r'[ \t]*,[ \t]*').match(payload, m.end())
+        if not sep:
+            return words
+        i = sep.end()
+
+
+def embedded_commands(cmd):
+    """Every shell command a code payload of `cmd` hands to a shell (#779); the shared case
+    file scripts/__tests__/shell-out-cases.json pins this to the JS twin embeddedCommands."""
+    out = []
+    records, _certain = _heredoc_scan().find_all(cmd)
+    funcs = _function_bodies(cmd) if records else {}
+    herestrings = [h.text for h in records
+                   if h.kind == 'herestring' and h.text.strip() and _heredoc_runs_body(cmd, h, funcs)]
+    for payload in interpreter_payloads(cmd) + herestrings:
+        for inner in shell_out_commands(payload):
+            if inner not in out:
+                out.append(inner)
+    return out
+
+
 def check_payload(payload, _depth=0, cwd=None):
     """A ma is tiltott muveletek az ertelmezo-burkon BELUL."""
     for rx, equivalent in _PAYLOAD_RE:
@@ -2657,14 +3070,9 @@ def check_payload(payload, _depth=0, cwd=None):
                   '"%s" megfeleloje, amit a kapu a shellben is tilt. A burok nem valtoztat '
                   'a dontesen.\n(a payload reszlete: %s)'
                   % (m.group(0).strip(), equivalent, payload[:160]))
-    for m in _SHELLOUT_RE.finditer(payload):
-        arg = _balanced_arg(payload, payload.index('(', m.end() - 1))
-        words = [g2 for _g1, g2 in _STR_LIT_RE.findall(arg)]
-        if not words:
-            continue
-        inner = ' '.join(words).strip()
-        if not inner or _depth >= _MAX_NEST:
-            continue
+    if _depth >= _MAX_NEST:
+        return
+    for inner in shell_out_commands(payload):
         # Ugyanaz a szabalykeszlet, nem egy masodik lista: a kihivott parancs
         # visszamegy a check_bash-be.
         check_bash(inner, _depth + 1, cwd)
@@ -2697,7 +3105,7 @@ def check_bash(cmd, _depth=0, cwd=None):
                 names.append((toks[j + 1][0], j + 2))
 
         for name, argstart in names:
-            base = os.path.basename(name)
+            base = _base(name)
             if base == 'git':
                 _check_git(toks, argstart)
                 continue
@@ -2723,7 +3131,7 @@ def check_bash(cmd, _depth=0, cwd=None):
 
         # A `cd` a KOVETKEZO szegmensek munkakonyvtarat allitja. Nem eldontheto cel
         # eseten a cwd ismeretlenne valik, ami a kesobbi relativ torleseket blokkolja.
-        if idx is not None and not toks[idx][1] and os.path.basename(toks[idx][0]) == 'cd':
+        if idx is not None and not toks[idx][1] and _base(toks[idx][0]) == 'cd':
             cwd = _cd_target(toks, idx + 1, cwd)
             saw_cd = True
 
@@ -2748,6 +3156,13 @@ def check_bash(cmd, _depth=0, cwd=None):
                 block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
                       'vegigkovetni, ezert nem engedi at.' % _depth)
             check_bash(sub, _depth + 1, cwd)
+
+    # #779: `echo 'X' | bash` -- the echoed literal is the program of the shell reading it.
+    for prog in _piped_programs(light):
+        if _depth >= _MAX_NEST:
+            block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
+                  'vegigkovetni, ezert nem engedi at.' % _depth)
+        check_bash(prog, _depth + 1, None if saw_cd else entry_cwd)
 
     # #777: az itt-string (`bash <<< 'rm -rf x'`, `sh <<< "$(cat f)"`) szava PROGRAM, ha
     # a fogado a stdin-jet futtatja (ugyanaz a kerdes, mint a heredocnal). A dinamikus szo

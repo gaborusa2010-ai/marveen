@@ -20,6 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CASES = os.path.join(HERE, "heredoc-program-cases.json")
 C_CASES = os.path.join(HERE, "shell-c-program-cases.json")
+O_CASES = os.path.join(HERE, "shell-out-cases.json")
 
 
 def load(name, path):
@@ -57,6 +58,23 @@ def main():
     if len(c_cases) < 30 or sum(1 for c in c_cases if c["programs"]) < 20:
         failed.append("shell-c-program case file too small: %d" % len(c_cases))
     print("shell -c program cases: %d" % len(c_cases))
+    # #779: shell commands handed to a shell by a code payload; the same file pins JS embeddedCommands
+    o_cases = json.load(open(O_CASES, encoding="utf-8"))["cases"]
+    for c in o_cases:
+        got = gate.embedded_commands(c["cmd"])
+        if got != c["commands"]:
+            failed.append("shell-out %s: expected %s, got %s" % (c["name"], c["commands"], got))
+    neg = [c for c in o_cases if c["name"].startswith("neg/")]
+    if len(o_cases) < 300 or sum(1 for c in o_cases if c["commands"]) < 250 or len(neg) < 20:
+        failed.append("shell-out case file too small: %d" % len(o_cases))
+    # a benign negative may hand a harmless command (ls) to a shell, never the blocked words
+    for c in neg:
+        if any(w in " ".join(c["commands"]) for w in ("claude", "curl", "rm -rf")):
+            failed.append("shell-out negative %s reads a blocked command: %s" % (c["name"], c["commands"]))
+    if not any(c.get("note", "").startswith("known limit") for c in o_cases):
+        failed.append("shell-out case file has no known-limit entry")
+    print("shell-out cases: %d (%d negatives, %d known limits)"
+          % (len(o_cases), len(neg), sum(1 for c in o_cases if c.get("note"))))
     must_run = sum(1 for c in cases if any(c["expect"]))
     noted = sum(1 for c in cases if c.get("bash_note"))
     print("heredoc-program cases: %d (%d must-run, %d data, %d with a bash_note), failures: %d"

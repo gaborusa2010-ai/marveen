@@ -659,3 +659,31 @@ describe('#777 review 16: --args split by quotes', () => {
     expect(decide(command, CHANNEL_ENV).allow).toBe(false)
   })
 })
+
+describe('#779: a shell command embedded in a python/node/perl/ruby payload reaches the child claude', () => {
+  // The shared case file pins the reading (heredoc-program-parity.test.ts); here the guard's
+  // decision on it. Every `/cc` case passed the guard on main cfcb7e88.
+  type OCase = { name: string; cmd: string; commands: string[]; note?: string }
+  const oCases: OCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-out-cases.json'), 'utf-8')).cases
+  const must = oCases.filter((c) => c.name.endsWith('/cc') && !c.note)
+  it('has the cases', () => { expect(must.length).toBeGreaterThanOrEqual(90) })
+  it.each(must.map((c) => [c.name, c.cmd]))('denies %s', (_name, cmd) => {
+    expect(decide(cmd, CHANNEL_ENV).allow).toBe(false)
+  })
+  it.each(oCases.filter((c) => c.name.startsWith('neg/')).map((c) => [c.name, c.cmd]))('allows the benign %s', (_name, cmd) => {
+    expect(decide(cmd, CHANNEL_ENV).allow).toBe(true)
+  })
+  it.each([
+    ['nice claude -p x'], ['nice -n 5 claude -p x'], ['ionice -c 3 claude -p x'], ['stdbuf -o L claude -p x'],
+    ['setsid claude -p x'], ['nohup claude -p x'], ['timeout 60 claude -p x'],
+    ["echo 'claude -p x' | bash"], ["printf '%s\\n' 'claude -p x' | sh"],
+    ["perl -le 'system(\"claude -p x\")'"], ["python3 -I -c 'import os; os.system(\"claude -p x\")'"],
+  ])('denies the launcher / -c variant %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(false)
+  })
+  it.each([
+    ['command -v claude'], ["echo 'claude -p x' > note.txt"], ["echo 'ls' | bash"], ['nice make test'],
+  ])('allows %s', (command) => {
+    expect(decide(command, CHANNEL_ENV).allow).toBe(true)
+  })
+})

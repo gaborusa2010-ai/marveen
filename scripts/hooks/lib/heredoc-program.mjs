@@ -430,7 +430,25 @@ const HERESTRING_TAIL_RE = /<<<\s*["']?\s*$/
 // dynamic -c program in it (`bash -c "$l"`) is a line of the body (#773).
 const READS_STDIN_RE = /(?<![\w$-])(read|mapfile|readarray)(?![\w-])/
 
-const baseName = (w) => w.split('/').pop()
+/** A versioned interpreter name is the same interpreter (#779 round 4): python3.14, python3.14t,
+ *  python2.7, node22, nodejs, perl5.36, ruby3.2, php8.2. The twin of _canon_interp. */
+const VERSIONED_INTERP_RE = /^(python|perl|ruby|php|node)(\d+(?:\.\d+)*)[a-z]?$/
+export function canonInterp(name) {
+  if (name === 'nodejs') return 'node'
+  const m = VERSIONED_INTERP_RE.exec(name)
+  if (!m) return name
+  if (m[1] === 'python') return m[2].split('.')[0] === '3' ? 'python3' : 'python'
+  return m[1]
+}
+/** Interpreter flags whose VALUE is the next word: that word is not a program file (#779 r4). */
+const INTERP_VALUE_FLAGS = {
+  python: ['-W', '-X'], python3: ['-W', '-X'],
+  node: ['-r', '--require', '--import', '--loader', '--experimental-loader'],
+  ruby: ['-r', '-I'],
+}
+const rawBase = (w) => w.split('/').pop()
+/** basename + canonical interpreter name; any other word is its plain basename. */
+const baseName = (w) => canonInterp(rawBase(w))
 
 /** [word without quotes and backslashes, dynamic?]: `$P`, `{a,b}`, `pytho?3` expand. */
 function word(tok) {
@@ -613,7 +631,7 @@ function runsWords(words, k, depth, loose) {
   let longOpts = base === 'bash' || base === 'rbash'   // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
   for (let j = k + 1; j < words.length; j++) {
     const [x, xdyn] = words[j]
-    if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x) || x.startsWith('<(')) return base   // `bash <(cat)`: the script is a pipe, maybe the stdin (#777 review 8)
+    if (xdyn || (x === '-' && !shell) || x === '-s' || STDIN_PATH_RE.test(x) || x.startsWith('<(')) return base   // `bash <(cat)`: the script is a pipe, maybe the stdin (#777 review 8)
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
     if (longOpts) {
@@ -626,7 +644,9 @@ function runsWords(words, k, depth, loose) {
       longOpts = false
     }
     if ((base === 'bash' || base === 'rbash') && x.startsWith('--') && x.length > 2) return ''   // `bash --rcfile=F`, `bash -x --norc`: invalid option, nothing runs
-    if (shell && x === '--') {
+    if (shell && (x === '--' || x === '-')) {
+      // A shell treats a lone `-` like `--` (measured in sh, dash, bash: `bash - f.sh` runs
+      // the FILE, a lone `-` reads the stdin; #779 round 2).
       // `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE (even
       // `-x`), only redirections may follow (#777 review 2). The file may be the stdin
       // itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
@@ -678,6 +698,7 @@ function runsWords(words, k, depth, loose) {
       return shell ? programConsumer(words[m][0], base, depth) : ''
     }
     if (shell && optValues(x)) { j += optValues(x); continue }  // `-o pipefail`, `-xo pipefail`: value word(s) follow
+    if ((INTERP_VALUE_FLAGS[base] ?? []).includes(x)) { j++; continue }   // `python3 -W ignore`, `node -r mod` (#779 r4)
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
     return ''                         // a program FILE: the body is its input
   }
@@ -1403,15 +1424,17 @@ function cProgramIndex(words, k, depth = 0) {
 /** The simple commands of a shell text, quote-aware (the twin of the gate's segment split):
  *  cut at `&&`, `||`, `;`, `&`, `|`, newline, `(`, `)`, `{`, `}`, backtick and `$(`
  *  outside quotes; a `$( )` or backtick inside double quotes is command context again. */
-function simpleSegments(text) {
+function simpleSegments(text, withSeps = false) {
   const out = []
+  const seps = []                // the separator text before each segment (#779 pipes)
+  let sep = ''
   const n = text.length
   const stack = []               // [closer, outer paren depth] per open substitution in double quotes
   let start = 0
   let i = 0
   let q = null
   let depth = 0
-  const cut = (end, width) => { out.push(text.slice(start, end)); start = end + width; i = start }
+  const cut = (end, width) => { out.push(text.slice(start, end)); seps.push(sep); sep = text.slice(end, end + width); start = end + width; i = start }
   while (i < n) {
     const c = text[i]
     if (q === "'") { if (c === "'") q = null; i++; continue }
@@ -1446,7 +1469,16 @@ function simpleSegments(text) {
     i++
   }
   out.push(text.slice(start))
-  return out.map((s) => s.trim()).filter(Boolean)
+  seps.push(sep)
+  if (!withSeps) return out.map((s) => s.trim()).filter(Boolean)
+  // an empty segment hands its separator on: `a |& b` is `|` then `&` around nothing
+  const kept = []
+  let carry = ''
+  out.forEach((seg, k) => {
+    if (seg.trim()) { kept.push({ seg: seg.trim(), sep: carry + seps[k] }); carry = '' }
+    else carry += seps[k]
+  })
+  return kept
 }
 
 /** `cmd` with the DATA heredoc bodies and the comment lines blanked (offsets kept): the
@@ -1476,7 +1508,10 @@ export function shellCPrograms(cmd) {
   if (!/(?:^|[^A-Za-z0-9_-])(?:sh|bash|zsh|dash|ksh|rbash)(?![A-Za-z0-9_-])/.test(s)) return []
   const out = []
   for (const seg of simpleSegments(lightText(s))) {
-    const fixed = seg.replaceAll(')', ' ) ')
+    // #779 round 7: a continuation glued on both sides joins the words (`bash -c\<NL>'X'` is the
+    // glued `-c'X'`, which bash rejects as an invalid option); SHELL_WORD_RE alone would split
+    // there and read X as the program. The Python twin already reads it as one word.
+    const fixed = seg.replace(/(?<=[^\s\\])\\\n(?=\S)/g, '').replaceAll(')', ' ) ')
     const matches = [...fixed.matchAll(SHELL_WORD_RE)]
     let words = matches.map((m) => word(m[0]))
     const k = skipPrefix(words, 0)
@@ -1487,7 +1522,45 @@ export function shellCPrograms(cmd) {
     const w = hereWord(fixed, matches[m].index, [])
     if (w && w[0].trim()) out.push(w[0])
   }
+  return out.concat(pipedPrograms(lightText(s)))
+}
+
+const segWords = (seg) => (seg.match(SHELL_WORD_RE) ?? []).map(word)
+
+/** #779 (Marveen comment 3627d): `echo 'X' | bash`, `printf '%s\\n' 'X' | sh -s` -- a literal
+ *  echo/printf piped into a shell that reads its program from stdin; the program is the echoed
+ *  text. A producer that is not echo/printf (`cat f`, `$X`) stays out of reach. The Python twin
+ *  is _piped_programs in destructive-gate.py. */
+function pipedPrograms(light) {
+  const parts = simpleSegments(light, true)
+  const out = []
+  for (let k = 1; k < parts.length; k++) {
+    if (parts[k].sep !== '|' && parts[k].sep !== '|&') continue
+    // the heredoc consumer resolver decides, so wrappers (`| sudo bash`), `bash -`, `sh -s` read
+    // the same way as for a body (#779 review 3833: `| bash -` and `| sudo bash` passed)
+    if (!SHELLS.has(baseName(runsStdinAsProgram(parts[k].seg)))) continue
+    const prog = echoedText(segWords(parts[k - 1].seg))
+    if (prog && prog.trim()) out.push(prog)
+  }
   return out
+}
+
+/** The text a literal echo/printf writes, or null. */
+function echoedText(words) {
+  const k = skipPrefix(words, 0)
+  if (k >= words.length) return null
+  const base = baseName(words[k][0])
+  let args = words.slice(k + 1).map(([w]) => w)
+  if (base === 'echo') {
+    while (args.length && /^-[neE]+$/.test(args[0])) args = args.slice(1)
+    return args.join(' ')
+  }
+  if (base === 'printf') {
+    if (args[0] === '--') args = args.slice(1)
+    if (!args.length || args[0] === '-v') return null
+    return args.length > 1 ? args.slice(1).join('\n') : args[0].replaceAll('\\n', '\n')
+  }
+  return null
 }
 
 /**
@@ -1565,7 +1638,7 @@ function programConsumer(text, base, depth) {
 function dynamicGdb(consumer) {
   if (consumer.startsWith('$') || consumer.startsWith('`')) return true
   if (!DYNAMIC_CONSUMER_RE.test(consumer)) return false
-  const pattern = baseName(consumer).replace(/\{[^{}]*\}/g, '*')
+  const pattern = rawBase(consumer).replace(/\{[^{}]*\}/g, '*')
   return [...GDB_NAMES, 'x-gdb', 'gdb-x'].some((n) => globMatch(n, pattern))
 }
 
@@ -1783,6 +1856,399 @@ export function dataBodySubstitutions(cmd) {
         i = j < 0 ? body.length : j
       }
     }
+  }
+  return out
+}
+
+// #779: the shell commands a code payload (python/node/perl/ruby) hands to a shell. The twin of
+// destructive-gate.py _SHELLOUT_RE / shell_out_commands / embedded_commands; the shared case
+// file scripts/__tests__/shell-out-cases.json pins both sides.
+const SHELLOUT_RE = new RegExp(
+  String.raw`(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|` +
+  String.raw`require\(\s*(?:\(\s*)*['"](?:node:)?child_process['"]\s*(?:\)\s*)+\.\s*(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|` +
+  String.raw`(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|` +
+  String.raw`subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|` +
+  String.raw`child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|` +
+  String.raw`Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|` +
+  // #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
+  // #779 round 5: spaces before the parenthesis, and a bare import_module (`from importlib import import_module`)
+  String.raw`(?:__import__|(?:importlib\s*\.\s*)?import_module)\s*\(\s*['"](?:os|subprocess|pty)['"]\s*\)\s*\.\s*` +
+  String.raw`(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|` +
+  String.raw`getstatusoutput)|` +
+  // #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
+  String.raw`Kernel\.(?:system|exec|spawn)|Process\.spawn|system|exec|qx))\s*\(`, 'g')
+// #779 review 3835: perl/ruby call without parentheses (`system "X"`, `exec 'X', 'a'`)
+const SHELLOUT_BARE_RE = /(?<![\w.$>:])(?:Kernel\.)?(?:system|exec)[ \t]+(?=['"])/g
+const SHELLOUT_MEMBERS = {
+  subprocess: 'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
+  os: 'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
+  pty: 'spawn',
+  child_process: 'exec|execFile|spawn|execSync|execFileSync|spawnSync',
+}
+// #779 review 3833: `import os, subprocess as sp`, a node child_process alias or destructuring,
+// an ES import from "child_process"; the twin of destructive-gate.py _imported_shellout_re
+const IMPORT_LIST_RE = /(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)/g
+const CP_MODULE = String.raw`['"](?:node:)?child_process['"]`
+// #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
+const JS_CP_ALIAS_RE = new RegExp(
+  // #779 round 6: nested parentheses around the module (`require( ( "node:child_process" ) )`)
+  String.raw`(?<![\w$.])([\w$]+)\s*=\s*require\(\s*(?:\(\s*)*` + CP_MODULE + String.raw`\s*(?:\)\s*)*\)(?![\s)]*\.)`, 'g')
+// an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
+const JS_CP_IMPORT_RE = new RegExp(
+  String.raw`(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*` + CP_MODULE, 'g')
+const JS_CP_NAMED_RE = new RegExp(
+  String.raw`(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*(?:\(\s*)*` + CP_MODULE + String.raw`\s*(?:\)\s*)*\)`, 'g')
+// #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
+const FROM_IMPORT_RE = /(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))/g
+const EXEC_FAMILY_RE = /(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($/
+const STR_LIT_RE = /(['"])((?:\\.|(?!\1).)*)\1/g
+const reEscape = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const shQuote = (w) => `'${w.replaceAll("'", `'"'"'`)}'`
+
+function importedShellOutRe(payload) {
+  const names = []
+  for (const [, items] of payload.matchAll(IMPORT_LIST_RE)) {
+    for (const item of items.split(',')) {
+      const parts = item.trim().split(/\s+/).filter(Boolean)
+      if (parts.length === 3 && ['subprocess', 'os', 'pty'].includes(parts[0])) {
+        names.push(`${reEscape(parts[2])}\\.(?:${SHELLOUT_MEMBERS[parts[0]]})`)
+      }
+    }
+  }
+  const named = [...payload.matchAll(JS_CP_NAMED_RE)].map((m) => m[1])
+  const aliases = [...payload.matchAll(JS_CP_ALIAS_RE)].map((m) => m[1])
+  for (const [, clause] of payload.matchAll(JS_CP_IMPORT_RE)) {
+    const brace = /\{([^}]*)\}/.exec(clause)
+    if (brace) named.push(brace[1])
+    for (const m of clause.trim().matchAll(/(?:^|\bas\s+)([\w$]+)\s*(?:,|$)/g)) aliases.push(m[1])
+  }
+  for (const alias of aliases) names.push(`${reEscape(alias)}\\.(?:${SHELLOUT_MEMBERS.child_process})`)
+  for (const items of named) {
+    for (const item of items.split(',')) {
+      const m = /^\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*$/.exec(item)
+      if (m && new RegExp(`^(?:${SHELLOUT_MEMBERS.child_process})$`).test(m[1])) names.push(reEscape(m[2] || m[1]))
+    }
+  }
+  for (const [, mod, paren, bare] of payload.matchAll(FROM_IMPORT_RE)) {
+    for (const item of (paren ?? bare).replaceAll('\\', ' ').split(',')) {
+      const parts = item.trim().split(/\s+/).filter(Boolean)
+      if (parts.length && new RegExp(`^(?:${SHELLOUT_MEMBERS[mod]})$`).test(parts[0])) {
+        names.push(reEscape(parts.length === 3 && parts[1] === 'as' ? parts[2] : parts[0]))
+      }
+    }
+  }
+  return names.length ? new RegExp(`(?<![\\w.$])(?:${names.join('|')})\\s*\\(`, 'g') : null
+}
+
+/** The closed string literals of a code payload as [start, end] spans: triple quotes, '...',
+ *  "..." (not across a newline) and `...`; a quote after a backslash opens nothing, an unclosed
+ *  quote is not a literal. The twin of destructive-gate.py _literal_spans. */
+function literalSpans(text) {
+  const spans = []
+  const n = text.length
+  let i = 0
+  while (i < n) {
+    const ch = text[i]
+    if (!'\'"`'.includes(ch) || (i && text[i - 1] === '\\')) { i++; continue }
+    if (ch !== '`' && text.startsWith(ch.repeat(3), i)) {
+      const j = text.indexOf(ch.repeat(3), i + 3)
+      if (j < 0) break
+      spans.push([i, j + 3])
+      i = j + 3
+      continue
+    }
+    let j = i + 1
+    while (j < n && text[j] !== ch && (ch === '`' || text[j] !== '\n')) j += text[j] === '\\' ? 2 : 1
+    if (j < n && text[j] === ch) { spans.push([i, j + 1]); i = j + 1 } else i++
+  }
+  return spans
+}
+
+/** The text from an opening paren to its partner (the rest of the text when unbalanced). */
+function balancedArg(text, open) {
+  let depth = 0
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '(') depth++
+    else if (text[i] === ')' && --depth === 0) return text.slice(open + 1, i)
+  }
+  return text.slice(open + 1)
+}
+
+/**
+ * The shell commands a code payload hands to a shell or exec: the string literals in the
+ * arguments of a known shell-out call. One literal is a shell string; several are an argv,
+ * joined with the space-holding words quoted (`["bash", "-c", "rm x"]` keeps its -c program);
+ * an exec/spawn call's file literal is dropped when argv[0] repeats it. A string built at run
+ * time (concatenation, an f-string with a variable, base64) is NOT read: a known limit.
+ * A call written INSIDE a string literal is data, not a call.
+ */
+/** #779 round 5: perl's `qx(X)` reads as `system("X")`, `qq(X)` / `q(X)` as the literal "X";
+ *  the twin of destructive-gate.py _perl_quotes (no nesting, a space before the parenthesis is
+ *  read too, #779 round 6; qx{..}, qx/../, backticks: limit, pinned in shell-out-cases.json). */
+function perlQuotes(payload) {
+  return payload.replace(/(?<![\w$@%])q([qx]?)\s*\(([^()\n]*)\)/g, (all, kind, body) => {
+    const q = !body.includes('"') ? '"' : !body.includes("'") ? "'" : null
+    if (!q) return all
+    return kind === 'x' ? `system(${q}${body}${q})` : q + body + q
+  })
+}
+
+/** #779 round 6: `from importlib import import_module as im` and `import importlib as il` rename
+ *  the module loader; the alias reads as the loader. The twin of _importlib_aliases. */
+// #779 round 7: a Python identifier, as Python's Unicode `\w` reads it (`ím` is a name too).
+const PY_ID = String.raw`[\p{L}\p{N}_]`
+
+function importlibAliases(payload) {
+  // #779 round 7: the name may stand anywhere in an import list, also in parentheses
+  // (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
+  // #779 round 8 (Marveen comment 3865 C, D): a parenthesised list may span lines, a bare list
+  // may continue with `\<NL>`; an assignment renames too (`im = importlib.import_module`,
+  // `f = __import__`, `il = importlib`).
+  const loaders = []
+  const modules = []
+  const imports = []
+  const NB = String.raw`(?<![\p{L}\p{N}_.])`
+  const NOT_USED = String.raw`(?![ \t]*[\p{L}\p{N}_(.])`
+  for (const m of payload.matchAll(new RegExp(NB + String.raw`from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))`, 'gu'))) {
+    const list = (m[1] ?? m[2]).replaceAll('\\\n', ' ')
+    for (const a of list.matchAll(new RegExp(String.raw`(?:^|,)\s*import_module\s+as\s+(${PY_ID}+)`, 'gu'))) loaders.push(a[1])
+  }
+  for (const m of payload.matchAll(new RegExp(NB + String.raw`import\s+((?:[^()\n;\\]|\\\n?)*)`, 'gu'))) {
+    for (const a of m[1].replaceAll('\\\n', ' ').matchAll(new RegExp(String.raw`(?:^|,)\s*importlib\s+as\s+(${PY_ID}+)`, 'gu'))) modules.push(a[1])
+  }
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*(?:importlib\s*\.\s*)?import_module` + NOT_USED, 'gu'))) loaders.push(a[1])
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*__import__` + NOT_USED, 'gu'))) imports.push(a[1])
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*importlib` + NOT_USED, 'gu'))) modules.push(a[1])
+  for (const alias of loaders) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\(`, 'gu'), 'import_module(')
+  }
+  for (const alias of imports) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\(`, 'gu'), '__import__(')
+  }
+  for (const alias of modules) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\.\s*import_module(?![\p{L}\p{N}_])`, 'gu'), 'importlib.import_module')
+  }
+  return payload
+}
+
+export function shellOutCommands(payload) {
+  const text = importlibAliases(perlQuotes(String(payload ?? '')))
+  const hits = new Map()
+  for (const rx of [SHELLOUT_RE, importedShellOutRe(text)].filter(Boolean)) {
+    for (const m of text.matchAll(rx)) hits.set(`${m.index},${m.index + m[0].length}`, m)
+  }
+  const out = []
+  const order = [...hits.values()].sort((a, b) => a.index - b.index || a[0].length - b[0].length)
+  const spans = order.length ? literalSpans(text) : []
+  for (const m of order) {
+    if (spans.some(([a, b]) => a < m.index && m.index < b)) continue
+    const arg = balancedArg(text, text.indexOf('(', m.index + m[0].length - 1))
+    let words = [...arg.matchAll(STR_LIT_RE)].map((x) => x[2])
+    if (words.length >= 2 && EXEC_FAMILY_RE.test(m[0]) && baseName(words[0]) === baseName(words[1])) words = words.slice(1)
+    const inner = argvText(words)
+    if (inner && !out.includes(inner)) out.push(inner)
+  }
+  const bareSpans = literalSpans(text)
+  for (const m of text.matchAll(SHELLOUT_BARE_RE)) {
+    if (bareSpans.some(([a, b]) => a < m.index && m.index < b)) continue
+    const inner = argvText(bareArgs(text, m.index + m[0].length))
+    if (inner && !out.includes(inner)) out.push(inner)
+  }
+  return out
+}
+
+/** One literal is a shell string; several are an argv, the space-holding words quoted. */
+function argvText(words) {
+  return (words.length === 1 ? words[0] : words.map((w) => (/\s/.test(w) ? shQuote(w) : w)).join(' ')).trim()
+}
+
+/** The string literals of a call without parentheses (`system "a", 'b'`), up to the first
+ *  thing that is not a literal or a comma; the twin of destructive-gate.py _bare_args. */
+function bareArgs(text, i) {
+  const words = []
+  for (;;) {
+    const lit = /(['"])((?:\\.|(?!\1).)*)\1/y
+    lit.lastIndex = i
+    const m = lit.exec(text)
+    if (!m) return words
+    words.push(m[2])
+    const sep = /[ \t]*,[ \t]*/y
+    sep.lastIndex = lit.lastIndex
+    if (!sep.exec(text)) return words
+    i = sep.lastIndex
+  }
+}
+
+/** The quoted script after an interpreter's -c/-e. #779 round 5 (Marveen msg 17489): EVERY
+ *  -c/-e/-E/-p/--eval/--command (also clustered: `-le`, `-Ic`, and `--eval='...'`) up to the
+ *  command separator is read, wherever it stands; an unknown option or an option value
+ *  (`--input-type=module`, `-r json`, `-MPOSIX=floor`) never stops the search. Over-reading a
+ *  script argument that happens to be -c is accepted. The twin of _script_arg_ranges. */
+function scriptArgPrograms(text) {
+  return scriptArgGroups(text).flatMap((g) => g.map((r) => r.text))
+}
+
+/** The scriptArgPrograms programs per group: a group is a run of quoted pieces glued together
+ *  (`-c "a"'b'` is one program), each {text, ansi} where ansi is a `$'..'` piece. #779 round 6
+ *  (Marveen comment 3846): the `&` of a redirect (`2>&1`, `&>f`, `>&2`, `<&0`) and `>|` do not
+ *  separate, a backslash-newline continues the line; the interpreter name may be quoted
+ *  (`'python3' -c`), so may the flag (`"-c"`); the program may stick to the flag (`-c'..'`,
+ *  `-Ic'..'`, `perl -e'..'`) and may be `$'..'`; `--print` is the long `-p`. #779 round 7
+ *  (Marveen comment 3861): a line continuation (`\\<NL>`) may stand ANYWHERE (between flag and
+ *  program, glued to a word: `-I\\<NL> -c`), bash removes it and the word joins; the
+ *  interpreter's path may be quoted (`"/usr/bin/python3" -c`), the flag partly (`-"c"`), the whole
+ *  flag=program word too (`"--eval=..."`, `"-c..."`), and `$"..."` is a program. The twin of
+ *  _script_arg_groups. */
+function scriptArgGroups(text) {
+  const state = quoteMap(text)
+  const out = []
+  const n = text.length
+  const sep = (i) => {
+    const c = text[i]
+    if (state[i] || !';&|\n'.includes(c)) return false
+    if (c === '&' && ((i && '<>'.includes(text[i - 1])) || text[i + 1] === '>')) return false
+    if (c === '|' && i && text[i - 1] === '>') return false
+    return true
+  }
+  const cont = (i) => !state[i] && text[i] === '\\' && text[i + 1] === '\n'
+  const skip = (p) => {
+    while (p < n && (text[p] === ' ' || text[p] === '\t' || cont(p))) p += cont(p) ? 2 : 1
+    return p
+  }
+  const startsProgram = (p) => p < n && (text[p] === '"' || text[p] === "'" || (text[p] === '$' && (text[p + 1] === "'" || text[p + 1] === '"')))
+  const program = (p, first = []) => {
+    const group = [...first]
+    while (p < n) {
+      const ansi = text[p] === '$' && text[p + 1] === "'"
+      if (text[p] === '$' && (text[p + 1] === "'" || text[p + 1] === '"')) p++
+      if (text[p] !== '"' && text[p] !== "'") break
+      let j = p + 1
+      while (j < n && state[j]) j++
+      group.push({ text: text.slice(p + 1, j), ansi })
+      p = j + 1
+    }
+    if (group.length) out.push(group)
+  }
+  // #779 round 8 (Marveen comment 3865 A, B): a path piece is Unicode like the Python twin's \w
+  // and may hold `$`, `{}`, `@`, `+`, `~` (`"$HOME/venv/bin/python3"`, `"/home/gábor/.."`).
+  for (const m of text.matchAll(/(?<![\p{L}\p{N}_-])(['"]?)(?:[\p{L}\p{N}_.@$\{\}+~-]*\/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/gu)) {
+    let k = m.index + m[0].length
+    for (;;) {
+      k = skip(k)
+      if (k >= n || sep(k)) break
+      let j = k
+      while (j < n) {
+        if (cont(j)) j += 2
+        else if (state[j] || (!' \t\n'.includes(text[j]) && !sep(j))) j++
+        else break
+      }
+      const w = text.slice(k, j)
+      const flat = w.replaceAll('\\\n', '')
+      const unq = flat.replace(/['"]/g, '')
+      const bare = /^[\w'"-]+$/.test(flat) && /^-[\w-]+$/.test(unq) ? unq : flat
+      if (SCRIPT_FLAGS.has(bare) || /^-[A-Za-z]*[ceE]$/.test(bare)) {
+        const p = skip(j)
+        if (startsProgram(p)) program(p)
+      } else {
+        // round 8: the flag name alone quoted (`"--eval"="..."`), the quote after the dashes
+        // (`--"eval=..."`, `-"c..."`)
+        const eq = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])\1|(['"])--(?:eval|command|print)\2=|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=['"]|\$['"])/.exec(w)
+        const whole = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])|--(['"])(?:eval|command|print)=|-(['"])[A-Za-z]*[ceE])(?=[^'"])/.exec(w)
+        if (eq) program(k + eq[0].length)
+        else if (whole) {
+          const a = k + whole[0].length
+          let b = a
+          while (b < n && state[b]) b++
+          program(b + 1, [{ text: text.slice(a, b), ansi: false }])
+        }
+      }
+      k = j
+    }
+  }
+  return out
+}
+
+/** #779 round 6: the escapes printf, echo -e and $'..' turn into characters: \n \t \r, \xHH,
+ *  and octal \NNN / \0NNN. The twin of destructive-gate.py _c_unescape. */
+function cUnescape(s) {
+  return s.replace(/\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr])/g, (all, e) => {
+    if (e === 'n') return '\n'
+    if (e === 't') return '\t'
+    if (e === 'r') return '\r'
+    return String.fromCharCode(e[0] === 'x' ? parseInt(e.slice(1), 16) : parseInt(e, 8))
+  })
+}
+const SCRIPT_FLAGS = new Set(['-c', '-e', '-E', '-p', '--command', '--eval', '--print'])
+
+/** `echo "<code>" | python3 -`: the quoted runs of the stage before an interpreter that runs its
+ *  stdin as the program; the twin of _stdin_pipe_ranges. #779 round 4: no bare `-` needed
+ *  (`| python3`, `| python3 -I`, `| node`); the decision is runsStdinAsProgram. */
+function stdinPipePrograms(text) {
+  const state = quoteMap(text)
+  const bars = []
+  for (let i = 0; i < text.length; i++) {
+    if (!state[i] && text[i] === '|' && !text.startsWith('||', i) && !(i && text[i - 1] === '|')) bars.push(i)
+  }
+  if (!bars.length) return []
+  const bounds = [0, ...bars.map((b) => b + 1), text.length]
+  const parts = []
+  for (let k = 0; k < bounds.length - 1; k++) parts.push([bounds[k], bounds[k + 1] - (k + 1 <= bars.length ? 1 : 0)])
+  const out = []
+  parts.forEach(([a, b], k) => {
+    const toks = segWords(text.slice(a, b))
+    if (!toks.length || k === 0 || !INTERPRETERS.has(baseName(runsStdinAsProgram(text.slice(a, b))))) return
+    const [pa, pb] = parts[k - 1]
+    const prev = quoteMap(text.slice(pa, pb))
+    for (let i = 0; i < pb - pa;) {
+      if (prev[i]) {
+        let j = i
+        while (j < pb - pa && prev[j] === prev[i]) j++
+        out.push(text.slice(pa + i, pa + j))
+        i = j
+      } else i++
+    }
+  })
+  return out
+}
+
+/** Every code payload of `cmd`: the run heredoc bodies (and, on an uncertain read, the others
+ *  left in the light text), the -c/-e scripts, `| python3 -` input and the run here-strings. */
+function interpreterPayloads(cmd) {
+  const s = String(cmd ?? '')
+  const light = lightText(s)
+  const out = []
+  if (s.includes('<<')) {
+    const { heredocs, certain } = findHeredocs(s)
+    const funcs = heredocs.length ? functionBodies(s) : {}
+    for (const h of heredocs) {
+      const body = s.slice(h.bodyStart, h.bodyEnd)
+      const plain = !certain || (!h.quoted && /\$\(|`/.test(body))
+      if (heredocRunsBody(s, h, funcs) || (!certain && plain)) out.push(light.slice(h.bodyStart, h.bodyEnd))
+    }
+    if (s.includes('<<<')) {
+      for (const h of findAll(s).records) if (h.kind === 'herestring' && h.text.trim() && heredocRunsBody(s, h, funcs)) out.push(h.text)
+    }
+  }
+  for (const group of scriptArgGroups(light)) {
+    out.push(...group.map((r) => r.text))
+    // #779 round 6: `-c "a"'b'` is one program, `$'..'` decodes its escapes
+    if (group.length > 1 || group.some((r) => r.ansi)) out.push(group.map((r) => (r.ansi ? cUnescape(r.text) : r.text)).join(''))
+  }
+  for (const p of stdinPipePrograms(light)) {
+    out.push(p)
+    // #779 round 5/6: `printf 'import os\nos.system(..)' | python3` (also \x0a, \012)
+    const dec = cUnescape(p)
+    if (dec !== p) out.push(dec)
+  }
+  return out.filter((p) => p.trim())
+}
+
+/** Every shell command a code payload of `cmd` hands to a shell (#779). The gates judge each
+ *  as a command line of its own, like a -c program. */
+export function embeddedCommands(cmd) {
+  const out = []
+  for (const payload of interpreterPayloads(cmd)) {
+    for (const inner of shellOutCommands(payload)) if (!out.includes(inner)) out.push(inner)
   }
   return out
 }

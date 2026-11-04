@@ -1565,6 +1565,52 @@ for label, cmd in [
     check(label, blocks(cmd))
 
 
+# --- #779: beagyazott shell-hivas python/node/perl/ruby payloadban ----------------------
+# A kozos esetfajl (shell-out-cases.json) az olvasast pineli; itt a kapu dontese. Minden
+# `/dg` eset atment main cfcb7e88-on. A known-limit (futaskor epitett) sorok kimaradnak.
+print()
+print("#779 beagyazott shell-hivas, MUST-BLOCK es negativ kontroll:")
+_o = json.load(open(os.path.join(HERE, "shell-out-cases.json"), encoding="utf-8"))["cases"]
+_must = [c for c in _o if c["name"].endswith("/dg") and not c.get("note")]
+check("#779 eleg eset (%d)" % len(_must), len(_must) >= 90)
+_miss = [c["name"] for c in _must if not blocks(c["cmd"])]
+check("#779 minden /dg eset blokkol (atment: %s)" % _miss[:5], not _miss)
+_over = [c["name"] for c in _o if c["name"].startswith("neg/") and blocks(c["cmd"])]
+check("#779 egy negativ sem blokkol (tult: %s)" % _over[:5], not _over)
+for label, cmd in [
+    ("echo 'RM' | bash", "echo '" + RMH + "' | bash"),
+    ("printf '%s\\n' 'RM' | sh", "printf '%s\\n' '" + RMH + "' | sh"),
+    ("perl -le 'system(\"RM\")'", "perl -le 'system(\"" + RMH + "\")'"),
+    ("python3 -I -c 'os.system(\"RM\")'", "python3 -I -c 'import os; os.system(\"" + RMH + "\")'"),
+    ("env -i RM", "env -i " + RMH),
+    ("env -u X RM", "env -u X " + RMH),
+    # #779 round 4: versioned interpreter names, a pipe without `-`, doas/pkexec
+    ("python3.14 -c 'os.system(\"RM\")'", "python3.14 -c 'import os; os.system(\"" + RMH + "\")'"),
+    ("/usr/bin/python3.14t -c 'os.system(\"RM\")'", "/usr/bin/python3.14t -c 'import os; os.system(\"" + RMH + "\")'"),
+    ("node22 -e 'execSync(\"RM\")'", "node22 -e 'require(\"child_process\").execSync(\"" + RMH + "\")'"),
+    ("echo 'os.system(\"RM\")' | python3", "echo 'import os; os.system(\"" + RMH + "\")' | python3"),
+    ("echo 'os.system(\"RM\")' | python3 -I", "echo 'import os; os.system(\"" + RMH + "\")' | python3 -I"),
+    ("echo 'system(\"RM\")' | perl", "echo 'system(\"" + RMH + "\")' | perl"),
+    ("doas -u root rm -f notes.txt", "doas -u root rm -f notes.txt"),
+    ("pkexec rm -f notes.txt", "pkexec rm -f notes.txt"),
+    ("doas bash -c 'RM'", "doas bash -c '" + RMH + "'"),
+]:
+    check(label, blocks(cmd))
+for label, cmd in [
+    ("echo '{os.system(RM)}' | python3 -m json.tool", "echo '{\"c\": \"os.system(" + RMH + ")\"}' | python3 -m json.tool"),
+    ("echo 'os.system(\"RM\")' | python3 script.py", "echo 'import os; os.system(\"" + RMH + "\")' | python3 script.py"),
+    ("echo 'os.system(\"RM\")' | python3 -W ignore script.py", "echo 'import os; os.system(\"" + RMH + "\")' | python3 -W ignore script.py"),
+    ("python3.14 -c 'print(\"RM\")'", "python3.14 -c 'print(\"" + RMH + "\")'"),
+]:
+    check(label + " (negativ, #779 r4)", not blocks(cmd))
+for label, cmd in [
+    ("echo 'RM' > note.txt", "echo '" + RMH + "' > note.txt"),
+    ("echo 'ls' | bash", "echo 'ls' | bash"),
+    ("command -v rm", "command -v " + RM),
+]:
+    check(label + " (negativ)", not blocks(cmd))
+
+
 def _missing_module_exit():
     """A heredoc_scan nelkul masolt kapu BLOKKOL (exit 2), nem enged at (exit 1)."""
     tmp = os.path.join(tempfile.mkdtemp(), "lonely-gate.py")
