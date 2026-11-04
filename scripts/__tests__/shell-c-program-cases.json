@@ -322,6 +322,30 @@
   {
    "cmd": "echo 'claude -p hi' | sudo tee /tmp/note.txt",
    "programs": []
+  },
+  {
+   "cmd": "bash --rcfile /dev/null -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash -o pipefail -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "sh -o errexit -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash --init-file ./x -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
   }
  ]
 }

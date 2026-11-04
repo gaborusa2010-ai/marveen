@@ -1862,13 +1862,14 @@ export function dataBodySubstitutions(cmd) {
 // file scripts/__tests__/shell-out-cases.json pins both sides.
 const SHELLOUT_RE = new RegExp(
   String.raw`(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|` +
-  String.raw`require\(\s*['"](?:node:)?child_process['"]\s*\)\s*\.\s*(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|` +
+  String.raw`require\(\s*(?:\(\s*)*['"](?:node:)?child_process['"]\s*(?:\)\s*)+\.\s*(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|` +
   String.raw`(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|` +
   String.raw`subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|` +
   String.raw`child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|` +
   String.raw`Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|` +
   // #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
-  String.raw`(?:__import__|importlib\.import_module)\(\s*['"](?:os|subprocess|pty)['"]\s*\)\s*\.\s*` +
+  // #779 round 5: spaces before the parenthesis, and a bare import_module (`from importlib import import_module`)
+  String.raw`(?:__import__|(?:importlib\s*\.\s*)?import_module)\s*\(\s*['"](?:os|subprocess|pty)['"]\s*\)\s*\.\s*` +
   String.raw`(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|` +
   String.raw`getstatusoutput)|` +
   // #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
@@ -1977,8 +1978,18 @@ function balancedArg(text, open) {
  * time (concatenation, an f-string with a variable, base64) is NOT read: a known limit.
  * A call written INSIDE a string literal is data, not a call.
  */
+/** #779 round 5: perl's `qx(X)` reads as `system("X")`, `qq(X)` / `q(X)` as the literal "X";
+ *  the twin of destructive-gate.py _perl_quotes (no nesting; qx{..}, qx/../, backticks: limit). */
+function perlQuotes(payload) {
+  return payload.replace(/(?<![\w$@%])q([qx]?)\(([^()\n]*)\)/g, (all, kind, body) => {
+    const q = !body.includes('"') ? '"' : !body.includes("'") ? "'" : null
+    if (!q) return all
+    return kind === 'x' ? `system(${q}${body}${q})` : q + body + q
+  })
+}
+
 export function shellOutCommands(payload) {
-  const text = String(payload ?? '')
+  const text = perlQuotes(String(payload ?? ''))
   const hits = new Map()
   for (const rx of [SHELLOUT_RE, importedShellOutRe(text)].filter(Boolean)) {
     for (const m of text.matchAll(rx)) hits.set(`${m.index},${m.index + m[0].length}`, m)
@@ -2025,37 +2036,38 @@ function bareArgs(text, i) {
   }
 }
 
-/** The quoted script after an interpreter's -c/-e (other options may stand before it:
- *  `python3 -I -c`, `perl -le`, `python3 -W ignore -c`); the twin of _script_arg_ranges. */
+/** The quoted script after an interpreter's -c/-e. #779 round 5 (Marveen msg 17489): EVERY
+ *  -c/-e/-E/-p/--eval/--command (also clustered: `-le`, `-Ic`, and `--eval='...'`) up to the
+ *  command separator is read, wherever it stands; an unknown option or an option value
+ *  (`--input-type=module`, `-r json`, `-MPOSIX=floor`) never stops the search. Over-reading a
+ *  script argument that happens to be -c is accepted. The twin of _script_arg_ranges. */
 function scriptArgPrograms(text) {
   const state = quoteMap(text)
   const out = []
+  const n = text.length
   const blank = (k) => ' \t'.includes(text[k])
+  const quoted = (p) => {
+    let j = p + 1
+    while (j < n && state[j]) j++
+    out.push(text.slice(p + 1, j))
+  }
   for (const m of text.matchAll(/(?<![\w-])(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)(?=[ \t])/g)) {
     let k = m.index + m[0].length
     for (;;) {
-      while (k < text.length && blank(k)) k++
+      while (k < n && blank(k)) k++
+      if (k >= n || (!state[k] && ';&|\n'.includes(text[k]))) break
       let j = k
-      while (j < text.length && !' \t\n'.includes(text[j]) && !state[j]) j++
+      while (j < n && (state[j] || !' \t\n;&|'.includes(text[j]))) j++
       const w = text.slice(k, j)
-      if (SCRIPT_FLAGS.has(w) || /^-[A-Za-z]*[ceE]$/.test(w)) { k = j; break }
-      if (w === '-W' || w === '-X') {
-        k = j
-        while (k < text.length && blank(k)) k++
-        while (k < text.length && !' \t\n'.includes(text[k]) && !state[k]) k++
-        continue
+      if (SCRIPT_FLAGS.has(w) || /^-[A-Za-z]*[ceE]$/.test(w)) {
+        let p = j
+        while (p < n && blank(p)) p++
+        if (p < n && (text[p] === '"' || text[p] === "'")) quoted(p)
+      } else {
+        const eq = /^--(?:eval|command)=(?=['"])/.exec(w)
+        if (eq) quoted(k + eq[0].length)
       }
-      if (/^-[A-Za-z]+$|^--[A-Za-z][\w-]*$/.test(w)) { k = j; continue }
-      k = -1
-      break
-    }
-    if (k < 0) continue
-    while (k < text.length && blank(k)) k++
-    if (k < text.length && (text[k] === '"' || text[k] === "'")) {
-      k++
-      let j = k
-      while (j < text.length && state[j]) j++
-      out.push(text.slice(k, j))
+      k = j
     }
   }
   return out
@@ -2111,7 +2123,13 @@ function interpreterPayloads(cmd) {
       for (const h of findAll(s).records) if (h.kind === 'herestring' && h.text.trim() && heredocRunsBody(s, h, funcs)) out.push(h.text)
     }
   }
-  out.push(...scriptArgPrograms(light), ...stdinPipePrograms(light))
+  out.push(...scriptArgPrograms(light))
+  for (const p of stdinPipePrograms(light)) {
+    out.push(p)
+    // #779 round 5: `printf 'import os\nos.system(..)' | python3` -- the escapes are the newlines
+    const dec = p.replaceAll('\\n', '\n').replaceAll('\\t', '\t')
+    if (dec !== p) out.push(dec)
+  }
   return out.filter((p) => p.trim())
 }
 

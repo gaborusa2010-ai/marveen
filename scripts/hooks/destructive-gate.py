@@ -2067,46 +2067,43 @@ def _prose_quote_ranges(text, keep_ranges, code_ranges=()):
 
 def _script_arg_ranges(text):
     """Az ertelmezonek -c/-e utan atadott idezett szkript tartomanyai: ez FUTO KOD.
-    #779: a szkript-kapcsolo elott allhat mas kapcsolo (`python3 -I -c`, `node --no-warnings
-    -e`, `python3 -W ignore -c`), es a kapcsolocsoport vegen is allhat (`perl -le`, `python3
-    -Ic`). A JS iker: lib/heredoc-program.mjs scriptArgPrograms."""
+    #779 5. kor (Marveen msg 17489): a parancs-elvalasztoig MINDEN -c/-e/-E/-p/--eval/--command
+    (csoportban is: `-le`, `-Ic`, es `--eval='...'`) szamit, barhol all; ismeretlen kapcsolo vagy
+    kapcsolo-ertek (`--input-type=module`, `-r json`, `-MPOSIX=floor`) nem allitja meg a keresest.
+    A tulolvasas (egy szkript-argumentum, ami eppen -c) vallalt. A JS iker: scriptArgPrograms."""
     out = []
     state = _quote_map(text)
+    n = len(text)
+
+    def quoted(p):
+        j = p + 1
+        while j < n and state[j]:
+            j += 1
+        out.append((p + 1, j))
+
     for m in re.finditer(r'(?<![\w-])(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?'
                          r'|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)(?=[ \t])', text):
         k = m.end()
         while True:
-            while k < len(text) and text[k] in ' \t':
+            while k < n and text[k] in ' \t':
                 k += 1
+            if k >= n or (not state[k] and text[k] in ';&|\n'):
+                break
             j = k
-            while j < len(text) and text[j] not in ' \t\n' and not state[j]:
+            while j < n and (state[j] or text[j] not in ' \t\n;&|'):
                 j += 1
             word = text[k:j]
             if word in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', word):
-                k = j
-                break
-            if word in ('-W', '-X'):
-                k = j
-                while k < len(text) and text[k] in ' \t':
-                    k += 1
-                while k < len(text) and text[k] not in ' \t\n' and not state[k]:
-                    k += 1
-                continue
-            if re.fullmatch(r'-[A-Za-z]+|--[A-Za-z][\w-]*', word):
-                k = j
-                continue
-            k = None
-            break
-        if k is None:
-            continue
-        while k < len(text) and text[k] in ' \t':
-            k += 1
-        if k < len(text) and text[k] in ('"', "'"):
-            k += 1
-            j = k
-            while j < len(text) and state[j]:
-                j += 1
-            out.append((k, j))
+                p = j
+                while p < n and text[p] in ' \t':
+                    p += 1
+                if p < n and text[p] in ('"', "'"):
+                    quoted(p)
+            else:
+                eq = re.match(r'--(?:eval|command)=(?=[\'"])', word)
+                if eq:
+                    quoted(k + eq.end())
+            k = j
     return out
 
 
@@ -2671,14 +2668,15 @@ _SHELLOUT_RE = re.compile(
     # A puszta `system`, `exec`, `qx` viszont tul altalanos: azok elott a pont-tiltas marad,
     # kulonben minden `foo.exec(` talalat lenne.
     r'(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|'
-    r'require\(\s*[\'"](?:node:)?child_process[\'"]\s*\)\s*\.\s*'
+    r'require\(\s*(?:\(\s*)*[\'"](?:node:)?child_process[\'"]\s*(?:\)\s*)+\.\s*'
     r'(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|'
     r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|'
     r'subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|'
     r'child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
     r'Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|'
     # #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
-    r'(?:__import__|importlib\.import_module)\(\s*[\'"](?:os|subprocess|pty)[\'"]\s*\)\s*\.\s*'
+    # #779 round 5: spaces before the parenthesis, and a bare import_module (`from importlib import import_module`)
+    r'(?:__import__|(?:importlib\s*\.\s*)?import_module)\s*\(\s*[\'"](?:os|subprocess|pty)[\'"]\s*\)\s*\.\s*'
     r'(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|'
     r'getstatusoutput)|'
     # #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
@@ -2746,7 +2744,12 @@ def interpreter_payloads(cmd):
     # Bizonytalan olvasasnal a tobbi torzs is lehet program: azt is kodkent nezzuk.
     out = [text[a:b] for a, b in code + ([] if certain else plain)]
     out += [text[a:b] for a, b in _script_arg_ranges(text)]
-    out += [text[a:b] for a, b in _stdin_pipe_ranges(text)]
+    for a, b in _stdin_pipe_ranges(text):
+        out.append(text[a:b])
+        # #779 round 5: `printf 'import os\nos.system(..)' | python3` -- the escapes are the newlines
+        dec = text[a:b].replace('\\n', '\n').replace('\\t', '\t')
+        if dec != text[a:b]:
+            out.append(dec)
     return [p for p in out if p.strip()]
 
 
@@ -2852,6 +2855,22 @@ def _literal_spans(payload):
     return spans
 
 
+def _perl_quotes(payload):
+    """#779 round 5: perl's quote operators with parentheses as plain calls and literals:
+    `qx(X)` runs X, so it reads as `system("X")`; `qq(X)` / `q(X)` is the literal "X". Only the
+    parenthesis form without nesting; qx{..}, qx/../ and backticks are a known limit."""
+    def lit(body):
+        q = '"' if '"' not in body else ("'" if "'" not in body else None)
+        return q and q + body + q
+
+    def rep(m):
+        s = lit(m.group(2))
+        if s is None:
+            return m.group(0)
+        return f'system({s})' if m.group(1) == 'x' else s
+    return re.sub(r'(?<![\w$@%])q([qx]?)\(([^()\n]*)\)', rep, payload)
+
+
 def shell_out_commands(payload):
     """The shell commands a code payload hands to a shell or exec: the string literals in
     the arguments of a known shell-out call (#779). One literal is a shell string; several
@@ -2861,6 +2880,7 @@ def shell_out_commands(payload):
     (concatenation, an f-string with a variable, base64) is NOT read: obfuscation, a known
     limit kept in scripts/__tests__/shell-out-cases.json. A call written INSIDE a string
     literal is data, not a call (`note = 'os.system("claude -p ..")'`, a card comment)."""
+    payload = _perl_quotes(payload)
     out = []
     rxs = [_SHELLOUT_RE] + [r for r in (_imported_shellout_re(payload),) if r]
     hits = sorted({(m.start(), m.end()): m for rx in rxs for m in rx.finditer(payload)}.items())

@@ -3149,6 +3149,251 @@
    "name": "neg/node22-log",
    "cmd": "node22 -e 'console.log(\"claude -p hi\")'",
    "commands": []
+  },
+  {
+   "name": "r5/py-hashpycs-eq",
+   "cmd": "python3 --check-hash-based-pycs=never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-hashpycs-sep",
+   "cmd": "python3 --check-hash-based-pycs never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-OB-hashpycs-sep",
+   "cmd": "python3 -O -B --check-hash-based-pycs always -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-Wattached-c",
+   "cmd": "python3 -Wignore -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-Xattached-c",
+   "cmd": "python3 -Xdev -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py314-hashpycs-eq",
+   "cmd": "python3.14 --check-hash-based-pycs=never -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-e",
+   "cmd": "node --input-type=module -e 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-sep-e",
+   "cmd": "node --input-type module -e 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-eval-eq",
+   "cmd": "node --input-type=module --eval='import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-inputtype-eq-eval-sep",
+   "cmd": "node --input-type=module --eval 'import { exec } from \"child_process\"; exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-r-sep-e",
+   "cmd": "node -r ./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-eq-e",
+   "cmd": "node --require=./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-sep-e",
+   "cmd": "node --require ./x.js -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-stacksize-sep-p",
+   "cmd": "node --stack-size 100 -p 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-eval-eq-plain",
+   "cmd": "node --eval='require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-M-eq-e",
+   "cmd": "perl -MPOSIX=floor -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-M-sep-e",
+   "cmd": "perl -M POSIX -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-I-sep-le",
+   "cmd": "perl -I lib -le 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-Iattached-e",
+   "cmd": "perl -Ilib -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-r-sep-e",
+   "cmd": "ruby -r json -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-r-attached-e",
+   "cmd": "ruby -rjson -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-encoding-eq-e",
+   "cmd": "ruby --encoding=utf-8 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-encoding-sep-e",
+   "cmd": "ruby --encoding utf-8 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/ruby-I-sep-e",
+   "cmd": "ruby -I lib -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-dunder-import-spaces",
+   "cmd": "python3 -c '__import__ ( \"os\" ).system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/py-importlib-from",
+   "cmd": "python3 -c 'from importlib import import_module; import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/node-require-double-paren",
+   "cmd": "node -e 'require((\"child_process\")).execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-qx-paren",
+   "cmd": "perl -e 'my $o = qx(claude -p hi);'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/perl-system-qq",
+   "cmd": "perl -e 'system qq(claude -p hi);'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r5/printf-multiline-pipe-python",
+   "cmd": "printf 'import os\\nos.system(\"claude -p hi\")\\n' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/node-inputtype-log",
+   "cmd": "node --input-type=module -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/perl-M-print",
+   "cmd": "perl -MPOSIX=floor -e 'print \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/ruby-r-puts",
+   "cmd": "ruby -r json -e 'puts \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-hashpycs-print",
+   "cmd": "python3 --check-hash-based-pycs never -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/separator-then-echo-e",
+   "cmd": "python3 tool.py; echo -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-then-grep-e",
+   "cmd": "python3 tool.py | grep -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/and-then-echo-e",
+   "cmd": "node app.js && echo -e 'claude -p hi'",
+   "commands": []
   }
  ]
 }
