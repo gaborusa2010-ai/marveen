@@ -430,7 +430,25 @@ const HERESTRING_TAIL_RE = /<<<\s*["']?\s*$/
 // dynamic -c program in it (`bash -c "$l"`) is a line of the body (#773).
 const READS_STDIN_RE = /(?<![\w$-])(read|mapfile|readarray)(?![\w-])/
 
-const baseName = (w) => w.split('/').pop()
+/** A versioned interpreter name is the same interpreter (#779 round 4): python3.14, python3.14t,
+ *  python2.7, node22, nodejs, perl5.36, ruby3.2, php8.2. The twin of _canon_interp. */
+const VERSIONED_INTERP_RE = /^(python|perl|ruby|php|node)(\d+(?:\.\d+)*)[a-z]?$/
+export function canonInterp(name) {
+  if (name === 'nodejs') return 'node'
+  const m = VERSIONED_INTERP_RE.exec(name)
+  if (!m) return name
+  if (m[1] === 'python') return m[2].split('.')[0] === '3' ? 'python3' : 'python'
+  return m[1]
+}
+/** Interpreter flags whose VALUE is the next word: that word is not a program file (#779 r4). */
+const INTERP_VALUE_FLAGS = {
+  python: ['-W', '-X'], python3: ['-W', '-X'],
+  node: ['-r', '--require', '--import', '--loader', '--experimental-loader'],
+  ruby: ['-r', '-I'],
+}
+const rawBase = (w) => w.split('/').pop()
+/** basename + canonical interpreter name; any other word is its plain basename. */
+const baseName = (w) => canonInterp(rawBase(w))
 
 /** [word without quotes and backslashes, dynamic?]: `$P`, `{a,b}`, `pytho?3` expand. */
 function word(tok) {
@@ -680,6 +698,7 @@ function runsWords(words, k, depth, loose) {
       return shell ? programConsumer(words[m][0], base, depth) : ''
     }
     if (shell && optValues(x)) { j += optValues(x); continue }  // `-o pipefail`, `-xo pipefail`: value word(s) follow
+    if ((INTERP_VALUE_FLAGS[base] ?? []).includes(x)) { j++; continue }   // `python3 -W ignore`, `node -r mod` (#779 r4)
     if (x.startsWith('-') || (shell && x.startsWith('+'))) continue
     return ''                         // a program FILE: the body is its input
   }
@@ -1616,7 +1635,7 @@ function programConsumer(text, base, depth) {
 function dynamicGdb(consumer) {
   if (consumer.startsWith('$') || consumer.startsWith('`')) return true
   if (!DYNAMIC_CONSUMER_RE.test(consumer)) return false
-  const pattern = baseName(consumer).replace(/\{[^{}]*\}/g, '*')
+  const pattern = rawBase(consumer).replace(/\{[^{}]*\}/g, '*')
   return [...GDB_NAMES, 'x-gdb', 'gdb-x'].some((n) => globMatch(n, pattern))
 }
 
@@ -2012,7 +2031,7 @@ function scriptArgPrograms(text) {
   const state = quoteMap(text)
   const out = []
   const blank = (k) => ' \t'.includes(text[k])
-  for (const m of text.matchAll(/(?<![\w-])(python3?|bash|sh|zsh|node|perl|ruby|php)(?=[ \t])/g)) {
+  for (const m of text.matchAll(/(?<![\w-])(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)(?=[ \t])/g)) {
     let k = m.index + m[0].length
     for (;;) {
       while (k < text.length && blank(k)) k++
@@ -2043,8 +2062,9 @@ function scriptArgPrograms(text) {
 }
 const SCRIPT_FLAGS = new Set(['-c', '-e', '-E', '-p', '--command', '--eval'])
 
-/** `echo "<code>" | python3 -`: the quoted runs of the stage before an interpreter reading `-`;
- *  the twin of _stdin_pipe_ranges. */
+/** `echo "<code>" | python3 -`: the quoted runs of the stage before an interpreter that runs its
+ *  stdin as the program; the twin of _stdin_pipe_ranges. #779 round 4: no bare `-` needed
+ *  (`| python3`, `| python3 -I`, `| node`); the decision is runsStdinAsProgram. */
 function stdinPipePrograms(text) {
   const state = quoteMap(text)
   const bars = []
@@ -2057,8 +2077,8 @@ function stdinPipePrograms(text) {
   for (let k = 0; k < bounds.length - 1; k++) parts.push([bounds[k], bounds[k + 1] - (k + 1 <= bars.length ? 1 : 0)])
   const out = []
   parts.forEach(([a, b], k) => {
-    const toks = segWords(text.slice(a, b)).map(([w]) => w)
-    if (!toks.length || k === 0 || !INTERPRETERS.has(baseName(toks[0])) || !toks.slice(1).includes('-')) return
+    const toks = segWords(text.slice(a, b))
+    if (!toks.length || k === 0 || !INTERPRETERS.has(baseName(runsStdinAsProgram(text.slice(a, b))))) return
     const [pa, pb] = parts[k - 1]
     const prev = quoteMap(text.slice(pa, pb))
     for (let i = 0; i < pb - pa;) {

@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
 import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, verbIndex } from './lib/shell-command.mjs'
-import { programFeeds, dataBodySubstitutions, shellCPrograms, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, embeddedCommands } from './lib/heredoc-program.mjs'
+import { programFeeds, dataBodySubstitutions, shellCPrograms, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, embeddedCommands, canonInterp } from './lib/heredoc-program.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
@@ -276,7 +276,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
     const texts = seg.map((t) => t.text)
     // WRAPFLAG901: one shared wrapper table for BOTH gates (see lib).
     const vi = verbIndex(texts)
-    const verb = (texts[vi] || '').split('/').pop()
+    // #779 round 4: a versioned interpreter (`python3.14`, `node22`) is that interpreter
+    const verb = canonInterp((texts[vi] || '').split('/').pop())
     const args = seg.slice(vi + 1)
     if (!verb) continue
 

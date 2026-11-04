@@ -2896,18 +2896,6 @@
    "note": "KNOWN LIMIT (#779 r3): a bare spawn( is not read; it would also catch a JS spawn imported from another module (r2 negative)."
   },
   {
-   "name": "limit/python-minor-version",
-   "cmd": "python3.12 -c 'import os; os.system(\"claude -p hi\")'",
-   "commands": [],
-   "note": "KNOWN LIMIT (#779 r3): python3.12 and other minor-version names are not interpreters to the readers."
-  },
-  {
-   "name": "limit/pipe-python-no-dash",
-   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3",
-   "commands": [],
-   "note": "KNOWN LIMIT (#779 r3): a pipe into an interpreter is read only with a lone `-`."
-  },
-  {
    "name": "limit/php-r",
    "cmd": "php -r 'system(\"claude -p hi\");'",
    "commands": [],
@@ -2963,6 +2951,203 @@
   {
    "name": "neg/py-dunder-pty-other",
    "cmd": "python3 -c 'print(__import__(\"pty\").STDIN_FILENO, \"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "r4/python-minor-version",
+   "cmd": "python3.12 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-c",
+   "cmd": "python3.14 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314t-abs-c",
+   "cmd": "/usr/bin/python3.14t -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-I-c",
+   "cmd": "python3.14 -I -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-heredoc",
+   "cmd": "python3.14 - <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py314-heredoc-nodash",
+   "cmd": "python3.14 <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/py27-c",
+   "cmd": "python2.7 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/node22-e",
+   "cmd": "node22 -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/nodejs-e",
+   "cmd": "nodejs -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/perl536-e",
+   "cmd": "perl5.36 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/ruby32-e",
+   "cmd": "ruby3.2 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/env-py314-c",
+   "cmd": "env python3.14 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-no-dash",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-I",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -I",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-python-W",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -W ignore",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-py314",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3.14",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-env-python",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | env python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/printf-pipe-python",
+   "cmd": "printf '%s\\n' 'import os; os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-node",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-perl",
+   "cmd": "echo 'system(\"claude -p hi\")' | perl",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r4/pipe-ruby",
+   "cmd": "echo 'system(\"claude -p hi\")' | ruby",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/pipe-json-tool",
+   "cmd": "echo '{\"cmd\": \"os.system(claude -p hi)\"}' | python3 -m json.tool",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-script",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 script.py",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-W-script",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3 -W ignore script.py",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-py-c",
+   "cmd": "echo 'os.system(\"claude -p hi\")' | python3 -c 'import sys; print(len(sys.stdin.read()))'",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-node-script",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node tool.js",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-node-r-script",
+   "cmd": "echo 'require(\"child_process\").execSync(\"claude -p hi\")' | node -r ./setup.js app.js",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-ruby-I-script",
+   "cmd": "echo 'system(\"claude -p hi\")' | ruby -I lib app.rb",
+   "commands": []
+  },
+  {
+   "name": "neg/pipe-wc",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | wc -c",
+   "commands": []
+  },
+  {
+   "name": "neg/py314-print",
+   "cmd": "python3.14 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node22-log",
+   "cmd": "node22 -e 'console.log(\"claude -p hi\")'",
    "commands": []
   }
  ]

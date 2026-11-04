@@ -1584,8 +1584,25 @@ for label, cmd in [
     ("python3 -I -c 'os.system(\"RM\")'", "python3 -I -c 'import os; os.system(\"" + RMH + "\")'"),
     ("env -i RM", "env -i " + RMH),
     ("env -u X RM", "env -u X " + RMH),
+    # #779 round 4: versioned interpreter names, a pipe without `-`, doas/pkexec
+    ("python3.14 -c 'os.system(\"RM\")'", "python3.14 -c 'import os; os.system(\"" + RMH + "\")'"),
+    ("/usr/bin/python3.14t -c 'os.system(\"RM\")'", "/usr/bin/python3.14t -c 'import os; os.system(\"" + RMH + "\")'"),
+    ("node22 -e 'execSync(\"RM\")'", "node22 -e 'require(\"child_process\").execSync(\"" + RMH + "\")'"),
+    ("echo 'os.system(\"RM\")' | python3", "echo 'import os; os.system(\"" + RMH + "\")' | python3"),
+    ("echo 'os.system(\"RM\")' | python3 -I", "echo 'import os; os.system(\"" + RMH + "\")' | python3 -I"),
+    ("echo 'system(\"RM\")' | perl", "echo 'system(\"" + RMH + "\")' | perl"),
+    ("doas -u root rm -f notes.txt", "doas -u root rm -f notes.txt"),
+    ("pkexec rm -f notes.txt", "pkexec rm -f notes.txt"),
+    ("doas bash -c 'RM'", "doas bash -c '" + RMH + "'"),
 ]:
     check(label, blocks(cmd))
+for label, cmd in [
+    ("echo '{os.system(RM)}' | python3 -m json.tool", "echo '{\"c\": \"os.system(" + RMH + ")\"}' | python3 -m json.tool"),
+    ("echo 'os.system(\"RM\")' | python3 script.py", "echo 'import os; os.system(\"" + RMH + "\")' | python3 script.py"),
+    ("echo 'os.system(\"RM\")' | python3 -W ignore script.py", "echo 'import os; os.system(\"" + RMH + "\")' | python3 -W ignore script.py"),
+    ("python3.14 -c 'print(\"RM\")'", "python3.14 -c 'print(\"" + RMH + "\")'"),
+]:
+    check(label + " (negativ, #779 r4)", not blocks(cmd))
 for label, cmd in [
     ("echo 'RM' > note.txt", "echo '" + RMH + "' > note.txt"),
     ("echo 'ls' | bash", "echo 'ls' | bash"),
