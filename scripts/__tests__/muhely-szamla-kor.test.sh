@@ -5,6 +5,8 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
 ok() { printf '  ok   %s\n' "$1"; }
 no() { printf '  FAIL %s\n' "$1"; fail=1; }
+# A non-empty STORE_SRC promises the live data: missing data is then a FAIL, not a SKIP.
+STORE_EXPLICIT=${STORE_SRC:+1}
 STORE_SRC=${STORE_SRC:-store}
 echo "muhely-szamla-kor"
 
@@ -168,6 +170,8 @@ if [ "$live_ok" = 1 ]; then
   sandbox regression "$STORE_SRC"
   python3 "$SANDBOX/scripts/__tests__/muhely-szamla-kor-regression.py" "$SANDBOX" >"$TMP/r.o" 2>"$TMP/r.e"; rc=$?
   [ "$rc" = 0 ] && ok "10016-10023 torteneti replay" || { no "torteneti replay"; sed 's/^/       /' "$TMP/r.o"; sed 's/^/       /' "$TMP/r.e"; }
+elif [ -n "$STORE_EXPLICIT" ]; then
+  no "10016-10023 torteneti replay: STORE_SRC=$STORE_SRC was given but has no issued workshop invoices"
 else
   echo "  SKIP 10016-10023 torteneti replay: $STORE_SRC has no issued workshop invoices (point STORE_SRC at the main checkout's store)"
 fi
