@@ -13724,9 +13724,12 @@ function renderSkillsSidebar() {
 function renderGlobalSkills() {
   const userCount = globalSkills.filter(s => s.source === 'user').length
   const pluginCount = globalSkills.filter(s => s.source === 'plugin').length
+  // "Total" must match the category list's "All" count, so it covers every
+  // source the grid shows, not only the global (user + plugin) skills.
+  const totalCount = globalSkills.length + localAgentSkills.length + subagentDefs.length + codexSkills.length
 
   skillsStats.innerHTML = `
-    <div class="stat-card"><div class="stat-value">${globalSkills.length}</div><div class="stat-label">${t('skills.stat.total')}</div></div>
+    <div class="stat-card"><div class="stat-value">${totalCount}</div><div class="stat-label">${t('skills.stat.total')}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:var(--info)">${userCount}</div><div class="stat-label">${t('skills.stat.user')}</div></div>
     ${pluginCount ? `<div class="stat-card"><div class="stat-value" style="color:var(--accent)">${pluginCount}</div><div class="stat-label">${t('skills.stat.plugin')}</div></div>` : ''}
     ${localAgentSkills.length ? `<div class="stat-card"><div class="stat-value" style="color:var(--warning)">${localAgentSkills.length}</div><div class="stat-label">${t('skills.stat.agent_local')}</div></div>` : ''}
