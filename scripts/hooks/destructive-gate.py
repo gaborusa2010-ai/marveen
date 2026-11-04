@@ -2973,8 +2973,8 @@ def _importlib_aliases(payload):
     may continue with `\\<NL>`; an assignment renames too (`im = importlib.import_module`,
     `f = __import__`, `il = importlib`)."""
     loaders, modules, imports = [], [], []
-    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))', payload):
-        lst = (m.group(1) if m.group(1) is not None else m.group(2)).replace('\\\n', ' ')
+    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import(?:\s*\(([^()]*)\)|\s+((?:[^()\n;\\]|\\\n?)*))', payload):
+        lst = (re.sub(r'#[^\n]*', '', m.group(1)) if m.group(1) is not None else m.group(2)).replace('\\\n', ' ')
         loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', lst)
     for m in re.finditer(r'(?<![\w.])import\s+((?:[^()\n;\\]|\\\n?)*)', payload):
         modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1).replace('\\\n', ' '))
