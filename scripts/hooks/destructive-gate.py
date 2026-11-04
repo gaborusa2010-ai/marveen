@@ -2128,7 +2128,9 @@ def _script_arg_groups(text):
     def starts_program(p):
         return p < n and (text[p] in ('"', "'") or (text[p] == '$' and p + 1 < n and text[p + 1] in '"\''))
 
-    for m in re.finditer(r'(?<![\w-])([\'"]?)(?:[\w.-]*/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
+    # #779 round 8 (Marveen comment 3865 A, B): a path piece may hold `$`, `{}`, `@`, `+`, `~`
+    # (`"$HOME/venv/bin/python3"`, `"/opt/py@3/.."`); `\w` is Unicode, the JS twin uses \p{L}\p{N}.
+    for m in re.finditer(r'(?<![\w-])([\'"]?)(?:[\w.@${}+~-]*/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
                          r'|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)', text):
         k = m.end()
         while True:
@@ -2152,9 +2154,13 @@ def _script_arg_groups(text):
                 if starts_program(p):
                     program(p)
             else:
+                # round 8: the flag name alone quoted (`"--eval"="..."`), the quote after the
+                # dashes (`--"eval=..."`, `-"c..."`)
                 eq = re.match(r'(?:(?P<q>[\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?P=q)'
+                              r'|(?P<r>[\'"])--(?:eval|command|print)(?P=r)='
                               r'|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=[\'"]|\$[\'"])', word)
-                whole = re.match(r'([\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=[^\'"])', word)
+                whole = re.match(r'(?:([\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])'
+                                 r'|--([\'"])(?:eval|command|print)=|-([\'"])[A-Za-z]*[ceE])(?=[^\'"])', word)
                 if eq:
                     program(k + eq.end())
                 elif whole:
@@ -2250,6 +2256,11 @@ def _tokens(seg):
             had_space = had_space or bool(re.search(r'\s', dec))
             cur.extend(dec)
             i = j + 1
+            continue
+        if not state[i] and ch == '$' and seg.startswith('"', i + 1):
+            # $"..": a locale string, bash reads it as a double quote (#779 round 8, Marveen
+            # comment 3865 E: `bash -c $"rm .."` read as `$rm ..`); the JS twin drops the $ too
+            i += 1
             continue
         if not state[i] and ch in ('"', "'"):
             i += 1
@@ -2957,14 +2968,23 @@ def _importlib_aliases(payload):
     The JS twin: importlibAliases.
     #779 round 7: the name may stand anywhere in an import list, also in parentheses
     (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
-    An identifier is Python's: `\\w` is Unicode here, `[\\p{L}\\p{N}_]` with the u flag in JS."""
-    loaders, modules = [], []
-    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+\(?([^()\n;]*)', payload):
-        loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', m.group(1))
-    for m in re.finditer(r'(?<![\w.])import\s+([^()\n;]*)', payload):
-        modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1))
+    An identifier is Python's: `\\w` is Unicode here, `[\\p{L}\\p{N}_]` with the u flag in JS.
+    #779 round 8 (Marveen comment 3865 C, D): a parenthesised list may span lines, a bare list
+    may continue with `\\<NL>`; an assignment renames too (`im = importlib.import_module`,
+    `f = __import__`, `il = importlib`)."""
+    loaders, modules, imports = [], [], []
+    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+(?:\(([^()]*)\)|((?:[^()\n;\\]|\\\n?)*))', payload):
+        lst = (m.group(1) if m.group(1) is not None else m.group(2)).replace('\\\n', ' ')
+        loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', lst)
+    for m in re.finditer(r'(?<![\w.])import\s+((?:[^()\n;\\]|\\\n?)*)', payload):
+        modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1).replace('\\\n', ' '))
+    loaders += re.findall(r'(?<![\w.])(\w+)\s*=\s*(?:importlib\s*\.\s*)?import_module(?!\s*[\w(.])', payload)
+    imports += re.findall(r'(?<![\w.])(\w+)\s*=\s*__import__(?!\s*[\w(.])', payload)
+    modules += re.findall(r'(?<![\w.])(\w+)\s*=\s*importlib(?!\s*[\w(.])', payload)
     for alias in loaders:
         payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', 'import_module(', payload)
+    for alias in imports:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', '__import__(', payload)
     for alias in modules:
         payload = re.sub(r'(?<![\w.])' + alias + r'\s*\.\s*import_module\b', 'importlib.import_module', payload)
     return payload

