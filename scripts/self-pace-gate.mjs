@@ -750,7 +750,57 @@ export function protectedContext(segs, allowlistPath = DEFAULT_ALLOWLIST_PATH, c
   // root/store are compared as pathKey()s (real, on-disk case, every nameForms() form):
   // see realDeep and sameKey.
   const start = cwd ? resolve(String(cwd)) : null
-  return { assigns, root: pathKey(resolve(store, '..')), store: pathKey(store), cwd: start, cwds: [start] }
+  return { assigns, loopVars: literalLoopVars(segs.join('\n')), root: pathKey(resolve(store, '..')), store: pathKey(store), cwd: start, cwds: [start] }
+}
+
+// LITERAL FOR-LOOP VARIABLES (#797, Cody msg 17582). From the project root or the store dir an
+// unresolved `$i` is read as a relative `*`, and `*` there matches local-hooks / egress-allowlist.json:
+// so `cd <root>; for i in 17569 17570; do bash scripts/marveen-api.sh message-close "$i"; done` was
+// denied as an allowlist write. A variable whose ONLY binding in the whole command is one
+// `for NAME in w1 w2 ...` header with plain literal words has exactly those values, so
+// protectedMention reads `$NAME` / `${NAME}` as each of them instead of as `*`.
+// Not resolved (stays `*`, as before): a list word with an expansion, glob, brace, quote or `~`; more
+// than LOOP_VALUES_CAP words; a second binding anywhere (NAME=, NAME+=, read/mapfile/readarray/
+// getopts/printf -v/declare/local/export/let/unset naming it, (( )), ${NAME:=..}, select, a second
+// for); a use of $NAME before the header (the inherited value); eval, source or `.` anywhere.
+// A list word that IS a protected name is still caught: the header segment mentions it literally.
+const LOOP_VALUES_CAP = 64
+const LOOP_HEADER_RX = /(?:^|[\n;&|(]|\bdo\b|\bthen\b|\belse\b|\{)\s*for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*(?:;|\n)\s*do\b/g
+const LOOP_WORD_RX = /^[A-Za-z0-9_./,:@%+=-]+$/
+export function literalLoopVars(text) {
+  const src = String(text ?? '')
+  const out = new Map()
+  if (/(?:^|[\s;&|(])(?:eval|source|\.)\s/.test(src)) return out
+  const headers = [...src.matchAll(LOOP_HEADER_RX)]
+  for (const h of headers) {
+    const name = h[1]
+    const words = h[2].split(/\s+/).filter(Boolean)
+    if (!words.length || words.length > LOOP_VALUES_CAP || !words.every((w) => LOOP_WORD_RX.test(w))) continue
+    if (headers.filter((x) => x[1] === name).length !== 1) continue
+    const n = name
+    const other = new RegExp(
+      `(?:^|[\\s;&|(])${n}\\+?=|\\bselect\\s+${n}\\b|` +
+      `\\b(?:read|mapfile|readarray|getopts|printf|declare|local|export|typeset|readonly|let|unset)\\b[^;&|\\n]*\\b${n}\\b|` +
+      `\\(\\([^)]*\\b${n}\\b|\\$\\{${n}:?[=?+-]`)
+    if (other.test(src)) continue
+    const firstUse = src.search(new RegExp(`\\$\\{?${n}(?!\\w)`))
+    if (firstUse !== -1 && firstUse < h.index) continue
+    out.set(name, words)
+  }
+  return out
+}
+
+// One text per value combination of the literal loop variables it uses (see literalLoopVars). Only the
+// plain `$NAME` and `${NAME}` forms are replaced; any other form stays an unresolved expansion.
+function substituteLoopVars(text, loopVars) {
+  let out = [text]
+  for (const [name, values] of loopVars ?? []) {
+    const rx = new RegExp(`\\$\\{${name}\\}|\\$${name}(?!\\w)`, 'g')
+    if (!rx.test(out[0])) continue
+    if (out.length * values.length > LOOP_VALUES_CAP) return [text] // too many combinations: as written
+    out = out.flatMap((t) => values.map((v) => t.replace(rx, v)))
+  }
+  return out
 }
 
 // The working directory after one segment: a literal `cd DIR` / `pushd DIR` moves it,
@@ -787,7 +837,7 @@ function substituteAssignments(text, assigns) {
 export function protectedMention(text, ctx) {
   // $'...' and $"..." are quotes too; $HOME is the one variable the hook can resolve
   const src = String(text ?? '').replace(/\$(?=['"])/g, '').replace(/\$\{HOME\}|\$HOME(?!\w)/g, homedir())
-  for (const t of substituteAssignments(src, ctx?.assigns)) {
+  for (const t of substituteLoopVars(src, ctx?.loopVars).flatMap((l) => substituteAssignments(l, ctx?.assigns))) {
     if (scheduleSurfaceVariants(t).some(mentionsProtectedName)) return true
     // implicit or `+` concatenation glued, every other quote kept as a word break:
     // ['root', 'local-hoo' 'ks'] -> root , local-hooks (scheduleSurfaceVariants'
