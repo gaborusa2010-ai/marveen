@@ -2645,8 +2645,12 @@ _SHELLOUT_RE = re.compile(
     r'Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|'
     # #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
     r'(?:__import__|importlib\.import_module)\(\s*[\'"](?:os|subprocess|pty)[\'"]\s*\)\s*\.\s*'
-    r'(?:system|popen|exec[lv]?[pe]*|spawn[lv]p?e?|run|call|check_call|check_output|Popen|getoutput|'
-    r'getstatusoutput)|system|exec|qx))\s*\(')
+    r'(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|'
+    r'getstatusoutput)|'
+    # #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
+    r'Kernel\.(?:system|exec|spawn)|Process\.spawn|system|exec|qx))\s*\(')
+# #779 review 3835: perl/ruby call without parentheses (`system "X"`, `exec 'X', 'a'`)
+_SHELLOUT_BARE_RE = re.compile(r'(?<![\w.$>:])(?:Kernel\.)?(?:system|exec)[ \t]+(?=[\'"])')
 # #779: an import can rename the call (`from subprocess import run`, `import os, subprocess
 # as sp`, `const cp = require("child_process")`, `const {spawn} = require(..)`, `import {exec
 # as run} from "node:child_process"`); those names are shell-outs too. The JS twin (lib/heredoc-program.mjs
@@ -2660,12 +2664,15 @@ _SHELLOUT_MEMBERS = {
 _IMPORT_LIST_RE = re.compile(r'(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)')
 _CP_MODULE = r'[\'"](?:node:)?child_process[\'"]'
 _JS_CP_ALIAS_RE = re.compile(
-    r'(?<![\w$.])(?:(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)(?!\s*\.)|'
-    r'import\s+(?:\*\s+as\s+)?([\w$]+)\s+from\s+' + _CP_MODULE + ')')
+    # #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
+    r'(?<![\w$.])([\w$]+)\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)(?!\s*\.)')
+# an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
+_JS_CP_IMPORT_RE = re.compile(
+    r'(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*' + _CP_MODULE)
 _JS_CP_NAMED_RE = re.compile(
-    r'(?<![\w$.])(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)|'
-    r'import\s*\{([^}]*)\}\s*from\s*' + _CP_MODULE + ')')
-_FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+\(?([\w \t,]+)')
+    r'(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)')
+# #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
+_FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))')
 _EXEC_FAMILY_RE = re.compile(r'(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($')
 _STR_LIT_RE = re.compile(r"(['\"])((?:\\.|(?!\1).)*)\1")
 
@@ -2755,15 +2762,22 @@ def _imported_shellout_re(payload):
             parts = item.split()
             if len(parts) == 3 and parts[0] in ('subprocess', 'os', 'pty'):
                 names.append(re.escape(parts[2]) + r'\.(?:' + _SHELLOUT_MEMBERS[parts[0]] + ')')
-    for req, imp in _JS_CP_ALIAS_RE.findall(payload):
-        names.append(re.escape(req or imp) + r'\.(?:' + _SHELLOUT_MEMBERS['child_process'] + ')')
-    for req, imp in _JS_CP_NAMED_RE.findall(payload):
-        for item in (req or imp).split(','):
+    named = _JS_CP_NAMED_RE.findall(payload)
+    aliases = _JS_CP_ALIAS_RE.findall(payload)
+    for clause in _JS_CP_IMPORT_RE.findall(payload):
+        brace = re.search(r'\{([^}]*)\}', clause)
+        if brace:
+            named.append(brace.group(1))
+        aliases += re.findall(r'(?:^|\bas\s+)([\w$]+)\s*(?:,|$)', clause.strip())
+    for alias in aliases:
+        names.append(re.escape(alias) + r'\.(?:' + _SHELLOUT_MEMBERS['child_process'] + ')')
+    for items in named:
+        for item in items.split(','):
             m = re.fullmatch(r'\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*', item)
             if m and re.fullmatch(_SHELLOUT_MEMBERS['child_process'], m.group(1)):
                 names.append(re.escape(m.group(2) or m.group(1)))
-    for mod, items in _FROM_IMPORT_RE.findall(payload):
-        for item in items.split(','):
+    for mod, paren, bare in _FROM_IMPORT_RE.findall(payload):
+        for item in (paren or bare).replace('\\', ' ').split(','):
             parts = item.split()
             if parts and re.fullmatch(_SHELLOUT_MEMBERS[mod], parts[0]):
                 names.append(re.escape(parts[2] if len(parts) == 3 and parts[1] == 'as' else parts[0]))
@@ -2822,13 +2836,38 @@ def shell_out_commands(payload):
         if (len(words) >= 2 and _EXEC_FAMILY_RE.search(m.group(0))
                 and os.path.basename(words[0]) == os.path.basename(words[1])):
             words = words[1:]
-        if len(words) == 1:
-            inner = words[0].strip()
-        else:
-            inner = ' '.join(shlex.quote(w) if re.search(r'\s', w) else w for w in words).strip()
+        inner = _argv_text(words)
+        if inner and inner not in out:
+            out.append(inner)
+    for m in _SHELLOUT_BARE_RE.finditer(payload):
+        if any(a < m.start() < b for a, b in spans or _literal_spans(payload)):
+            continue
+        inner = _argv_text(_bare_args(payload, m.end()))
         if inner and inner not in out:
             out.append(inner)
     return out
+
+
+def _argv_text(words):
+    """One literal is a shell string; several are an argv, the space-holding words quoted."""
+    if len(words) == 1:
+        return words[0].strip()
+    return ' '.join(shlex.quote(w) if re.search(r'\s', w) else w for w in words).strip()
+
+
+def _bare_args(payload, i):
+    """The string literals of a call without parentheses (`system "a", 'b'`), up to the first
+    thing that is not a literal or a comma."""
+    words = []
+    while True:
+        m = _STR_LIT_RE.match(payload, i)
+        if not m:
+            return words
+        words.append(m.group(2))
+        sep = re.compile(r'[ \t]*,[ \t]*').match(payload, m.end())
+        if not sep:
+            return words
+        i = sep.end()
 
 
 def embedded_commands(cmd):

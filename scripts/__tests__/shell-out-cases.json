@@ -2762,6 +2762,208 @@
    "name": "neg/py-call-in-literal",
    "cmd": "python3 -c 'import subprocess as sp; print(\"sp.run(claude -p hi)\")'",
    "commands": []
+  },
+  {
+   "name": "r3/py-dunder-pty",
+   "cmd": "python3 -c '__import__(\"pty\").spawn([\"sh\",\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/py-importlib-pty",
+   "cmd": "python3 -c 'import importlib; importlib.import_module(\"pty\").spawn([\"sh\",\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/node-cp-alias-after-comma",
+   "cmd": "node -e 'const a=1, cp=require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-cp-assign-later",
+   "cmd": "node -e 'let cp; cp = require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-destr-after-comma",
+   "cmd": "node -e 'const a=1, {exec}=require(\"child_process\"); exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-named",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, { exec as x } from 'child_process'\nx('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-named-dflt",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, { exec as x } from 'child_process'\ncpd.exec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/node-import-default-star",
+   "cmd": "node --input-type=module - <<'JS'\nimport cpd, * as ns from 'node:child_process'\nns.spawn('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/py-from-import-paren-multiline",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import (\n    run as r,\n)\nr('claude -p hi', shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/py-from-import-backslash",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run as r, \\\n    call\ncall('claude -p hi', shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/py-from-os-paren-multiline",
+   "cmd": "python3 - <<'PY'\nfrom os import (\n    path,\n    system as s,\n)\ns('claude -p hi')\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-system-bare",
+   "cmd": "perl -e 'system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-exec-bare-E",
+   "cmd": "perl -E 'exec \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/perl-system-bare-list",
+   "cmd": "perl -e 'system \"sh\", \"-c\", \"claude -p hi\"'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r3/ruby-system-bare",
+   "cmd": "ruby -e 'system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-kernel-system",
+   "cmd": "ruby -e 'Kernel.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-kernel-system-bare",
+   "cmd": "ruby -e 'Kernel.system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r3/ruby-process-spawn",
+   "cmd": "ruby -e 'Process.spawn(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/ruby-bare-spawn",
+   "cmd": "ruby -e 'Process.wait spawn(\"claude -p hi\")'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): a bare spawn( is not read; it would also catch a JS spawn imported from another module (r2 negative)."
+  },
+  {
+   "name": "limit/python-minor-version",
+   "cmd": "python3.12 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): python3.12 and other minor-version names are not interpreters to the readers."
+  },
+  {
+   "name": "limit/pipe-python-no-dash",
+   "cmd": "echo 'import os; os.system(\"claude -p hi\")' | python3",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): a pipe into an interpreter is read only with a lone `-`."
+  },
+  {
+   "name": "limit/php-r",
+   "cmd": "php -r 'system(\"claude -p hi\");'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): php -r is not a script flag to the readers."
+  },
+  {
+   "name": "limit/perl-indirect-object",
+   "cmd": "perl -e 'system { \"sh\" } \"sh\", \"-c\", \"claude -p hi\"'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r3): perl indirect-object system { \"sh\" } ... is not read."
+  },
+  {
+   "name": "neg/perl-print-system-word",
+   "cmd": "perl -e 'print \"system claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/ruby-method-system-bare",
+   "cmd": "ruby -e 'obj.system \"claude -p hi\"'",
+   "commands": []
+  },
+  {
+   "name": "over-read/perl-commented-system",
+   "cmd": "perl -e 'print 1; # system \"claude -p hi\"'",
+   "commands": [
+    "claude -p hi"
+   ],
+   "note": "CONSERVATIVE OVER-READ (#779 r3): a comment inside an inline -e/-c payload is not stripped, so a commented call counts; the parenthesised form behaves the same since round 1."
+  },
+  {
+   "name": "neg/node-assign-other-module",
+   "cmd": "node -e 'let db; db = require(\"./db\"); db.exec(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "over-read/node-exec-other-module",
+   "cmd": "node --input-type=module - <<'JS'\nimport x, { exec } from './pool.js'\nexec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ],
+   "note": "CONSERVATIVE OVER-READ (#779 r1): a bare exec( counts whatever module it came from (perl/php exec)."
+  },
+  {
+   "name": "neg/py-from-import-paren-other",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import (\n    PIPE,\n)\nprint('claude -p hi')\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-ctx-spawn",
+   "cmd": "python3 -c 'import multiprocessing as m; ctx = m.get_context(\"spawn\"); print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dunder-pty-other",
+   "cmd": "python3 -c 'print(__import__(\"pty\").STDIN_FILENO, \"claude -p hi\")'",
+   "commands": []
   }
  ]
 }

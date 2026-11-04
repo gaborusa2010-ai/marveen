@@ -1850,8 +1850,12 @@ const SHELLOUT_RE = new RegExp(
   String.raw`Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|` +
   // #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
   String.raw`(?:__import__|importlib\.import_module)\(\s*['"](?:os|subprocess|pty)['"]\s*\)\s*\.\s*` +
-  String.raw`(?:system|popen|exec[lv]?[pe]*|spawn[lv]p?e?|run|call|check_call|check_output|Popen|getoutput|` +
-  String.raw`getstatusoutput)|system|exec|qx))\s*\(`, 'g')
+  String.raw`(?:system|popen|exec[lv]?[pe]*|spawn(?:[lv]p?e?)?|run|call|check_call|check_output|Popen|getoutput|` +
+  String.raw`getstatusoutput)|` +
+  // #779 review 3835: ruby's Kernel methods with a receiver; a bare spawn stays out (a JS spawn from another module, r2 negative)
+  String.raw`Kernel\.(?:system|exec|spawn)|Process\.spawn|system|exec|qx))\s*\(`, 'g')
+// #779 review 3835: perl/ruby call without parentheses (`system "X"`, `exec 'X', 'a'`)
+const SHELLOUT_BARE_RE = /(?<![\w.$>:])(?:Kernel\.)?(?:system|exec)[ \t]+(?=['"])/g
 const SHELLOUT_MEMBERS = {
   subprocess: 'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
   os: 'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
@@ -1862,13 +1866,16 @@ const SHELLOUT_MEMBERS = {
 // an ES import from "child_process"; the twin of destructive-gate.py _imported_shellout_re
 const IMPORT_LIST_RE = /(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)/g
 const CP_MODULE = String.raw`['"](?:node:)?child_process['"]`
+// #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
 const JS_CP_ALIAS_RE = new RegExp(
-  String.raw`(?<![\w$.])(?:(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)(?!\s*\.)|` +
-  String.raw`import\s+(?:\*\s+as\s+)?([\w$]+)\s+from\s+` + CP_MODULE + ')', 'g')
+  String.raw`(?<![\w$.])([\w$]+)\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)(?!\s*\.)`, 'g')
+// an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
+const JS_CP_IMPORT_RE = new RegExp(
+  String.raw`(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*` + CP_MODULE, 'g')
 const JS_CP_NAMED_RE = new RegExp(
-  String.raw`(?<![\w$.])(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)|` +
-  String.raw`import\s*\{([^}]*)\}\s*from\s*` + CP_MODULE + ')', 'g')
-const FROM_IMPORT_RE = /(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+\(?([\w \t,]+)/g
+  String.raw`(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)`, 'g')
+// #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
+const FROM_IMPORT_RE = /(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))/g
 const EXEC_FAMILY_RE = /(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($/
 const STR_LIT_RE = /(['"])((?:\\.|(?!\1).)*)\1/g
 const reEscape = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -1884,15 +1891,22 @@ function importedShellOutRe(payload) {
       }
     }
   }
-  for (const [, req, imp] of payload.matchAll(JS_CP_ALIAS_RE)) names.push(`${reEscape(req || imp)}\\.(?:${SHELLOUT_MEMBERS.child_process})`)
-  for (const [, req, imp] of payload.matchAll(JS_CP_NAMED_RE)) {
-    for (const item of (req ?? imp).split(',')) {
+  const named = [...payload.matchAll(JS_CP_NAMED_RE)].map((m) => m[1])
+  const aliases = [...payload.matchAll(JS_CP_ALIAS_RE)].map((m) => m[1])
+  for (const [, clause] of payload.matchAll(JS_CP_IMPORT_RE)) {
+    const brace = /\{([^}]*)\}/.exec(clause)
+    if (brace) named.push(brace[1])
+    for (const m of clause.trim().matchAll(/(?:^|\bas\s+)([\w$]+)\s*(?:,|$)/g)) aliases.push(m[1])
+  }
+  for (const alias of aliases) names.push(`${reEscape(alias)}\\.(?:${SHELLOUT_MEMBERS.child_process})`)
+  for (const items of named) {
+    for (const item of items.split(',')) {
       const m = /^\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*$/.exec(item)
       if (m && new RegExp(`^(?:${SHELLOUT_MEMBERS.child_process})$`).test(m[1])) names.push(reEscape(m[2] || m[1]))
     }
   }
-  for (const [, mod, items] of payload.matchAll(FROM_IMPORT_RE)) {
-    for (const item of items.split(',')) {
+  for (const [, mod, paren, bare] of payload.matchAll(FROM_IMPORT_RE)) {
+    for (const item of (paren ?? bare).replaceAll('\\', ' ').split(',')) {
       const parts = item.trim().split(/\s+/).filter(Boolean)
       if (parts.length && new RegExp(`^(?:${SHELLOUT_MEMBERS[mod]})$`).test(parts[0])) {
         names.push(reEscape(parts.length === 3 && parts[1] === 'as' ? parts[2] : parts[0]))
@@ -1958,10 +1972,38 @@ export function shellOutCommands(payload) {
     const arg = balancedArg(text, text.indexOf('(', m.index + m[0].length - 1))
     let words = [...arg.matchAll(STR_LIT_RE)].map((x) => x[2])
     if (words.length >= 2 && EXEC_FAMILY_RE.test(m[0]) && baseName(words[0]) === baseName(words[1])) words = words.slice(1)
-    const inner = (words.length === 1 ? words[0] : words.map((w) => (/\s/.test(w) ? shQuote(w) : w)).join(' ')).trim()
+    const inner = argvText(words)
+    if (inner && !out.includes(inner)) out.push(inner)
+  }
+  const bareSpans = literalSpans(text)
+  for (const m of text.matchAll(SHELLOUT_BARE_RE)) {
+    if (bareSpans.some(([a, b]) => a < m.index && m.index < b)) continue
+    const inner = argvText(bareArgs(text, m.index + m[0].length))
     if (inner && !out.includes(inner)) out.push(inner)
   }
   return out
+}
+
+/** One literal is a shell string; several are an argv, the space-holding words quoted. */
+function argvText(words) {
+  return (words.length === 1 ? words[0] : words.map((w) => (/\s/.test(w) ? shQuote(w) : w)).join(' ')).trim()
+}
+
+/** The string literals of a call without parentheses (`system "a", 'b'`), up to the first
+ *  thing that is not a literal or a comma; the twin of destructive-gate.py _bare_args. */
+function bareArgs(text, i) {
+  const words = []
+  for (;;) {
+    const lit = /(['"])((?:\\.|(?!\1).)*)\1/y
+    lit.lastIndex = i
+    const m = lit.exec(text)
+    if (!m) return words
+    words.push(m[2])
+    const sep = /[ \t]*,[ \t]*/y
+    sep.lastIndex = lit.lastIndex
+    if (!sep.exec(text)) return words
+    i = sep.lastIndex
+  }
 }
 
 /** The quoted script after an interpreter's -c/-e (other options may stand before it:
