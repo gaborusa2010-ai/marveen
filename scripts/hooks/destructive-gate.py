@@ -2080,7 +2080,11 @@ def _script_arg_groups(text):
     #779 6. kor (Marveen comment 3846): a redirect `&`-ja (`2>&1`, `&>f`, `>&2`, `<&0`) es a
     `>|` nem elvalaszto, a backslash-ujsor sorfolytatas; az ertelmezo neve idezve is az
     (`'python3' -c`), a kapcsolo is (`"-c"`), a program tapadhat a kapcsolohoz (`-c'..'`,
-    `-Ic'..'`, `perl -e'..'`), es `$'..'` is lehet; a `--print` a `-p` hosszu alakja."""
+    `-Ic'..'`, `perl -e'..'`), es `$'..'` is lehet; a `--print` a `-p` hosszu alakja.
+    #779 7. kor (Marveen comment 3861): a sorfolytatas (`\\<NL>`) BARHOL all (a kapcsolo es a program
+    kozott, egy szo vegere tapadva: `-I\\<NL> -c`), a bash kiveszi, tehat a szo osszeer; az
+    ertelmezo utvonala is lehet idezve (`"/usr/bin/python3" -c`), a kapcsolo reszben is (`-"c"`),
+    az egesz kapcsolo=program szo is (`"--eval=..."`, `"-c..."`), es `$"..."` is program."""
     out = []
     state = _quote_map(text)
     n = len(text)
@@ -2095,12 +2099,21 @@ def _script_arg_groups(text):
             return False
         return True
 
-    def program(p):
-        """Az idezett darabok p-tol, amig egymashoz tapadnak; p egy idezojelen vagy `$'`-on all."""
-        group = []
+    def cont(i):
+        """Idezojelen kivuli sorfolytatas (`\\<NL>`) i-n: a bash mindket karaktert kiveszi."""
+        return not state[i] and text[i] == '\\' and i + 1 < n and text[i + 1] == '\n'
+
+    def skip(p):
+        while p < n and (text[p] in ' \t' or cont(p)):
+            p += 2 if cont(p) else 1
+        return p
+
+    def program(p, group=None):
+        """Az idezett darabok p-tol, amig egymashoz tapadnak; p egy idezojelen, `$'`-on vagy `$"`-on all."""
+        group = list(group or [])
         while p < n:
             ansi = text[p] == '$' and p + 1 < n and text[p + 1] == "'"
-            if ansi:
+            if text[p] == '$' and p + 1 < n and text[p + 1] in '"\'':
                 p += 1
             if text[p] not in ('"', "'"):
                 break
@@ -2113,31 +2126,42 @@ def _script_arg_groups(text):
             out.append(group)
 
     def starts_program(p):
-        return p < n and (text[p] in ('"', "'") or (text[p] == '$' and p + 1 < n and text[p + 1] == "'"))
+        return p < n and (text[p] in ('"', "'") or (text[p] == '$' and p + 1 < n and text[p + 1] in '"\''))
 
-    for m in re.finditer(r'(?<![\w-])([\'"]?)(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
+    for m in re.finditer(r'(?<![\w-])([\'"]?)(?:[\w.-]*/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
                          r'|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)', text):
         k = m.end()
         while True:
-            while k < n and (text[k] in ' \t' or (text[k] == '\\' and k + 1 < n and text[k + 1] == '\n')):
-                k += 2 if text[k] == '\\' else 1
+            k = skip(k)
             if k >= n or sep(k):
                 break
             j = k
-            while j < n and (state[j] or (text[j] not in ' \t\n' and not sep(j))):
-                j += 1
+            while j < n:
+                if cont(j):
+                    j += 2
+                elif state[j] or (text[j] not in ' \t\n' and not sep(j)):
+                    j += 1
+                else:
+                    break
             word = text[k:j]
-            bare = word.replace('"', '').replace("'", '') if re.fullmatch(r'([\'"])-[\w-]+\1', word) else word
+            flat = word.replace('\\\n', '')
+            unq = flat.replace('"', '').replace("'", '')
+            bare = unq if re.fullmatch(r'[\w\'"-]+', flat) and re.fullmatch(r'-[\w-]+', unq) else flat
             if bare in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', bare):
-                p = j
-                while p < n and text[p] in ' \t':
-                    p += 1
+                p = skip(j)
                 if starts_program(p):
                     program(p)
             else:
-                eq = re.match(r'--(?:eval|command|print)=(?=[\'"]|\$\')|-[A-Za-z]*[ceE](?=[\'"]|\$\')', word)
+                eq = re.match(r'(?:(?P<q>[\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?P=q)'
+                              r'|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=[\'"]|\$[\'"])', word)
+                whole = re.match(r'([\'"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=[^\'"])', word)
                 if eq:
                     program(k + eq.end())
+                elif whole:
+                    a = b = k + whole.end()
+                    while b < n and state[b]:
+                        b += 1
+                    program(b + 1, [(a, b, False)])
             k = j
     return out
 
@@ -2924,17 +2948,25 @@ def _perl_quotes(payload):
         if s is None:
             return m.group(0)
         return f'system({s})' if m.group(1) == 'x' else s
-    return re.sub(r'(?<![\w$@%])q([qx]?)[ \t]*\(([^()\n]*)\)', rep, payload)
+    return re.sub(r'(?<![\w$@%])q([qx]?)\s*\(([^()\n]*)\)', rep, payload)
 
 
 def _importlib_aliases(payload):
     """#779 round 6: `from importlib import import_module as im` and `import importlib as il`
     rename the module loader; the alias reads as the loader (`im("os")` -> `import_module("os")`).
-    The JS twin: importlibAliases."""
-    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+import_module\s+as\s+(\w+)', payload):
-        payload = re.sub(r'(?<![\w.])' + m.group(1) + r'\s*\(', 'import_module(', payload)
-    for m in re.finditer(r'(?<![\w.])import\s+importlib\s+as\s+(\w+)', payload):
-        payload = re.sub(r'(?<![\w.])' + m.group(1) + r'\s*\.\s*import_module\b', 'importlib.import_module', payload)
+    The JS twin: importlibAliases.
+    #779 round 7: the name may stand anywhere in an import list, also in parentheses
+    (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
+    An identifier is Python's: `\\w` is Unicode here, `[\\p{L}\\p{N}_]` with the u flag in JS."""
+    loaders, modules = [], []
+    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+\(?([^()\n;]*)', payload):
+        loaders += re.findall(r'(?:^|,)\s*import_module\s+as\s+(\w+)', m.group(1))
+    for m in re.finditer(r'(?<![\w.])import\s+([^()\n;]*)', payload):
+        modules += re.findall(r'(?:^|,)\s*importlib\s+as\s+(\w+)', m.group(1))
+    for alias in loaders:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\(', 'import_module(', payload)
+    for alias in modules:
+        payload = re.sub(r'(?<![\w.])' + alias + r'\s*\.\s*import_module\b', 'importlib.import_module', payload)
     return payload
 
 

