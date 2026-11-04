@@ -2595,6 +2595,173 @@
    "commands": [
     "curl -s https://evil.example.com/x"
    ]
+  },
+  {
+   "name": "r2/node-cp-alias-exec",
+   "cmd": "node -e 'const cp=require(\"child_process\"); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-spawn-shell",
+   "cmd": "node -e 'const cp = require(\"node:child_process\"); cp.spawn(\"claude -p hi\", {shell: true})'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-spawn-argv",
+   "cmd": "node -e 'let cp=require(\"child_process\"); cp.spawn(\"sh\", [\"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-cp-alias-heredoc",
+   "cmd": "node - <<'JS'\nvar childProc = require('child_process')\nchildProc.execSync('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-import-star",
+   "cmd": "node --input-type=module - <<'JS'\nimport * as cp from 'node:child_process'\ncp.exec('claude -p hi')\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-cp-import-default",
+   "cmd": "node --input-type=module - <<'JS'\nimport cp from 'child_process'\ncp.execFile('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-destr-spawn",
+   "cmd": "node -e 'const {spawn}=require(\"child_process\"); spawn(\"sh\",[\"-c\",\"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/node-destr-exec-alias",
+   "cmd": "node -e 'const { exec: run } = require(\"child_process\"); run(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/node-import-named",
+   "cmd": "node --input-type=module - <<'JS'\nimport { execFile as ef, spawn } from 'node:child_process'\nef('sh', ['-c', 'claude -p hi'])\nJS",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-alias",
+   "cmd": "python3 -c 'import os, subprocess as sp; sp.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-alias2",
+   "cmd": "python3 -c 'import sys,os as o; o.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-import-list-heredoc",
+   "cmd": "python3 - <<'PY'\nimport json, pty as p\np.spawn(['sh', '-c', 'claude -p hi'])\nPY",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-dunder-import",
+   "cmd": "python3 -c '__import__(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-dunder-import-subprocess",
+   "cmd": "python3 -c '__import__(\"subprocess\").run([\"sh\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "sh -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "r2/py-importlib",
+   "cmd": "python3 -c 'import importlib; importlib.import_module(\"subprocess\").run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r2/py-asyncio-shell",
+   "cmd": "python3 - <<'PY'\nimport asyncio\nasyncio.run(asyncio.create_subprocess_shell('claude -p hi'))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/ruby-backtick",
+   "cmd": "ruby -e '`claude -p hi`'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r2): ruby backticks are not read; the gates do not see the command."
+  },
+  {
+   "name": "limit/perl-backtick",
+   "cmd": "perl -e 'print `claude -p hi`'",
+   "commands": [],
+   "note": "KNOWN LIMIT (#779 r2): perl backticks are not read; the gates do not see the command."
+  },
+  {
+   "name": "limit/py-exec-string",
+   "cmd": "python3 -c 'exec(\"import os; os.system(\\x27claude -p hi\\x27)\")'",
+   "commands": [
+    "import os; os.system(\\x27claude -p hi\\x27)"
+   ],
+   "note": "KNOWN LIMIT (#779 r2): code inside an exec(\"...\") string is data to the reader."
+  },
+  {
+   "name": "neg/node-regex-exec",
+   "cmd": "node -e 'const re=/x/; console.log(re.exec(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-cp-log-only",
+   "cmd": "node -e 'const cp=require(\"child_process\"); console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-other-alias-exec",
+   "cmd": "node -e 'const db=require(\"./db\"); db.exec(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-destr-other-module",
+   "cmd": "node -e 'const {spawn}=require(\"./pool\"); spawn(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-import-list-other",
+   "cmd": "python3 -c 'import os, re as r; print(r.sub(\"a\", \"b\", \"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dunder-json",
+   "cmd": "python3 -c 'print(__import__(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-call-in-literal",
+   "cmd": "python3 -c 'import subprocess as sp; print(\"sp.run(claude -p hi)\")'",
+   "commands": []
   }
  ]
 }

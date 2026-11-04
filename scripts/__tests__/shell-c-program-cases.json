@@ -281,6 +281,47 @@
    "programs": [
     "ls"
    ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash -",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sh --",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sudo bash",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'claude -p hi' | sudo -u gabor sh -s",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf 'claude -p hi' | tee /dev/null | sh",
+   "programs": [],
+   "note": "KNOWN LIMIT (#779 r2): only the producer right before the shell is read; a filter in between (tee) hides it."
+  },
+  {
+   "cmd": "echo 'claude -p hi' | cat -",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash - ./setup.sh",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'claude -p hi' | sudo tee /tmp/note.txt",
+   "programs": []
   }
  ]
 }

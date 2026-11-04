@@ -1014,7 +1014,7 @@ def _runs_words(words, k, depth, loose=False):
     j = k + 1
     while j < len(words):
         x, xdyn = words[j]
-        if xdyn or x in ('-', '-s') or _STDIN_PATH_RE.match(x) or x.startswith('<('):
+        if xdyn or (x == '-' and not shell) or x == '-s' or _STDIN_PATH_RE.match(x) or x.startswith('<('):
             return base            # `bash <(cat)`: the script file is a pipe, it may be the stdin (#777 review 8)
         if _REDIR_OP_RE.match(x):
             j += 2                 # puszta atiranyitas-operator: a kovetkezo szo a celja
@@ -1032,7 +1032,9 @@ def _runs_words(words, k, depth, loose=False):
             long_opts = False
         if base in ('bash', 'rbash') and x.startswith('--') and len(x) > 2:
             return ''           # `bash --rcfile=F <<EOF`, `bash -x --norc <<EOF`: invalid option, nem fut
-        if shell and x == '--':
+        if shell and x in ('--', '-'):
+            # A shell treats a lone `-` like `--` (measured in sh, dash, bash: `bash - f.sh` runs
+            # the FILE, a lone `-` reads the stdin; #779 round 2).
             # `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE
             # (even `-x`), only redirections may follow (#777 review 2). The file may be
             # the stdin itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
@@ -2297,36 +2299,14 @@ def _piped_programs(light):
     for k in range(1, len(spans)):
         if light[spans[k - 1][1]:spans[k][0]].strip() not in ('|', '|&'):
             continue
-        if not _shell_reads_stdin(_bare_tokens(light[spans[k][0]:spans[k][1]])):
+        # the heredoc consumer resolver decides, so wrappers (`| sudo bash`), `bash -`, `sh -s`
+        # read the same way as for a body (#779 review 3833: `| bash -` and `| sudo bash` passed)
+        if os.path.basename(_cmd_runs_stdin(light[spans[k][0]:spans[k][1]])) not in _SHELLS:
             continue
         prog = _echoed_text(_bare_tokens(light[spans[k - 1][0]:spans[k - 1][1]]))
         if prog and prog.strip():
             out.append(prog)
     return out
-
-
-def _shell_reads_stdin(toks):
-    """Is this simple command a shell whose program comes from stdin (no -c, no file)?"""
-    idx = command_index(toks)
-    if idx is None or toks[idx][1] or os.path.basename(toks[idx][0]) not in _SHELLS:
-        return False
-    j = idx + 1
-    while j < len(toks):
-        x = toks[j][0]
-        if x in ('-o', '+o') or re.fullmatch(r'\d*(?:>>?|&>)', x):
-            j += 2
-            continue
-        if re.match(r'\d*<', x):
-            return False                       # stdin comes from elsewhere
-        if re.fullmatch(r'-[A-Za-z]+', x):
-            if 'c' in x:
-                return False                   # the -c program, _c_programs reads it
-            if 's' in x:
-                return True                    # -s: stdin is the program, the rest are $1..
-        elif not (re.fullmatch(r'\+[A-Za-z]+|--(?:[A-Za-z][\w-]*)?', x) or re.match(r'\d*(?:>>?|&>)', x)):
-            return False                       # a program FILE
-        j += 1
-    return True
 
 
 def _echoed_text(toks):
@@ -2657,21 +2637,34 @@ _SHELLOUT_RE = re.compile(
     # A puszta `system`, `exec`, `qx` viszont tul altalanos: azok elott a pont-tiltas marad,
     # kulonben minden `foo.exec(` talalat lenne.
     r'(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|'
-    r'require\(\s*[\'"]child_process[\'"]\s*\)\s*\.\s*'
+    r'require\(\s*[\'"](?:node:)?child_process[\'"]\s*\)\s*\.\s*'
     r'(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|'
     r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|'
     r'subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|'
     r'child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
-    r'Open3\.(?:capture2|capture3|popen3)|system|exec|qx))\s*\(')
-# #779: a Python import can rename the call (`from subprocess import run`, `import
-# subprocess as sp`); those names are shell-outs too. The JS twin (lib/heredoc-program.mjs
+    r'Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|'
+    # #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
+    r'(?:__import__|importlib\.import_module)\(\s*[\'"](?:os|subprocess|pty)[\'"]\s*\)\s*\.\s*'
+    r'(?:system|popen|exec[lv]?[pe]*|spawn[lv]p?e?|run|call|check_call|check_output|Popen|getoutput|'
+    r'getstatusoutput)|system|exec|qx))\s*\(')
+# #779: an import can rename the call (`from subprocess import run`, `import os, subprocess
+# as sp`, `const cp = require("child_process")`, `const {spawn} = require(..)`, `import {exec
+# as run} from "node:child_process"`); those names are shell-outs too. The JS twin (lib/heredoc-program.mjs
 # shellOutCommands) reads the same table; scripts/__tests__/shell-out-cases.json pins both.
 _SHELLOUT_MEMBERS = {
     'subprocess': r'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
     'os': r'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
     'pty': r'spawn',
+    'child_process': r'exec|execFile|spawn|execSync|execFileSync|spawnSync',
 }
-_IMPORT_AS_RE = re.compile(r'(?<![\w.])import\s+(subprocess|os|pty)\s+as\s+(\w+)')
+_IMPORT_LIST_RE = re.compile(r'(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)')
+_CP_MODULE = r'[\'"](?:node:)?child_process[\'"]'
+_JS_CP_ALIAS_RE = re.compile(
+    r'(?<![\w$.])(?:(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)(?!\s*\.)|'
+    r'import\s+(?:\*\s+as\s+)?([\w$]+)\s+from\s+' + _CP_MODULE + ')')
+_JS_CP_NAMED_RE = re.compile(
+    r'(?<![\w$.])(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)|'
+    r'import\s*\{([^}]*)\}\s*from\s*' + _CP_MODULE + ')')
 _FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+\(?([\w \t,]+)')
 _EXEC_FAMILY_RE = re.compile(r'(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($')
 _STR_LIT_RE = re.compile(r"(['\"])((?:\\.|(?!\1).)*)\1")
@@ -2753,10 +2746,22 @@ def _stdin_pipe_ranges(text):
 
 
 def _imported_shellout_re(payload):
-    """The shell-out names a Python import introduces in this payload (#779), or None."""
+    """The shell-out names an import introduces in this payload (#779): a Python `import ..
+    as`/`from .. import`, a node `require("child_process")` alias or destructuring, an ES
+    `import .. from "child_process"`. None when there are none."""
     names = []
-    for mod, alias in _IMPORT_AS_RE.findall(payload):
-        names.append(re.escape(alias) + r'\.(?:' + _SHELLOUT_MEMBERS[mod] + ')')
+    for items in _IMPORT_LIST_RE.findall(payload):
+        for item in items.split(','):
+            parts = item.split()
+            if len(parts) == 3 and parts[0] in ('subprocess', 'os', 'pty'):
+                names.append(re.escape(parts[2]) + r'\.(?:' + _SHELLOUT_MEMBERS[parts[0]] + ')')
+    for req, imp in _JS_CP_ALIAS_RE.findall(payload):
+        names.append(re.escape(req or imp) + r'\.(?:' + _SHELLOUT_MEMBERS['child_process'] + ')')
+    for req, imp in _JS_CP_NAMED_RE.findall(payload):
+        for item in (req or imp).split(','):
+            m = re.fullmatch(r'\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*', item)
+            if m and re.fullmatch(_SHELLOUT_MEMBERS['child_process'], m.group(1)):
+                names.append(re.escape(m.group(2) or m.group(1)))
     for mod, items in _FROM_IMPORT_RE.findall(payload):
         for item in items.split(','):
             parts = item.split()
@@ -2764,7 +2769,7 @@ def _imported_shellout_re(payload):
                 names.append(re.escape(parts[2] if len(parts) == 3 and parts[1] == 'as' else parts[0]))
     if not names:
         return None
-    return re.compile(r'(?<![\w.])(?:' + '|'.join(names) + r')\s*\(')
+    return re.compile(r'(?<![\w.$])(?:' + '|'.join(names) + r')\s*\(')
 
 
 def _literal_spans(payload):

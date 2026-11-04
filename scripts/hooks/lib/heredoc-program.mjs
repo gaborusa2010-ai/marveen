@@ -613,7 +613,7 @@ function runsWords(words, k, depth, loose) {
   let longOpts = base === 'bash' || base === 'rbash'   // GNU long options only at the start of the list (BASH_LONG_OPT_RE)
   for (let j = k + 1; j < words.length; j++) {
     const [x, xdyn] = words[j]
-    if (xdyn || x === '-' || x === '-s' || STDIN_PATH_RE.test(x) || x.startsWith('<(')) return base   // `bash <(cat)`: the script is a pipe, maybe the stdin (#777 review 8)
+    if (xdyn || (x === '-' && !shell) || x === '-s' || STDIN_PATH_RE.test(x) || x.startsWith('<(')) return base   // `bash <(cat)`: the script is a pipe, maybe the stdin (#777 review 8)
     if (REDIR_OP_RE.test(x)) { j++; continue }       // a bare redirect operator takes the next word
     if (REDIR_GLUED_RE.test(x)) continue             // a glued redirect (2>&1, >log) is no operand
     if (longOpts) {
@@ -626,7 +626,9 @@ function runsWords(words, k, depth, loose) {
       longOpts = false
     }
     if ((base === 'bash' || base === 'rbash') && x.startsWith('--') && x.length > 2) return ''   // `bash --rcfile=F`, `bash -x --norc`: invalid option, nothing runs
-    if (shell && x === '--') {
+    if (shell && (x === '--' || x === '-')) {
+      // A shell treats a lone `-` like `--` (measured in sh, dash, bash: `bash - f.sh` runs
+      // the FILE, a lone `-` reads the stdin; #779 round 2).
       // `bash -login -- <<EOF` runs the body; a word after `--` is a script FILE (even
       // `-x`), only redirections may follow (#777 review 2). The file may be the stdin
       // itself: `bash -- /dev/stdin <<< X` runs it (measured, #777).
@@ -1512,27 +1514,13 @@ function pipedPrograms(light) {
   const out = []
   for (let k = 1; k < parts.length; k++) {
     if (parts[k].sep !== '|' && parts[k].sep !== '|&') continue
-    if (!shellReadsStdin(segWords(parts[k].seg))) continue
+    // the heredoc consumer resolver decides, so wrappers (`| sudo bash`), `bash -`, `sh -s` read
+    // the same way as for a body (#779 review 3833: `| bash -` and `| sudo bash` passed)
+    if (!SHELLS.has(baseName(runsStdinAsProgram(parts[k].seg)))) continue
     const prog = echoedText(segWords(parts[k - 1].seg))
     if (prog && prog.trim()) out.push(prog)
   }
   return out
-}
-
-/** Is this simple command a shell whose program comes from stdin (no -c, no file)? */
-function shellReadsStdin(words) {
-  const k = skipPrefix(words, 0)
-  if (k >= words.length || !SHELLS.has(baseName(words[k][0]))) return false
-  for (let j = k + 1; j < words.length; j++) {
-    const x = words[j][0]
-    if (x === '-o' || x === '+o' || /^\d*(?:>>?|&>)$/.test(x)) { j++; continue }
-    if (/^\d*</.test(x)) return false                 // stdin comes from elsewhere
-    if (/^-[A-Za-z]+$/.test(x)) {
-      if (x.includes('c')) return false                // the -c program, shellCPrograms reads it
-      if (x.includes('s')) return true                 // -s: stdin is the program, the rest are $1..
-    } else if (!(/^\+[A-Za-z]+$|^--(?:[A-Za-z][\w-]*)?$/.test(x) || /^\d*(?:>>?|&>)/.test(x))) return false
-  }
-  return true
 }
 
 /** The text a literal echo/printf writes, or null. */
@@ -1855,17 +1843,31 @@ export function dataBodySubstitutions(cmd) {
 // file scripts/__tests__/shell-out-cases.json pins both sides.
 const SHELLOUT_RE = new RegExp(
   String.raw`(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|` +
-  String.raw`require\(\s*['"]child_process['"]\s*\)\s*\.\s*(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|` +
+  String.raw`require\(\s*['"](?:node:)?child_process['"]\s*\)\s*\.\s*(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|` +
   String.raw`(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|` +
   String.raw`subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|` +
   String.raw`child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|` +
-  String.raw`Open3\.(?:capture2|capture3|popen3)|system|exec|qx))\s*\(`, 'g')
+  String.raw`Open3\.(?:capture2|capture3|popen3)|asyncio\.create_subprocess_(?:shell|exec)|` +
+  // #779 review 3833: the module object from __import__/importlib (`__import__("os").system(`)
+  String.raw`(?:__import__|importlib\.import_module)\(\s*['"](?:os|subprocess|pty)['"]\s*\)\s*\.\s*` +
+  String.raw`(?:system|popen|exec[lv]?[pe]*|spawn[lv]p?e?|run|call|check_call|check_output|Popen|getoutput|` +
+  String.raw`getstatusoutput)|system|exec|qx))\s*\(`, 'g')
 const SHELLOUT_MEMBERS = {
   subprocess: 'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
   os: 'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
   pty: 'spawn',
+  child_process: 'exec|execFile|spawn|execSync|execFileSync|spawnSync',
 }
-const IMPORT_AS_RE = /(?<![\w.])import\s+(subprocess|os|pty)\s+as\s+(\w+)/g
+// #779 review 3833: `import os, subprocess as sp`, a node child_process alias or destructuring,
+// an ES import from "child_process"; the twin of destructive-gate.py _imported_shellout_re
+const IMPORT_LIST_RE = /(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*\w+(?:[ \t]+as[ \t]+\w+)?)*)/g
+const CP_MODULE = String.raw`['"](?:node:)?child_process['"]`
+const JS_CP_ALIAS_RE = new RegExp(
+  String.raw`(?<![\w$.])(?:(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)(?!\s*\.)|` +
+  String.raw`import\s+(?:\*\s+as\s+)?([\w$]+)\s+from\s+` + CP_MODULE + ')', 'g')
+const JS_CP_NAMED_RE = new RegExp(
+  String.raw`(?<![\w$.])(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)|` +
+  String.raw`import\s*\{([^}]*)\}\s*from\s*` + CP_MODULE + ')', 'g')
 const FROM_IMPORT_RE = /(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+\(?([\w \t,]+)/g
 const EXEC_FAMILY_RE = /(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($/
 const STR_LIT_RE = /(['"])((?:\\.|(?!\1).)*)\1/g
@@ -1874,7 +1876,21 @@ const shQuote = (w) => `'${w.replaceAll("'", `'"'"'`)}'`
 
 function importedShellOutRe(payload) {
   const names = []
-  for (const [, mod, alias] of payload.matchAll(IMPORT_AS_RE)) names.push(`${reEscape(alias)}\\.(?:${SHELLOUT_MEMBERS[mod]})`)
+  for (const [, items] of payload.matchAll(IMPORT_LIST_RE)) {
+    for (const item of items.split(',')) {
+      const parts = item.trim().split(/\s+/).filter(Boolean)
+      if (parts.length === 3 && ['subprocess', 'os', 'pty'].includes(parts[0])) {
+        names.push(`${reEscape(parts[2])}\\.(?:${SHELLOUT_MEMBERS[parts[0]]})`)
+      }
+    }
+  }
+  for (const [, req, imp] of payload.matchAll(JS_CP_ALIAS_RE)) names.push(`${reEscape(req || imp)}\\.(?:${SHELLOUT_MEMBERS.child_process})`)
+  for (const [, req, imp] of payload.matchAll(JS_CP_NAMED_RE)) {
+    for (const item of (req ?? imp).split(',')) {
+      const m = /^\s*([\w$]+)(?:(?:\s*:\s*|\s+as\s+)([\w$]+))?\s*$/.exec(item)
+      if (m && new RegExp(`^(?:${SHELLOUT_MEMBERS.child_process})$`).test(m[1])) names.push(reEscape(m[2] || m[1]))
+    }
+  }
   for (const [, mod, items] of payload.matchAll(FROM_IMPORT_RE)) {
     for (const item of items.split(',')) {
       const parts = item.trim().split(/\s+/).filter(Boolean)
@@ -1883,7 +1899,7 @@ function importedShellOutRe(payload) {
       }
     }
   }
-  return names.length ? new RegExp(`(?<![\\w.])(?:${names.join('|')})\\s*\\(`, 'g') : null
+  return names.length ? new RegExp(`(?<![\\w.$])(?:${names.join('|')})\\s*\\(`, 'g') : null
 }
 
 /** The closed string literals of a code payload as [start, end] spans: triple quotes, '...',
