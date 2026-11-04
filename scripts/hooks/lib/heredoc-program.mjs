@@ -1888,12 +1888,13 @@ const IMPORT_LIST_RE = /(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]
 const CP_MODULE = String.raw`['"](?:node:)?child_process['"]`
 // #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
 const JS_CP_ALIAS_RE = new RegExp(
-  String.raw`(?<![\w$.])([\w$]+)\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)(?!\s*\.)`, 'g')
+  // #779 round 6: nested parentheses around the module (`require( ( "node:child_process" ) )`)
+  String.raw`(?<![\w$.])([\w$]+)\s*=\s*require\(\s*(?:\(\s*)*` + CP_MODULE + String.raw`\s*(?:\)\s*)*\)(?![\s)]*\.)`, 'g')
 // an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
 const JS_CP_IMPORT_RE = new RegExp(
   String.raw`(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*` + CP_MODULE, 'g')
 const JS_CP_NAMED_RE = new RegExp(
-  String.raw`(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*` + CP_MODULE + String.raw`\s*\)`, 'g')
+  String.raw`(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*(?:\(\s*)*` + CP_MODULE + String.raw`\s*(?:\)\s*)*\)`, 'g')
 // #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
 const FROM_IMPORT_RE = /(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))/g
 const EXEC_FAMILY_RE = /(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($/
@@ -1979,17 +1980,30 @@ function balancedArg(text, open) {
  * A call written INSIDE a string literal is data, not a call.
  */
 /** #779 round 5: perl's `qx(X)` reads as `system("X")`, `qq(X)` / `q(X)` as the literal "X";
- *  the twin of destructive-gate.py _perl_quotes (no nesting; qx{..}, qx/../, backticks: limit). */
+ *  the twin of destructive-gate.py _perl_quotes (no nesting, a space before the parenthesis is
+ *  read too, #779 round 6; qx{..}, qx/../, backticks: limit, pinned in shell-out-cases.json). */
 function perlQuotes(payload) {
-  return payload.replace(/(?<![\w$@%])q([qx]?)\(([^()\n]*)\)/g, (all, kind, body) => {
+  return payload.replace(/(?<![\w$@%])q([qx]?)[ \t]*\(([^()\n]*)\)/g, (all, kind, body) => {
     const q = !body.includes('"') ? '"' : !body.includes("'") ? "'" : null
     if (!q) return all
     return kind === 'x' ? `system(${q}${body}${q})` : q + body + q
   })
 }
 
+/** #779 round 6: `from importlib import import_module as im` and `import importlib as il` rename
+ *  the module loader; the alias reads as the loader. The twin of _importlib_aliases. */
+function importlibAliases(payload) {
+  for (const m of [...payload.matchAll(/(?<![\w.])from\s+importlib\s+import\s+import_module\s+as\s+(\w+)/g)]) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\w.])` + m[1] + String.raw`\s*\(`, 'g'), 'import_module(')
+  }
+  for (const m of [...payload.matchAll(/(?<![\w.])import\s+importlib\s+as\s+(\w+)/g)]) {
+    payload = payload.replace(new RegExp(String.raw`(?<![\w.])` + m[1] + String.raw`\s*\.\s*import_module\b`, 'g'), 'importlib.import_module')
+  }
+  return payload
+}
+
 export function shellOutCommands(payload) {
-  const text = perlQuotes(String(payload ?? ''))
+  const text = importlibAliases(perlQuotes(String(payload ?? '')))
   const hits = new Map()
   for (const rx of [SHELLOUT_RE, importedShellOutRe(text)].filter(Boolean)) {
     for (const m of text.matchAll(rx)) hits.set(`${m.index},${m.index + m[0].length}`, m)
@@ -2042,37 +2056,75 @@ function bareArgs(text, i) {
  *  (`--input-type=module`, `-r json`, `-MPOSIX=floor`) never stops the search. Over-reading a
  *  script argument that happens to be -c is accepted. The twin of _script_arg_ranges. */
 function scriptArgPrograms(text) {
+  return scriptArgGroups(text).flatMap((g) => g.map((r) => r.text))
+}
+
+/** The scriptArgPrograms programs per group: a group is a run of quoted pieces glued together
+ *  (`-c "a"'b'` is one program), each {text, ansi} where ansi is a `$'..'` piece. #779 round 6
+ *  (Marveen comment 3846): the `&` of a redirect (`2>&1`, `&>f`, `>&2`, `<&0`) and `>|` do not
+ *  separate, a backslash-newline continues the line; the interpreter name may be quoted
+ *  (`'python3' -c`), so may the flag (`"-c"`); the program may stick to the flag (`-c'..'`,
+ *  `-Ic'..'`, `perl -e'..'`) and may be `$'..'`; `--print` is the long `-p`. The twin of
+ *  _script_arg_groups. */
+function scriptArgGroups(text) {
   const state = quoteMap(text)
   const out = []
   const n = text.length
-  const blank = (k) => ' \t'.includes(text[k])
-  const quoted = (p) => {
-    let j = p + 1
-    while (j < n && state[j]) j++
-    out.push(text.slice(p + 1, j))
+  const sep = (i) => {
+    const c = text[i]
+    if (state[i] || !';&|\n'.includes(c)) return false
+    if (c === '&' && ((i && '<>'.includes(text[i - 1])) || text[i + 1] === '>')) return false
+    if (c === '|' && i && text[i - 1] === '>') return false
+    return true
   }
-  for (const m of text.matchAll(/(?<![\w-])(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)(?=[ \t])/g)) {
+  const startsProgram = (p) => p < n && (text[p] === '"' || text[p] === "'" || (text[p] === '$' && text[p + 1] === "'"))
+  const program = (p) => {
+    const group = []
+    while (p < n) {
+      const ansi = text[p] === '$' && text[p + 1] === "'"
+      if (ansi) p++
+      if (text[p] !== '"' && text[p] !== "'") break
+      let j = p + 1
+      while (j < n && state[j]) j++
+      group.push({ text: text.slice(p + 1, j), ansi })
+      p = j + 1
+    }
+    if (group.length) out.push(group)
+  }
+  for (const m of text.matchAll(/(?<![\w-])(['"]?)(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)/g)) {
     let k = m.index + m[0].length
     for (;;) {
-      while (k < n && blank(k)) k++
-      if (k >= n || (!state[k] && ';&|\n'.includes(text[k]))) break
+      while (k < n && (text[k] === ' ' || text[k] === '\t' || (text[k] === '\\' && text[k + 1] === '\n'))) k += text[k] === '\\' ? 2 : 1
+      if (k >= n || sep(k)) break
       let j = k
-      while (j < n && (state[j] || !' \t\n;&|'.includes(text[j]))) j++
+      while (j < n && (state[j] || (!' \t\n'.includes(text[j]) && !sep(j)))) j++
       const w = text.slice(k, j)
-      if (SCRIPT_FLAGS.has(w) || /^-[A-Za-z]*[ceE]$/.test(w)) {
+      const bare = /^(['"])-[\w-]+\1$/.test(w) ? w.replace(/['"]/g, '') : w
+      if (SCRIPT_FLAGS.has(bare) || /^-[A-Za-z]*[ceE]$/.test(bare)) {
         let p = j
-        while (p < n && blank(p)) p++
-        if (p < n && (text[p] === '"' || text[p] === "'")) quoted(p)
+        while (p < n && (text[p] === ' ' || text[p] === '\t')) p++
+        if (startsProgram(p)) program(p)
       } else {
-        const eq = /^--(?:eval|command)=(?=['"])/.exec(w)
-        if (eq) quoted(k + eq[0].length)
+        const eq = /^(?:--(?:eval|command|print)=|-[A-Za-z]*[ceE])(?=['"]|\$')/.exec(w)
+        if (eq) program(k + eq[0].length)
       }
       k = j
     }
   }
   return out
 }
-const SCRIPT_FLAGS = new Set(['-c', '-e', '-E', '-p', '--command', '--eval'])
+
+/** #779 round 6: the escapes printf, echo -e and $'..' turn into characters: \n \t \r, \xHH,
+ *  and octal \NNN / \0NNN. The twin of destructive-gate.py _c_unescape. */
+function cUnescape(s) {
+  return s.replace(/\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr])/g, (all, e) => {
+    if (e === 'n') return '\n'
+    if (e === 't') return '\t'
+    if (e === 'r') return '\r'
+    return String.fromCharCode(e[0] === 'x' ? parseInt(e.slice(1), 16) : parseInt(e, 8))
+  })
+}
+const SCRIPT_FLAGS = new Set(['-c', '-e', '-E', '-p', '--command', '--eval', '--print'])
 
 /** `echo "<code>" | python3 -`: the quoted runs of the stage before an interpreter that runs its
  *  stdin as the program; the twin of _stdin_pipe_ranges. #779 round 4: no bare `-` needed
@@ -2123,11 +2175,15 @@ function interpreterPayloads(cmd) {
       for (const h of findAll(s).records) if (h.kind === 'herestring' && h.text.trim() && heredocRunsBody(s, h, funcs)) out.push(h.text)
     }
   }
-  out.push(...scriptArgPrograms(light))
+  for (const group of scriptArgGroups(light)) {
+    out.push(...group.map((r) => r.text))
+    // #779 round 6: `-c "a"'b'` is one program, `$'..'` decodes its escapes
+    if (group.length > 1 || group.some((r) => r.ansi)) out.push(group.map((r) => (r.ansi ? cUnescape(r.text) : r.text)).join(''))
+  }
   for (const p of stdinPipePrograms(light)) {
     out.push(p)
-    // #779 round 5: `printf 'import os\nos.system(..)' | python3` -- the escapes are the newlines
-    const dec = p.replaceAll('\\n', '\n').replaceAll('\\t', '\t')
+    // #779 round 5/6: `printf 'import os\nos.system(..)' | python3` (also \x0a, \012)
+    const dec = cUnescape(p)
     if (dec !== p) out.push(dec)
   }
   return out.filter((p) => p.trim())

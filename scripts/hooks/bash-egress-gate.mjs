@@ -110,7 +110,27 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hus
 // consumer (a shell, eval, source, a loop, a function, a dynamic name) runs it as a
 // shell command line, so it gets the shell reading below.
 const CODE_INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'php'])
-const INLINE_CODE_FLAGS = new Set(['-c', '-e'])
+// #779 round 6 (Marveen comment 3846): the same flag class as the shell-out reader
+// (lib/heredoc-program.mjs scriptArgGroups): -c/-e/-E/-p/--command/--eval/--print, a cluster
+// ending in one (`-Ic`, `-uc`, `-pe`, `-le`), `--eval=..`, and a program stuck to its flag
+// (`-c'..'`). Before, only the exact -c/-e was read, so fetch()/urlopen behind `node --eval`,
+// `-p`, `python3 -Ic` passed (8/10 forms, measured by the round-5 reviewer).
+const INLINE_CODE_FLAGS = new Set(['-c', '-e', '-E', '-p', '--command', '--eval', '--print'])
+
+/** The inline program of an interpreter's raw argument tokens, or ''.
+ *  A glued program (`python3 -c'code'`) runs in python/node/perl/ruby; a shell
+ *  reads `bash -c'code'` as the option cluster `-ccode`, refuses it and runs nothing. */
+function inlineProgram(args, verb = '') {
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i].text
+    const rest = args.slice(i + 1).map((a) => a.text)
+    if (INLINE_CODE_FLAGS.has(t) || /^-[A-Za-z]*[ceE]$/.test(t)) return rest.join(' ')
+    if (SHELLS.has(verb)) continue
+    const glued = /^--(?:eval|command|print)=/.exec(t) || (args[i].quoted && /^-[A-Za-z]*?[ceE](?=.)/.exec(t))
+    if (glued) return [t.slice(glued[0].length), ...rest].join(' ')
+  }
+  return ''
+}
 
 // Wrappers to step over when looking for the real verb.
 const WRAPPERS = new Set(['sudo', 'command', 'nohup', 'nice', 'stdbuf', 'env', 'time',
@@ -303,10 +323,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
       // `-e` program before we ever saw it.
       const rawTexts = rawSeg.map((t) => t.text)
       const rawVi = rawTexts.indexOf(texts[vi])
-      const rawArgs = rawVi === -1 ? rawTexts.slice(1) : rawTexts.slice(rawVi + 1)
-      const codeIdx = rawArgs.findIndex((t) => INLINE_CODE_FLAGS.has(t))
       // The program fed through a HEREDOC is handled above, for the whole command.
-      const program = codeIdx === -1 ? '' : rawArgs.slice(codeIdx + 1).join(' ')
+      const program = inlineProgram(rawVi === -1 ? rawSeg.slice(1) : rawSeg.slice(rawVi + 1), verb)
       if (!program) continue
 
       // `sh -c "curl ..."` is the obvious way around a verb-scoped gate, so the

@@ -162,7 +162,7 @@ ENV_RE = re.compile(r'(?:^|[\s=:])(?:[^\s"\']*/)?\.env(?=$|[\s"\'`,;)\]}])')
 # Amelyik parancs a heredoc-torzset VEGREHAJTJA, nem fajlba irja. Csak ezeknel marad
 # bent a torzs a vizsgalt szovegben.
 INTERPRETERS = {'python', 'python3', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'rbash', 'ash', 'hush', 'mksh', 'yash', 'node', 'perl', 'ruby', 'php'}
-SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval'}
+SCRIPT_FLAGS = {'-c', '-e', '-E', '-p', '--command', '--eval', '--print'}
 # A versioned interpreter name is the same interpreter (#779 round 4: /usr/bin/python3.14 exists
 # here): python3.14, python3.14t, python2.7, node22, nodejs, perl5.36, ruby3.2, php8.2. The JS
 # twin: lib/heredoc-program.mjs canonInterp. db-write-gate and global-skill-write-gate keep their
@@ -2071,38 +2071,73 @@ def _script_arg_ranges(text):
     (csoportban is: `-le`, `-Ic`, es `--eval='...'`) szamit, barhol all; ismeretlen kapcsolo vagy
     kapcsolo-ertek (`--input-type=module`, `-r json`, `-MPOSIX=floor`) nem allitja meg a keresest.
     A tulolvasas (egy szkript-argumentum, ami eppen -c) vallalt. A JS iker: scriptArgPrograms."""
+    return [(a, b) for group in _script_arg_groups(text) for a, b, _ansi in group]
+
+
+def _script_arg_groups(text):
+    """A _script_arg_ranges szkriptjei csoportonkent: egy csoport az egymashoz tapado idezett
+    darabok sora (`-c "a"'b'` egy program), darabonkent (kezdo, veg, ansi) -- ansi a `$'..'`.
+    #779 6. kor (Marveen comment 3846): a redirect `&`-ja (`2>&1`, `&>f`, `>&2`, `<&0`) es a
+    `>|` nem elvalaszto, a backslash-ujsor sorfolytatas; az ertelmezo neve idezve is az
+    (`'python3' -c`), a kapcsolo is (`"-c"`), a program tapadhat a kapcsolohoz (`-c'..'`,
+    `-Ic'..'`, `perl -e'..'`), es `$'..'` is lehet; a `--print` a `-p` hosszu alakja."""
     out = []
     state = _quote_map(text)
     n = len(text)
 
-    def quoted(p):
-        j = p + 1
-        while j < n and state[j]:
-            j += 1
-        out.append((p + 1, j))
+    def sep(i):
+        c = text[i]
+        if state[i] or c not in ';&|\n':
+            return False
+        if c == '&' and ((i and text[i - 1] in '<>') or (i + 1 < n and text[i + 1] == '>')):
+            return False
+        if c == '|' and i and text[i - 1] == '>':
+            return False
+        return True
 
-    for m in re.finditer(r'(?<![\w-])(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*|perl(?:\d+(?:\.\d+)*)?'
-                         r'|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)(?=[ \t])', text):
+    def program(p):
+        """Az idezett darabok p-tol, amig egymashoz tapadnak; p egy idezojelen vagy `$'`-on all."""
+        group = []
+        while p < n:
+            ansi = text[p] == '$' and p + 1 < n and text[p + 1] == "'"
+            if ansi:
+                p += 1
+            if text[p] not in ('"', "'"):
+                break
+            j = p + 1
+            while j < n and state[j]:
+                j += 1
+            group.append((p + 1, j, ansi))
+            p = j + 1
+        if group:
+            out.append(group)
+
+    def starts_program(p):
+        return p < n and (text[p] in ('"', "'") or (text[p] == '$' and p + 1 < n and text[p + 1] == "'"))
+
+    for m in re.finditer(r'(?<![\w-])([\'"]?)(python(?:\d+(?:\.\d+)*[a-z]?)?|bash|sh|zsh|nodejs|node\d*'
+                         r'|perl(?:\d+(?:\.\d+)*)?|ruby(?:\d+(?:\.\d+)*)?|php(?:\d+(?:\.\d+)*)?)\1(?=[ \t]|\\\n)', text):
         k = m.end()
         while True:
-            while k < n and text[k] in ' \t':
-                k += 1
-            if k >= n or (not state[k] and text[k] in ';&|\n'):
+            while k < n and (text[k] in ' \t' or (text[k] == '\\' and k + 1 < n and text[k + 1] == '\n')):
+                k += 2 if text[k] == '\\' else 1
+            if k >= n or sep(k):
                 break
             j = k
-            while j < n and (state[j] or text[j] not in ' \t\n;&|'):
+            while j < n and (state[j] or (text[j] not in ' \t\n' and not sep(j))):
                 j += 1
             word = text[k:j]
-            if word in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', word):
+            bare = word.replace('"', '').replace("'", '') if re.fullmatch(r'([\'"])-[\w-]+\1', word) else word
+            if bare in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', bare):
                 p = j
                 while p < n and text[p] in ' \t':
                     p += 1
-                if p < n and text[p] in ('"', "'"):
-                    quoted(p)
+                if starts_program(p):
+                    program(p)
             else:
-                eq = re.match(r'--(?:eval|command)=(?=[\'"])', word)
+                eq = re.match(r'--(?:eval|command|print)=(?=[\'"]|\$\')|-[A-Za-z]*[ceE](?=[\'"]|\$\')', word)
                 if eq:
-                    quoted(k + eq.end())
+                    program(k + eq.end())
             k = j
     return out
 
@@ -2140,6 +2175,10 @@ def _segment_spans(text):
     while i < len(text):
         if state[i]:
             i += 1
+            continue
+        if text.startswith('\\\n', i):
+            # #779 round 6: a backslash-newline continues the line (`bash \\<NL> -c 'X'`)
+            i += 2
             continue
         hit = next((d for d in DELIMS if text.startswith(d, i)), None)
         if hit is None and text[i] == '&' and text[i + 1:i + 2] != '>' and text[i - 1:i] not in ('<', '>'):
@@ -2697,12 +2736,13 @@ _IMPORT_LIST_RE = re.compile(r'(?<![\w.])import[ \t]+(\w+(?:[ \t]+as[ \t]+\w+)?(
 _CP_MODULE = r'[\'"](?:node:)?child_process[\'"]'
 _JS_CP_ALIAS_RE = re.compile(
     # #779 review 3835: any assignment, not only right after const (`const a=1, cp=require(..)`)
-    r'(?<![\w$.])([\w$]+)\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)(?!\s*\.)')
+    # #779 round 6: nested parentheses around the module (`require( ( "node:child_process" ) )`)
+    r'(?<![\w$.])([\w$]+)\s*=\s*require\(\s*(?:\(\s*)*' + _CP_MODULE + r'\s*(?:\)\s*)*\)(?![\s)]*\.)')
 # an ES import clause: default, `* as ns`, `{named}`, or default plus one of the other two
 _JS_CP_IMPORT_RE = re.compile(
     r'(?<![\w$.])import\s*((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^}]*\})|[\w$]+)\s*from\s*' + _CP_MODULE)
 _JS_CP_NAMED_RE = re.compile(
-    r'(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*' + _CP_MODULE + r'\s*\)')
+    r'(?<![\w$.])\{([^}]*)\}\s*=\s*require\(\s*(?:\(\s*)*' + _CP_MODULE + r'\s*(?:\)\s*)*\)')
 # #779 review 3835: a parenthesised import may span lines, a bare one may continue with a backslash
 _FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+(?:\(([^)]*)\)|((?:[\w \t,]|\\\n)+))')
 _EXEC_FAMILY_RE = re.compile(r'(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($')
@@ -2743,14 +2783,29 @@ def interpreter_payloads(cmd):
     text = _blank_ranges(text, _comment_ranges(text))
     # Bizonytalan olvasasnal a tobbi torzs is lehet program: azt is kodkent nezzuk.
     out = [text[a:b] for a, b in code + ([] if certain else plain)]
-    out += [text[a:b] for a, b in _script_arg_ranges(text)]
+    for group in _script_arg_groups(text):
+        out += [text[a:b] for a, b, _ansi in group]
+        # #779 round 6: `-c "a"'b'` is one program, `$'..'` decodes its escapes
+        if len(group) > 1 or any(ansi for _a, _b, ansi in group):
+            out.append(''.join(_c_unescape(text[a:b]) if ansi else text[a:b] for a, b, ansi in group))
     for a, b in _stdin_pipe_ranges(text):
         out.append(text[a:b])
-        # #779 round 5: `printf 'import os\nos.system(..)' | python3` -- the escapes are the newlines
-        dec = text[a:b].replace('\\n', '\n').replace('\\t', '\t')
+        # #779 round 5/6: `printf 'import os\nos.system(..)' | python3` (also \x0a, \012)
+        dec = _c_unescape(text[a:b])
         if dec != text[a:b]:
             out.append(dec)
     return [p for p in out if p.strip()]
+
+
+def _c_unescape(s):
+    """#779 round 6: the escapes printf, echo -e and $'..' turn into characters: \\n \\t \\r,
+    \\xHH, and octal \\NNN / \\0NNN. The JS twin: cUnescape."""
+    def rep(m):
+        e = m.group(1)
+        if e in ('n', 't', 'r'):
+            return {'n': '\n', 't': '\t', 'r': '\r'}[e]
+        return chr(int(e[1:], 16) if e[0] == 'x' else int(e, 8))
+    return re.sub(r'\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr])', rep, s)
 
 
 def _stdin_pipe_ranges(text):
@@ -2858,7 +2913,8 @@ def _literal_spans(payload):
 def _perl_quotes(payload):
     """#779 round 5: perl's quote operators with parentheses as plain calls and literals:
     `qx(X)` runs X, so it reads as `system("X")`; `qq(X)` / `q(X)` is the literal "X". Only the
-    parenthesis form without nesting; qx{..}, qx/../ and backticks are a known limit."""
+    parenthesis form without nesting, also with a space (`qx (X)`, #779 round 6); qx{..}, qx/../ and
+    backticks are a known limit, pinned in scripts/__tests__/shell-out-cases.json."""
     def lit(body):
         q = '"' if '"' not in body else ("'" if "'" not in body else None)
         return q and q + body + q
@@ -2868,7 +2924,18 @@ def _perl_quotes(payload):
         if s is None:
             return m.group(0)
         return f'system({s})' if m.group(1) == 'x' else s
-    return re.sub(r'(?<![\w$@%])q([qx]?)\(([^()\n]*)\)', rep, payload)
+    return re.sub(r'(?<![\w$@%])q([qx]?)[ \t]*\(([^()\n]*)\)', rep, payload)
+
+
+def _importlib_aliases(payload):
+    """#779 round 6: `from importlib import import_module as im` and `import importlib as il`
+    rename the module loader; the alias reads as the loader (`im("os")` -> `import_module("os")`).
+    The JS twin: importlibAliases."""
+    for m in re.finditer(r'(?<![\w.])from\s+importlib\s+import\s+import_module\s+as\s+(\w+)', payload):
+        payload = re.sub(r'(?<![\w.])' + m.group(1) + r'\s*\(', 'import_module(', payload)
+    for m in re.finditer(r'(?<![\w.])import\s+importlib\s+as\s+(\w+)', payload):
+        payload = re.sub(r'(?<![\w.])' + m.group(1) + r'\s*\.\s*import_module\b', 'importlib.import_module', payload)
+    return payload
 
 
 def shell_out_commands(payload):
@@ -2880,7 +2947,7 @@ def shell_out_commands(payload):
     (concatenation, an f-string with a variable, base64) is NOT read: obfuscation, a known
     limit kept in scripts/__tests__/shell-out-cases.json. A call written INSIDE a string
     literal is data, not a call (`note = 'os.system("claude -p ..")'`, a card comment)."""
-    payload = _perl_quotes(payload)
+    payload = _importlib_aliases(_perl_quotes(payload))
     out = []
     rxs = [_SHELLOUT_RE] + [r for r in (_imported_shellout_re(payload),) if r]
     hits = sorted({(m.start(), m.end()): m for rx in rxs for m in rx.finditer(payload)}.items())

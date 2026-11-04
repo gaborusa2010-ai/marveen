@@ -346,6 +346,18 @@
    "programs": [
     "claude -p hi"
    ]
+  },
+  {
+   "cmd": "bash 2>&1 -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "bash \\\n -c 'claude -p hi'",
+   "programs": [
+    "claude -p hi"
+   ]
   }
  ]
 }

