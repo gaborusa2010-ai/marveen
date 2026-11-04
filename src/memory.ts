@@ -119,8 +119,12 @@ export async function saveConversationTurn(
 
 export function runDecaySweep(): void {
   dbDecay()
-  const hotDemoted = demoteStaleHotMemories()
-  const notificationsClosed = autoCloseStaleNotifications()
+  // The two tidy steps are new and optional: a failure in either must not skip
+  // the retention prunes and the compaction below (review of 5547e4b1, #638).
+  let hotDemoted = 0
+  let notificationsClosed = 0
+  try { hotDemoted = demoteStaleHotMemories() } catch (err) { logger.warn({ err }, 'demoteStaleHotMemories failed') }
+  try { notificationsClosed = autoCloseStaleNotifications() } catch (err) { logger.warn({ err }, 'autoCloseStaleNotifications failed') }
   pruneAuditLogs()
   const tokenRowsPruned = pruneTokenUsage()
   const convRowsPruned = pruneConversationLog()

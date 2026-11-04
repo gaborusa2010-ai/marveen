@@ -859,7 +859,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     default: 0,
     min: 0,
     max: 365,
-    description: 'A hot emlékek automatikus átsorolása warm-ba, ha ennyi napja senki nem olvasta őket (accessed_at). 0 = soha (ez az alapértelmezés). Javasolt érték: 3 nap. Nem töröl: az átsorolás verziózott, a régi állapot visszaállítható, az író "decay".',
+    description: 'A hot emlékek automatikus átsorolása warm-ba, ha ennyi napja egyetlen keresés sem találta meg őket (accessed_at; a sima hot-lista lekérése NEM számít olvasásnak). 0 = soha (ez az alapértelmezés). Javasolt érték: 3 nap. Nem töröl: az átsorolás verziózott, a régi állapot visszaállítható, az író "decay".',
     module: 'system',
     secret: false,
     requiresRestart: false,
