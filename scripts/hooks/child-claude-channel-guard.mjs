@@ -56,7 +56,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { find as findHeredocs, findAll } from './lib/heredoc-scan.mjs'
-import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, shellCPrograms, programHeredocs, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, embeddedCommands, SHELLS, INTERPRETERS } from './lib/heredoc-program.mjs'
 
 const SAFE_FIRST_ARGS = new Set(['--version', '-v', '-V', '--help', '-h', 'install', 'update', 'auth'])
 // Subcommands that only edit configuration and start no MCP or plugin server.
@@ -64,6 +64,7 @@ const SAFE_SUBCOMMANDS = [['mcp', 'add'], ['mcp', 'add-json'], ['mcp', 'remove']
 const SEGMENT_SPLIT = /\|\||&&|[;|&\n]|\$\(|`|\(/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const WRAPPERS = new Set(['exec', 'nohup', 'time', 'command', 'builtin', 'caffeinate'])
+const LAUNCHER_VALUES = { nice: ['-n', '--adjustment'], ionice: ['-c', '-n', '-p', '--class', '--classdata'], setsid: [], stdbuf: ['-i', '-o', '-e'] }
 // Placeholders for whitespace and separators inside quoted text (see stripInertText).
 const Q_SPACE = '\u0001'
 const Q_SEP = '\u0002'
@@ -122,6 +123,13 @@ export function inspectSegment(segment) {
     const w = t[i]
     if (WRAPPERS.has(w)) { i++; continue }
     if (w === 'timeout' || w === 'gtimeout') { i += 2; continue }
+    // #779: launchers that pass the environment through unchanged (`nice -n 5 claude`)
+    const launcher = w.split('/').pop()
+    if (Object.hasOwn(LAUNCHER_VALUES, launcher)) {
+      i++
+      while (i < t.length && t[i].startsWith('-')) i += LAUNCHER_VALUES[launcher].includes(t[i]) ? 2 : 1
+      continue
+    }
     if (w === 'env' || w === '/usr/bin/env') {
       i++
       while (i < t.length && (t[i].startsWith('-') || ASSIGNMENT.test(t[i]))) {
@@ -330,6 +338,7 @@ function nestedPrograms(command) {
   }
   out.push(...shellCPrograms(command))
   out.push(...gdbArgsPrograms(command))   // `gdb -ex run --args PROG` runs PROG (#777 review 14)
+  out.push(...embeddedCommands(command))  // `os.system("claude -p ..")` in a code payload (#779)
   return out
 }
 

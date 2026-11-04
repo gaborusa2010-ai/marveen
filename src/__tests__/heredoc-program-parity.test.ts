@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 // @ts-expect-error -- plain .mjs module, no types
 import { findAll } from '../../scripts/hooks/lib/heredoc-scan.mjs'
 // @ts-expect-error -- plain .mjs module, no types
-import { heredocRunsBody, functionBodies, programHeredocs, dataBodySubstitutions, shellCPrograms } from '../../scripts/hooks/lib/heredoc-program.mjs'
+import { heredocRunsBody, functionBodies, programHeredocs, dataBodySubstitutions, shellCPrograms, embeddedCommands } from '../../scripts/hooks/lib/heredoc-program.mjs'
 
 type Case = { name: string; cmd: string; expect: boolean[]; bash_runs: boolean | null; bash_note?: string }
 const file = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'heredoc-program-cases.json'), 'utf-8'))
@@ -21,6 +21,8 @@ const cases: Case[] = file.cases
 const PAYLOAD = 'echo PWNED_MARK'
 type CCase = { cmd: string; programs: string[] }
 const cCases: CCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-c-program-cases.json'), 'utf-8')).cases
+type OCase = { name: string; cmd: string; commands: string[]; note?: string }
+const oCases: OCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-out-cases.json'), 'utf-8')).cases
 
 describe('heredoc-program twin: JS reads every case like the Python side', () => {
   it('has the full case file', () => {
@@ -45,6 +47,17 @@ describe('heredoc-program twin: JS reads every case like the Python side', () =>
     expect(cCases.length).toBeGreaterThanOrEqual(30)
     const bad = cCases.filter((c) => JSON.stringify(shellCPrograms(c.cmd)) !== JSON.stringify(c.programs))
     expect(bad.map((c) => c.cmd)).toEqual([])
+  })
+
+  // #779: shell commands a code payload hands to a shell; Python's embedded_commands is pinned to the same file
+  it('reads every embedded shell-out like the Python twin', () => {
+    expect(oCases.length).toBeGreaterThanOrEqual(300)
+    const bad = oCases.filter((c) => JSON.stringify(embeddedCommands(c.cmd)) !== JSON.stringify(c.commands))
+    expect(bad.map((c) => c.name)).toEqual([])
+    const neg = oCases.filter((c) => c.name.startsWith('neg/'))
+    expect(neg.length).toBeGreaterThanOrEqual(20)
+    expect(neg.filter((c) => /claude|curl|rm -rf/.test(c.commands.join(' '))).map((c) => c.name)).toEqual([])
+    expect(oCases.some((c) => (c.note ?? '').startsWith('known limit'))).toBe(true)
   })
 
   it('names the consumer, so the egress gate can pick the shell or the code reading', () => {

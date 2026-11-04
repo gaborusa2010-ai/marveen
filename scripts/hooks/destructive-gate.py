@@ -77,7 +77,7 @@ Regresszios teszt: scripts/__tests__/destructive-gate.test.py
 
 Blokkolas: exit 2 + indoklas a stderr-re (a Claude Code ezt visszaadja az agensnek).
 """
-import fnmatch, json, os, re, sys
+import fnmatch, json, os, re, shlex, sys
 
 # Parancsok, amelyeket nem az agens dont el. Nem stilus-kerdes: mindegyik adatot vagy
 # allapotot semmisit meg visszafordithatatlanul.
@@ -2031,13 +2031,38 @@ def _prose_quote_ranges(text, keep_ranges, code_ranges=()):
 
 
 def _script_arg_ranges(text):
-    """Az ertelmezonek -c/-e utan atadott idezett szkript tartomanyai: ez FUTO KOD."""
+    """Az ertelmezonek -c/-e utan atadott idezett szkript tartomanyai: ez FUTO KOD.
+    #779: a szkript-kapcsolo elott allhat mas kapcsolo (`python3 -I -c`, `node --no-warnings
+    -e`, `python3 -W ignore -c`), es a kapcsolocsoport vegen is allhat (`perl -le`, `python3
+    -Ic`). A JS iker: lib/heredoc-program.mjs scriptArgPrograms."""
     out = []
     state = _quote_map(text)
-    for m in re.finditer(r'(?<![\w-])(python3?|bash|sh|zsh|node|perl|ruby|php)\s+(-\w|--\w+)', text):
-        if m.group(2) not in SCRIPT_FLAGS:
-            continue
+    for m in re.finditer(r'(?<![\w-])(python3?|bash|sh|zsh|node|perl|ruby|php)(?=[ \t])', text):
         k = m.end()
+        while True:
+            while k < len(text) and text[k] in ' \t':
+                k += 1
+            j = k
+            while j < len(text) and text[j] not in ' \t\n' and not state[j]:
+                j += 1
+            word = text[k:j]
+            if word in SCRIPT_FLAGS or re.fullmatch(r'-[A-Za-z]*[ceE]', word):
+                k = j
+                break
+            if word in ('-W', '-X'):
+                k = j
+                while k < len(text) and text[k] in ' \t':
+                    k += 1
+                while k < len(text) and text[k] not in ' \t\n' and not state[k]:
+                    k += 1
+                continue
+            if re.fullmatch(r'-[A-Za-z]+|--[A-Za-z][\w-]*', word):
+                k = j
+                continue
+            k = None
+            break
+        if k is None:
+            continue
         while k < len(text) and text[k] in ' \t':
             k += 1
         if k < len(text) and text[k] in ('"', "'"):
@@ -2184,6 +2209,7 @@ _KEYWORDS = ('if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
              'case', 'esac', 'in', 'select', 'function', 'coproc',
              '!', '{', '}', '(', ')', '[[', ']]')
 _TRANSPARENT = ('exec', 'command', 'time', 'nohup', 'env', 'builtin')
+_TRANSPARENT_VALUE_FLAGS = {('env', '-u'), ('env', '--unset'), ('env', '-C'), ('env', '--chdir'), ('exec', '-a')}
 _PREFIX_WRAPPERS = ('xargs', 'timeout', 'nice', 'ionice', 'stdbuf', 'watch', 'parallel',
                     'flock', 'chroot', 'setsid', 'unbuffer')
 _FIND_EXEC = ('-exec', '-execdir', '-ok', '-okdir')
@@ -2235,7 +2261,13 @@ def command_index(toks):
             i += 1
             continue
         if base in _TRANSPARENT:
+            # #779: the prefix's own options are not the command (`env -i rm`, `env -u X
+            # rm`, `exec -a name rm`, `time -p rm`); `-u`, `-C` and `-a` take a value word.
             i += 1
+            while i < len(toks) and toks[i][0].startswith('-') and not toks[i][1]:
+                if base == 'command' and toks[i][0] in ('-v', '-V'):
+                    return None     # a lookup, it runs nothing
+                i += 2 if (base, toks[i][0]) in _TRANSPARENT_VALUE_FLAGS else 1
             continue
         if base in _PREFIX_WRAPPERS:
             nxt = _after_wrapper(toks, i)
@@ -2252,7 +2284,68 @@ def shell_c_programs(cmd):
     (#777). A check_bash ugyanezen az uton megy; a kozos esetfajl
     (scripts/__tests__/shell-c-program-cases.json) erre es a JS iker shellCPrograms-ara van pinelve."""
     _text, light = _scannable_pair(cmd)
-    return [p for a, b in _segment_spans(light) for p in _c_programs(light[a:b])]
+    return [p for a, b in _segment_spans(light) for p in _c_programs(light[a:b])] + _piped_programs(light)
+
+
+def _piped_programs(light):
+    """#779 (Marveen comment 3627d): `echo 'X' | bash`, `printf '%s\\n' 'X' | sh -s` -- a literal
+    echo/printf piped into a shell that reads its program from stdin; the program is the
+    echoed text. A producer that is not echo/printf (`cat f`, `$X`) stays out of reach.
+    The JS twin is lib/heredoc-program.mjs pipedPrograms (via shellCPrograms)."""
+    spans = _segment_spans(light)
+    out = []
+    for k in range(1, len(spans)):
+        if light[spans[k - 1][1]:spans[k][0]].strip() not in ('|', '|&'):
+            continue
+        if not _shell_reads_stdin(_bare_tokens(light[spans[k][0]:spans[k][1]])):
+            continue
+        prog = _echoed_text(_bare_tokens(light[spans[k - 1][0]:spans[k - 1][1]]))
+        if prog and prog.strip():
+            out.append(prog)
+    return out
+
+
+def _shell_reads_stdin(toks):
+    """Is this simple command a shell whose program comes from stdin (no -c, no file)?"""
+    idx = command_index(toks)
+    if idx is None or toks[idx][1] or os.path.basename(toks[idx][0]) not in _SHELLS:
+        return False
+    j = idx + 1
+    while j < len(toks):
+        x = toks[j][0]
+        if x in ('-o', '+o') or re.fullmatch(r'\d*(?:>>?|&>)', x):
+            j += 2
+            continue
+        if re.match(r'\d*<', x):
+            return False                       # stdin comes from elsewhere
+        if re.fullmatch(r'-[A-Za-z]+', x):
+            if 'c' in x:
+                return False                   # the -c program, _c_programs reads it
+            if 's' in x:
+                return True                    # -s: stdin is the program, the rest are $1..
+        elif not (re.fullmatch(r'\+[A-Za-z]+|--(?:[A-Za-z][\w-]*)?', x) or re.match(r'\d*(?:>>?|&>)', x)):
+            return False                       # a program FILE
+        j += 1
+    return True
+
+
+def _echoed_text(toks):
+    """The text a literal echo/printf writes, or None."""
+    idx = command_index(toks)
+    if idx is None:
+        return None
+    base, args = os.path.basename(toks[idx][0]), [t for t, _sp in toks[idx + 1:]]
+    if base == 'echo':
+        while args and re.fullmatch(r'-[neE]+', args[0]):
+            args = args[1:]
+        return ' '.join(args)
+    if base == 'printf':
+        if args and args[0] == '--':
+            args = args[1:]
+        if not args or args[0] == '-v':
+            return None
+        return '\n'.join(args[1:]) if len(args) > 1 else args[0].replace('\\n', '\n')
+    return None
 
 
 def _c_programs(seg):
@@ -2566,10 +2659,21 @@ _SHELLOUT_RE = re.compile(
     r'(?:(?<![\w$])(?:execSync|spawnSync|execFileSync)|'
     r'require\(\s*[\'"]child_process[\'"]\s*\)\s*\.\s*'
     r'(?:exec|execFile|spawn|execSync|execFileSync|spawnSync)|'
-    r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|subprocess\.(?:run|call|'
-    r'check_call|check_output|Popen|getoutput)|child_process\.(?:exec|execSync|'
-    r'execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
+    r'(?<![\w.])(?:os\.system|os\.popen|os\.exec[lv]?[pe]*|os\.spawn[lv]p?e?|pty\.spawn|'
+    r'subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|'
+    r'child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)|IO\.popen|'
     r'Open3\.(?:capture2|capture3|popen3)|system|exec|qx))\s*\(')
+# #779: a Python import can rename the call (`from subprocess import run`, `import
+# subprocess as sp`); those names are shell-outs too. The JS twin (lib/heredoc-program.mjs
+# shellOutCommands) reads the same table; scripts/__tests__/shell-out-cases.json pins both.
+_SHELLOUT_MEMBERS = {
+    'subprocess': r'run|call|check_call|check_output|Popen|getoutput|getstatusoutput',
+    'os': r'system|popen|exec[lv]?[pe]*|spawn[lv]p?e?',
+    'pty': r'spawn',
+}
+_IMPORT_AS_RE = re.compile(r'(?<![\w.])import\s+(subprocess|os|pty)\s+as\s+(\w+)')
+_FROM_IMPORT_RE = re.compile(r'(?<![\w.])from\s+(subprocess|os|pty)\s+import\s+\(?([\w \t,]+)')
+_EXEC_FAMILY_RE = re.compile(r'(?:^|\.)(?:exec[lv]?[pe]*|spawn[lv]p?e?)\s*\($')
 _STR_LIT_RE = re.compile(r"(['\"])((?:\\.|(?!\1).)*)\1")
 
 
@@ -2648,6 +2752,95 @@ def _stdin_pipe_ranges(text):
     return out
 
 
+def _imported_shellout_re(payload):
+    """The shell-out names a Python import introduces in this payload (#779), or None."""
+    names = []
+    for mod, alias in _IMPORT_AS_RE.findall(payload):
+        names.append(re.escape(alias) + r'\.(?:' + _SHELLOUT_MEMBERS[mod] + ')')
+    for mod, items in _FROM_IMPORT_RE.findall(payload):
+        for item in items.split(','):
+            parts = item.split()
+            if parts and re.fullmatch(_SHELLOUT_MEMBERS[mod], parts[0]):
+                names.append(re.escape(parts[2] if len(parts) == 3 and parts[1] == 'as' else parts[0]))
+    if not names:
+        return None
+    return re.compile(r'(?<![\w.])(?:' + '|'.join(names) + r')\s*\(')
+
+
+def _literal_spans(payload):
+    """The closed string literals of a code payload, as (start, end) spans: triple quotes,
+    '...', "..." (not across a newline) and `...`. A quote after a backslash opens nothing
+    (an escaped shell quote of a `-c "..."` payload); an unclosed quote is not a literal.
+    The JS twin is lib/heredoc-program.mjs literalSpans."""
+    spans, i, n = [], 0, len(payload)
+    while i < n:
+        ch = payload[i]
+        if ch not in '\'"`' or (i and payload[i - 1] == '\\'):
+            i += 1
+            continue
+        if ch != '`' and payload.startswith(ch * 3, i):
+            j = payload.find(ch * 3, i + 3)
+            if j < 0:
+                break
+            spans.append((i, j + 3))
+            i = j + 3
+            continue
+        j = i + 1
+        while j < n and payload[j] != ch and (ch == '`' or payload[j] != '\n'):
+            j += 2 if payload[j] == '\\' else 1
+        if j < n and payload[j] == ch:
+            spans.append((i, j + 1))
+            i = j + 1
+        else:
+            i += 1
+    return spans
+
+
+def shell_out_commands(payload):
+    """The shell commands a code payload hands to a shell or exec: the string literals in
+    the arguments of a known shell-out call (#779). One literal is a shell string; several
+    are an argv, joined with the space-holding words quoted so `["bash", "-c", "rm -rf x"]`
+    keeps its -c program. An exec/spawn call's leading file literal is dropped when argv[0]
+    repeats it (`os.execvp("bash", ["bash", "-c", X])`). A string built at run time
+    (concatenation, an f-string with a variable, base64) is NOT read: obfuscation, a known
+    limit kept in scripts/__tests__/shell-out-cases.json. A call written INSIDE a string
+    literal is data, not a call (`note = 'os.system("claude -p ..")'`, a card comment)."""
+    out = []
+    rxs = [_SHELLOUT_RE] + [r for r in (_imported_shellout_re(payload),) if r]
+    hits = sorted({(m.start(), m.end()): m for rx in rxs for m in rx.finditer(payload)}.items())
+    spans = _literal_spans(payload) if hits else []
+    for (start, end), m in hits:
+        if any(a < start < b for a, b in spans):
+            continue
+        arg = _balanced_arg(payload, payload.index('(', end - 1))
+        words = [g2 for _g1, g2 in _STR_LIT_RE.findall(arg)]
+        if (len(words) >= 2 and _EXEC_FAMILY_RE.search(m.group(0))
+                and os.path.basename(words[0]) == os.path.basename(words[1])):
+            words = words[1:]
+        if len(words) == 1:
+            inner = words[0].strip()
+        else:
+            inner = ' '.join(shlex.quote(w) if re.search(r'\s', w) else w for w in words).strip()
+        if inner and inner not in out:
+            out.append(inner)
+    return out
+
+
+def embedded_commands(cmd):
+    """Every shell command a code payload of `cmd` hands to a shell (#779); the shared case
+    file scripts/__tests__/shell-out-cases.json pins this to the JS twin embeddedCommands."""
+    out = []
+    records, _certain = _heredoc_scan().find_all(cmd)
+    funcs = _function_bodies(cmd) if records else {}
+    herestrings = [h.text for h in records
+                   if h.kind == 'herestring' and h.text.strip() and _heredoc_runs_body(cmd, h, funcs)]
+    for payload in interpreter_payloads(cmd) + herestrings:
+        for inner in shell_out_commands(payload):
+            if inner not in out:
+                out.append(inner)
+    return out
+
+
 def check_payload(payload, _depth=0, cwd=None):
     """A ma is tiltott muveletek az ertelmezo-burkon BELUL."""
     for rx, equivalent in _PAYLOAD_RE:
@@ -2657,14 +2850,9 @@ def check_payload(payload, _depth=0, cwd=None):
                   '"%s" megfeleloje, amit a kapu a shellben is tilt. A burok nem valtoztat '
                   'a dontesen.\n(a payload reszlete: %s)'
                   % (m.group(0).strip(), equivalent, payload[:160]))
-    for m in _SHELLOUT_RE.finditer(payload):
-        arg = _balanced_arg(payload, payload.index('(', m.end() - 1))
-        words = [g2 for _g1, g2 in _STR_LIT_RE.findall(arg)]
-        if not words:
-            continue
-        inner = ' '.join(words).strip()
-        if not inner or _depth >= _MAX_NEST:
-            continue
+    if _depth >= _MAX_NEST:
+        return
+    for inner in shell_out_commands(payload):
         # Ugyanaz a szabalykeszlet, nem egy masodik lista: a kihivott parancs
         # visszamegy a check_bash-be.
         check_bash(inner, _depth + 1, cwd)
@@ -2748,6 +2936,13 @@ def check_bash(cmd, _depth=0, cwd=None):
                 block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
                       'vegigkovetni, ezert nem engedi at.' % _depth)
             check_bash(sub, _depth + 1, cwd)
+
+    # #779: `echo 'X' | bash` -- the echoed literal is the program of the shell reading it.
+    for prog in _piped_programs(light):
+        if _depth >= _MAX_NEST:
+            block('Tul melyen agyazott parancs (%d szint): a kapu nem tudja '
+                  'vegigkovetni, ezert nem engedi at.' % _depth)
+        check_bash(prog, _depth + 1, None if saw_cd else entry_cwd)
 
     # #777: az itt-string (`bash <<< 'rm -rf x'`, `sh <<< "$(cat f)"`) szava PROGRAM, ha
     # a fogado a stdin-jet futtatja (ugyanaz a kerdes, mint a heredocnal). A dinamikus szo

