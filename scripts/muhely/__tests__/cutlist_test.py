@@ -167,7 +167,7 @@ def test_half_mm_survives_print():
         check(f"szoveg: {want} betu szerint", want in r.stdout, True)
         check(f"pdf: {want} betu szerint", want in txt, True)
     check("szoveg: nincs 524/1856 /2116", any(b in r.stdout for b in ("524 ", "x 1856 ", "2116")), False)
-    check("pdf: a lab VAGASI meretet mond", "VAGASI meret" in txt and "keszmeret" not in txt, True)
+    check("pdf: a lab VAGASI meretet mond", "VÁGÁSI méret" in txt and "keszmeret" not in txt, True)
 
 
 def _pdf_text(job):
@@ -198,12 +198,12 @@ def test_pdf_has_grain_and_edging_columns():
                      {"name": "polc", "w": 1162, "h": 443, "qty": 2, "grain": "w",
                       "edging": "2mm sz:0 m:1"}]}
     txt = _pdf_text(job)
-    check("pdf: SZALIRANY oszlop", "SZALIRANY" in txt, True)
-    check("pdf: ELSZALAG oszlop", "ELSZALAG" in txt, True)
-    check("pdf: allo darab a MAGAS menten", "a MAGAS menten" in txt, True)
-    check("pdf: fekvo darab a SZELES menten", "a SZELES menten" in txt, True)
+    check("pdf: SZALIRANY oszlop", "SZÁLIRÁNY" in txt, True)
+    check("pdf: ELSZALAG oszlop", "ÉLSZALAG" in txt, True)
+    check("pdf: allo darab a MAGAS menten", "a MAGAS mentén" in txt, True)
+    check("pdf: fekvo darab a SZELES menten", "a SZÉLES mentén" in txt, True)
     check("pdf: az elszalag erteke latszik", "2mm sz:0 m:1" in txt, True)
-    check("pdf: kitoltott lista nem 'nincs kesz'", "NINCS KESZ" in txt, False)
+    check("pdf: kitoltott lista nem 'nincs kesz'", "NINCS KÉSZ" in txt, False)
 
 
 def test_pdf_flags_missing_grain_and_edging():
@@ -211,7 +211,7 @@ def test_pdf_flags_missing_grain_and_edging():
     job = {"job": "t", "stock": {"w": 2440, "h": 1220},
            "parts": [{"name": "ajto", "w": 500, "h": 700, "qty": 1}]}
     txt = _pdf_text(job)
-    check("pdf: hianyzo elszalag -> a lista nincs kesz", "A LISTA NINCS KESZ" in txt, True)
+    check("pdf: hianyzo elszalag -> a lista nincs kesz", "A LISTA NINCS KÉSZ" in txt, True)
     check("pdf: hianyzo szalirany kiirva", "NINCS MEGADVA" in txt, True)
 
 
@@ -276,17 +276,17 @@ def test_oversized_blank_is_unplaced():
 
 def test_special_sections_in_text_and_pdf():
     rc, out, _ = _run(_curved_job())
-    check("szoveg: NYERS MERETRE VAGVA", "NYERS MERETRE VAGVA" in out, True)
-    check("szoveg: nyers -> kesz", "nyers 900 x 760  ->  kesz 853.5 x 700" in out, True)
-    check("szoveg: SABLON sor", "SABLON, nem butor" in out and "sablon borda" in out, True)
+    check("szoveg: NYERS MERETRE VAGVA", "NYERS MÉRETRE VÁGVA" in out, True)
+    check("szoveg: nyers -> kesz", "nyers 900 x 760  ->  kész 853.5 x 700" in out, True)
+    check("szoveg: SABLON sor", "SABLON, nem bútor" in out and "sablon borda" in out, True)
     check("szoveg: BESZERELES UTAN SZABVA", "BESZERELES UTAN SZABVA" in out and "teto" in out, True)
     job = _curved_job(note="hajlithato MDF 2x9 mm, egymasra ragasztva")
     txt = _pdf_text(job)
     flat = " ".join(txt.split())
     check("pdf: a nyers sor VAGASI meretet mutat", "900 760" in flat, True)
-    check("pdf: a kesz meret a megjegyzesben", "NYERS, kesz 853.5x700" in flat, True)
-    check("pdf: sablon jelolve", "SABLON, nem butor" in flat, True)
-    check("pdf: beszereles utan szabva", "beszereles utan szabva" in flat, True)
+    check("pdf: a kesz meret a megjegyzesben", "NYERS, kész 853.5x700" in flat, True)
+    check("pdf: sablon jelolve", "SABLON, nem bútor" in flat, True)
+    check("pdf: beszereles utan szabva", "beszerelés után szabva" in flat, True)
     check("pdf: hosszu megjegyzes nem vagodik le", "egymasra ragasztva" in flat, True)
 
 

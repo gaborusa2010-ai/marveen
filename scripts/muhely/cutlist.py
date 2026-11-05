@@ -171,11 +171,11 @@ def special_note(p):
     """Short MEGJEGYZES text for a curved, jig or fitted part ('' for a plain one)."""
     bits = []
     if p.get("role") == "jig":
-        bits.append("SABLON, nem butor")
+        bits.append("SABLON, nem bútor")
     if p.get("blank"):
-        bits.append(f"NYERS, kesz {mm(float(p['w']))}x{mm(float(p['h']))}")
+        bits.append(f"NYERS, kész {mm(float(p['w']))}x{mm(float(p['h']))}")
     if p.get("fit") == "install":
-        bits.append("beszereles utan szabva")
+        bits.append("beszerelés után szabva")
     return "; ".join(bits)
 
 
@@ -254,8 +254,8 @@ def to_svg(sheet, index, label, scale=0.25):
                        f'font-size="8" text-anchor="middle" fill="#444">'
                        f'{mm(p.w)}x{mm(p.h)}{" R" if p.rotated else ""}</text>')
     out.append(f'<text x="4" y="{h + 18:.0f}" font-family="sans-serif" font-size="11" fill="#111">'
-               f'{label} | tabla {index}: {mm(sheet.w)}x{mm(sheet.h)} mm, '
-               f'hulladek {sheet.waste_pct():.1f}%</text>')
+               f'{label} | tábla {index}: {mm(sheet.w)}x{mm(sheet.h)} mm, '
+               f'hulladék {sheet.waste_pct():.1f}%</text>')
     out.append("</svg>")
     return "\n".join(out)
 
@@ -267,7 +267,7 @@ PDF_COLOURS = [(0.81, 0.89, 0.97), (0.84, 0.94, 0.85), (0.98, 0.90, 0.78),
                (0.90, 0.90, 0.78), (0.86, 0.86, 0.94)]
 
 
-GRAIN_LABEL = {"w": "a SZELES menten", "h": "a MAGAS menten",
+GRAIN_LABEL = {"w": "a SZÉLES mentén", "h": "a MAGAS mentén",
                "any": "mindegy", "none": "mindegy"}
 
 
@@ -308,8 +308,8 @@ def _parts_pages(job_name, parts, W, H, assumptions=()):
     """
     RED = (0.7, 0, 0)
     no_edging = not any("edging" in p for p in parts)
-    cols = [(40, "ALKATRESZ"), (210, "SZELES"), (270, "MAGAS"), (330, "DB"),
-            (360, "ANYAG"), (420, "SZALIRANY"), (530, "ELSZALAG"), (640, "MEGJEGYZES")]
+    cols = [(40, "ALKATRÉSZ"), (210, "SZÉLES"), (270, "MAGAS"), (330, "DB"),
+            (360, "ANYAG"), (420, "SZÁLIRÁNY"), (530, "ÉLSZALAG"), (640, "MEGJEGYZÉS")]
     pages, pg, y = [], None, 0
     for i, p in enumerate(parts):
         # Wrapped, not cut: a truncated note dropped "beszereles utan szabva"
@@ -323,12 +323,12 @@ def _parts_pages(job_name, parts, W, H, assumptions=()):
             pg = Page(W, H)
             pages.append(pg)
             y = H - 42
-            pg.text(40, y, f"{job_name or 'Szabaslista'}: SZABASLISTA", size=14, font="F2")
+            pg.text(40, y, f"{job_name or 'Szabáslista'}: SZABÁSLISTA", size=14, font="F2")
             y -= 18
             if no_edging:
-                pg.text(40, y, "A LISTA NINCS KESZ: egyetlen soron sincs elszalag megadva. "
-                               "Az elszalag elenkent megy, es minden szalagos el 2 mm-t "
-                               "vesz le abbol a meretbol.", size=9, font="F2", colour=RED)
+                pg.text(40, y, "A LISTA NINCS KÉSZ: egyetlen soron sincs élszalag megadva. "
+                               "Az élszalag élenként megy, és minden szalagos él 2 mm-t "
+                               "vesz le abból a méretből.", size=9, font="F2", colour=RED)
                 y -= 14
             # A generator's default (ives.py --job: allowance, form band) is not
             # the owner's number; on paper it must not look like one (#747).
@@ -362,8 +362,8 @@ def _parts_pages(job_name, parts, W, H, assumptions=()):
             pg.text(640, y - 8 * k, line, size=7, colour=(0.35, 0.35, 0.35))
         y -= 11 + 8 * max(0, len(lines) - 1)
     if pg is not None:
-        pg.text(40, 28, "SZALIRANY: merre fusson az erezet az alkatreszen. A meretek mm-ben, "
-                        "VAGASI meret (a carcass.py-bol jovo listan az elszalag mar levonva).",
+        pg.text(40, 28, "SZÁLIRÁNY: merre fusson az erezet az alkatrészen. A méretek mm-ben, "
+                        "VÁGÁSI méret (a carcass.py-ból jövő listán az élszalag már levonva).",
                 size=7.5, colour=(0.45, 0.45, 0.45))
     return pages
 
@@ -378,20 +378,20 @@ def render_pdf(result, path, parts=None):
     # --- summary page ---
     pg = Page(W, H)
     y = H - 50
-    pg.text(40, y, result["job"] or "Szabaslista", size=18, font="F2")
+    pg.text(40, y, result["job"] or "Szabáslista", size=18, font="F2")
     y -= 26
-    pg.text(40, y, f"Furreszres {result['kerf']} mm", size=10, colour=(0.3, 0.3, 0.3))
+    pg.text(40, y, f"Fűrészrés {result['kerf']} mm", size=10, colour=(0.3, 0.3, 0.3))
     y -= 26
     for e in result["materials"]:
         pg.text(40, y, f"{e['label']}", size=12, font="F2")
-        cost = f"   koltseg {e['cost']:.2f}" if e["stock"]["price"] else ""
-        pg.text(300, y, f"{e['sheets_needed']} db tabla "
+        cost = f"   költség {e['cost']:.2f}" if e["stock"]["price"] else ""
+        pg.text(300, y, f"{e['sheets_needed']} db tábla "
                         f"({mm(e['stock']['w'])} x {mm(e['stock']['h'])} mm)"
-                        f"   hulladek {e['waste_pct']}%{cost}", size=10)
+                        f"   hulladék {e['waste_pct']}%{cost}", size=10)
         y -= 18
     if result.get("total_cost"):
         y -= 8
-        pg.text(40, y, f"ANYAGKOLTSEG OSSZESEN: {result['total_cost']:.2f}",
+        pg.text(40, y, f"ANYAGKÖLTSÉG ÖSSZESEN: {result['total_cost']:.2f}",
                 size=12, font="F2")
         y -= 22
     if result.get("unplaced"):
@@ -419,10 +419,10 @@ def render_pdf(result, path, parts=None):
         sw, sh_mm = e["stock"]["w"], e["stock"]["h"]
         for sheet in e["sheets"]:
             pg = Page(W, H)
-            pg.text(40, H - 42, f"{result['job'] or 'Szabaslista'}", size=14, font="F2")
+            pg.text(40, H - 42, f"{result['job'] or 'Szabáslista'}", size=14, font="F2")
             pg.text(40, H - 60,
-                    f"{e['label']}   |   {sheet['index']}. tabla / {e['sheets_needed']}"
-                    f"   |   {mm(sw)} x {mm(sh_mm)} mm   |   hulladek {sheet['waste_pct']}%",
+                    f"{e['label']}   |   {sheet['index']}. tábla / {e['sheets_needed']}"
+                    f"   |   {mm(sw)} x {mm(sh_mm)} mm   |   hulladék {sheet['waste_pct']}%",
                     size=10, colour=(0.25, 0.25, 0.25))
 
             draw_w, draw_h = 470.0, 380.0
@@ -448,8 +448,8 @@ def render_pdf(result, path, parts=None):
             # parts table down the right hand side
             tx = ox + bw + 22
             ty = oy_top - 6
-            pg.text(tx, ty, "ALKATRESZ", size=8, font="F2")
-            pg.text(tx + 120, ty, "MERET", size=8, font="F2")
+            pg.text(tx, ty, "ALKATRÉSZ", size=8, font="F2")
+            pg.text(tx + 120, ty, "MÉRET", size=8, font="F2")
             ty -= 12
             for pl in sorted(sheet["parts"], key=lambda q: (q["y"], q["x"])):
                 if ty < 50:
@@ -460,9 +460,9 @@ def render_pdf(result, path, parts=None):
                 pg.text(tx + 120, ty, "%s x %s%s" % (mm(pl["w"]), mm(pl["h"]), r), size=7.5)
                 ty -= 10.5
 
-            pg.text(40, 28, "R = forgatva. A meretek mm-ben, VAGASI meret (a carcass.py-bol "
-                            "jovo listan az elszalag mar levonva). "
-                            "Vagas elott ellenorizd a tabla tenyleges meretet.",
+            pg.text(40, 28, "R = forgatva. A méretek mm-ben, VÁGÁSI méret (a carcass.py-ból "
+                            "jövő listán az élszalag már levonva). "
+                            "Vágás előtt ellenőrizd a tábla tényleges méretét.",
                     size=7.5, colour=(0.45, 0.45, 0.45))
             pages.append(pg)
 
@@ -529,11 +529,11 @@ def main(argv):
         with open(path) as fh:
             job = json.load(fh)
     except (OSError, ValueError) as e:
-        print(f"A munkafajl nem olvashato JSON: {path}: {e}", file=sys.stderr)
+        print(f"A munkafájl nem olvasható JSON: {path}: {e}", file=sys.stderr)
         return 3
     if not isinstance(job, dict) or not job.get("parts") or "stock" not in job:
-        print("A munkafajlban nincs alkatresz ('parts') vagy tabla ('stock'): "
-              "ures vagast nem adok ki kesz tervkent.", file=sys.stderr)
+        print("A munkafájlban nincs alkatrész ('parts') vagy tábla ('stock'): "
+              "üres vágást nem adok ki kész tervként.", file=sys.stderr)
         return 3
 
     kerf = float(job.get("kerf", DEFAULT_KERF))
@@ -555,28 +555,28 @@ def main(argv):
             v = p.get(key)
             try:
                 if float(v if v is not None else 0) <= 0:
-                    bad.append(f'{p.get("name", "?")}: {key}={v!r} nulla vagy negativ')
+                    bad.append(f'{p.get("name", "?")}: {key}={v!r} nulla vagy negatív')
             except (TypeError, ValueError):
-                bad.append(f'{p.get("name", "?")}: {key}={v!r} nem szam')
+                bad.append(f'{p.get("name", "?")}: {key}={v!r} nem szám')
         b = p.get("blank")
         if b is not None:
             try:
                 bw, bh = float(b["w"]), float(b["h"])
                 if bw + 1e-9 < float(p["w"]) or bh + 1e-9 < float(p["h"]):
-                    bad.append(f'{p.get("name", "?")}: a nyers meret {b["w"]}x{b["h"]} kisebb, '
-                               f'mint a kesz {p["w"]}x{p["h"]}')
+                    bad.append(f'{p.get("name", "?")}: a nyers méret {b["w"]}x{b["h"]} kisebb, '
+                               f'mint a kész {p["w"]}x{p["h"]}')
             except (TypeError, ValueError, KeyError):
-                bad.append(f'{p.get("name", "?")}: blank={b!r} nem w/h szampar')
+                bad.append(f'{p.get("name", "?")}: blank={b!r} nem w/h számpár')
         if p.get("role") not in (None, "jig"):
             bad.append(f'{p.get("name", "?")}: role={p.get("role")!r} ismeretlen (csak "jig")')
         if p.get("fit") not in (None, "install"):
             bad.append(f'{p.get("name", "?")}: fit={p.get("fit")!r} ismeretlen (csak "install")')
     if bad:
-        print("NEM NESTELHETo SOR, a vagasterv nem keszult el:", file=sys.stderr)
+        print("NEM NESTELHETŐ SOR, a vágásterv nem készült el:", file=sys.stderr)
         for b in bad:
             print(f"  - {b}", file=sys.stderr)
-        print("Dontsd el a meretet, vagy vedd ki a sort. "
-              "A listcheck.py ugyanezt nevszerint jelzi.", file=sys.stderr)
+        print("Döntsd el a méretet, vagy vedd ki a sort. "
+              "A listcheck.py ugyanezt névszerint jelzi.", file=sys.stderr)
         return 3
 
     stock_table, substituted = _stock_table(job, all_parts)
@@ -642,7 +642,7 @@ def main(argv):
         render_pdf(result, out, parts=all_parts)
         result["pdf"] = out
         if not as_json:
-            print(f"Nyomtathato szabaslista: {out}")
+            print(f"Nyomtatható szabáslista: {out}")
             print()
 
     # A plan with a part left off is not a finished plan. Until 2026-09-30 this
@@ -656,45 +656,45 @@ def main(argv):
         return rc
 
     print(f"MUNKA: {result['job']}")
-    print(f"Furreszres: {kerf} mm")
+    print(f"Fűrészrés: {kerf} mm")
     for a in result["assumptions"]:
         print(f"  {a}")
     sp = result["special"]
     if sp["blank"]:
-        print("NYERS MERETRE VAGVA (a tablan a nyers meret, kesz meretre kesobb):")
+        print("NYERS MÉRETRE VÁGVA (a táblán a nyers méret, kész méretre később):")
         for b in sp["blank"]:
             print(f"  {b['name']:<20} {b['qty']} db  nyers {mm(b['blank'][0])} x {mm(b['blank'][1])}"
-                  f"  ->  kesz {mm(b['finished'][0])} x {mm(b['finished'][1])}")
+                  f"  ->  kész {mm(b['finished'][0])} x {mm(b['finished'][1])}")
     if sp["jig"]:
-        print(f"SABLON, nem butor (ugyanabbol a lapbol vagjuk): {', '.join(sp['jig'])}")
+        print(f"SABLON, nem bútor (ugyanabból a lapból vágjuk): {', '.join(sp['jig'])}")
     if sp["fit_on_install"]:
-        print(f"BESZERELES UTAN SZABVA (tulmeretre megy ki): {', '.join(sp['fit_on_install'])}")
+        print(f"BESZERELES UTAN SZABVA (túlméretre megy ki): {', '.join(sp['fit_on_install'])}")
     if substituted:
-        print(f"FIGYELEM: ezekhez az anyagokhoz nincs sajat tabla megadva, a MERET "
-              f"es az AR egyetlen tablabol jon: {', '.join(substituted)}. "
-              f"Ellenorizd a tablameretet es az arat, mielott anyagkoltseget mondasz.")
+        print(f"FIGYELEM: ezekhez az anyagokhoz nincs saját tábla megadva, a MÉRET "
+              f"és az ÁR egyetlen táblából jön: {', '.join(substituted)}. "
+              f"Ellenőrizd a táblaméretet és az árat, mielőtt anyagköltséget mondasz.")
     print()
     for e in result["materials"]:
         print(f"=== {e['label']} ({e['material']}) ===")
         print(f"Tabla {mm(e['stock']['w'])} x {mm(e['stock']['h'])} mm, "
               f"szukseges: {e['sheets_needed']} db", end="")
         if e["stock"]["price"]:
-            print(f", koltseg {e['cost']:.2f}")
+            print(f", költség {e['cost']:.2f}")
         else:
             print()
-        print(f"Hulladek: {e['waste_pct']}%")
+        print(f"Hulladék: {e['waste_pct']}%")
         for s in e["sheets"]:
-            print(f"  --- {s['index']}. tabla (hulladek {s['waste_pct']}%) ---")
+            print(f"  --- {s['index']}. tábla (hulladék {s['waste_pct']}%) ---")
             for pl in sorted(s["parts"], key=lambda q: (q["y"], q["x"])):
                 r = " [forgatva]" if pl["rotated"] else ""
                 print(f"    {pl['name']:<20} {mm(pl['w']):>7} x {mm(pl['h']):<7} "
                       f"@ x={pl['x']:.0f} y={pl['y']:.0f}{r}")
         print()
     if result["total_cost"]:
-        print(f"ANYAGKOLTSEG OSSZESEN: {result['total_cost']:.2f}")
+        print(f"ANYAGKÖLTSÉG ÖSSZESEN: {result['total_cost']:.2f}")
     if result["unplaced"]:
         print()
-        print("NEM FER RA A TABLARA (daraboljuk vagy nagyobb tabla kell):")
+        print("NEM FER RA A TABLARA (daraboljuk, vagy nagyobb tábla kell):")
         for u in result["unplaced"]:
             print(f"  [{u['material']}] {u['name']}  {mm(u['w'])} x {mm(u['h'])}")
     return rc

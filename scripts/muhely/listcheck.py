@@ -95,16 +95,16 @@ def check(job, overall=None):
         for p in parts)
     src = job.get("slope_source")
     if src is not None and src not in ("mert", "nincs ferde"):
-        findings.append(("FELTETELEZETT SZOG", "az egesz lista",
-                         "a lepcso szoge FELTETELEZETT, nem mert. Ajanlathoz jo, "
-                         "vegleges szabashoz nem: minden allo elem hossza ezen all. "
-                         "Merd le a helyszinen, ird at a slope.source mezot 'mert'-re, "
-                         "es futtasd ujra"))
+        findings.append(("FELTETELEZETT SZOG", "az egész lista",
+                         "a lépcső szöge FELTÉTELEZETT, nem mért. Ajánlathoz jó, "
+                         "végleges szabáshoz nem: minden álló elem hossza ezen áll. "
+                         "Mérd le a helyszínen, írd át a slope.source mezőt 'mert'-re, "
+                         "és futtasd újra"))
     elif src is None and looks_raked:
-        findings.append(("ISMERETLEN EREDETU SZOG", "az egesz lista",
-                         "a lista ferde munkanak latszik, de nincs benne slope_source, "
-                         "tehat nem tudni, merve vagy feltetelezve lett-e a lepcso "
-                         "szoge. Vedd fel a mezot: 'mert', vagy ha nem az, akkor "
+        findings.append(("ISMERETLEN EREDETU SZOG", "az egész lista",
+                         "a lista ferde munkának látszik, de nincs benne slope_source, "
+                         "tehát nem tudni, mérve vagy feltételezve lett-e a lépcső "
+                         "szöge. Vedd fel a mezőt: 'mert', vagy ha nem az, akkor "
                          "'feltetelezett'"))
     # `stock` comes in two shapes: a list of per-material entries, or a single
     # dict that applies to every part (which is what carcass.py --cutlist wrote,
@@ -132,7 +132,7 @@ def check(job, overall=None):
         n = p.get("name", "?")
 
         if not p.get("grain"):
-            findings.append(("NINCS SZALIRANY", n, "lathato alkatresznel kotelezo"))
+            findings.append(("NINCS SZALIRANY", n, "látható alkatrésznél kötelező"))
 
         # 13 UNUSABLE SIZE. Measured 2026-09-12, on a real proposal: put a row in
         # with `w: "tbc"` (the same placeholder that is a DECISION for edging) and
@@ -154,16 +154,16 @@ def check(job, overall=None):
             except (TypeError, ValueError):
                 unusable = True
                 findings.append(("NEM SZAM MERET", n,
-                                 f"{key}={raw_v!r}: ez nem meret, hanem nyitott kerdes egy "
-                                 f"szam helyen. A sor tobbi meret-ellenorzese kimarad, a "
-                                 f"listaen nem: dontsd el, mielott a lap a fureszhez megy"))
+                                 f"{key}={raw_v!r}: ez nem méret, hanem nyitott kérdés egy "
+                                 f"szám helyén. A sor többi méret-ellenőrzése kimarad, a "
+                                 f"listáé nem: döntsd el, mielőtt a lap a fűrészhez megy"))
         if unusable:
             continue
         if dims["w"] <= 0 or dims["h"] <= 0:
             findings.append(("NULLA MERET", n,
-                             f"{p.get('w')} x {p.get('h')}: nulla vagy negativ meret, ez a sor "
-                             f"semmire sem nestelodne. Ha helykitolto, akkor sincs helye a "
-                             f"szabaslistan meret nelkul"))
+                             f"{p.get('w')} x {p.get('h')}: nulla vagy negatív méret, ez a sor "
+                             f"semmire sem nestelődne. Ha helykitöltő, akkor sincs helye a "
+                             f"szabáslistán méret nélkül"))
             continue
 
         numeric_parts.append(p)
@@ -174,14 +174,14 @@ def check(job, overall=None):
             # 38mm rail is perfectly normal, and flagging those trains you to ignore the tool.
             if 0 < v < 100 and 0 < dims["w"] < 100 and 0 < dims["h"] < 100 and key == "w":
                 findings.append(("NEM MILLIMETER", n,
-                                 f"{p.get('w')} x {p.get('h')}: mindket meret 100 alatt, "
-                                 f"valoszinuleg hüvelyk maradt benne"))
+                                 f"{p.get('w')} x {p.get('h')}: mindkét méret 100 alatt, "
+                                 f"valószínűleg hüvelyk maradt benne"))
             if abs(v - round(v, 2)) > 1e-9:
                 findings.append(("CAD TIZEDES", n,
-                                 f"{key}={v}: harom tizedes, ez szamitasi maradek. Kerekitsd 0,5-re"))
+                                 f"{key}={v}: három tizedes, ez számítási maradék. Kerekítsd 0,5-re"))
             elif v and not near_half(v):
                 findings.append(("NEM FEL MILLIRE", n,
-                                 f"{key}={v}: a panelfuresz 0,5 mm-nel pontosabbat nem tud"))
+                                 f"{key}={v}: a panelfűrész 0,5 mm-nél pontosabbat nem tud"))
 
         st = stock.get(p.get("material"))
         if st:
@@ -189,16 +189,16 @@ def check(job, overall=None):
             pw, ph = dims["w"], dims["h"]
             if not ((pw <= bw and ph <= bh) or (pw <= bh and ph <= bw)):
                 findings.append(("NAGYOBB MINT A TABLA", n,
-                                 f"{pw} x {ph} nem fer a {bw} x {bh} tablara"))
+                                 f"{pw} x {ph} nem fér a {bw} x {bh} táblára"))
 
 
     # Edging is a property of the CUT LIST, not of the nesting input. If not one row
     # carries it, say so ONCE: this is either the wrong file or an unfinished list.
     if parts and not any("edging" in p for p in parts):
-        findings.append(("NINCS ELSZALAG OSZLOP", "az egesz lista",
-                         "egyetlen soron sincs elszalag. Ha ez a SZABASLISTA, akkor nincs kesz: "
-                         "az elszalag elenkent megy, es minden szalagos el 2 mm-t vesz le ABBOL a "
-                         "meretbol. Ha ez a nestelo bemenete, akkor rendben, ott nincs ra szukseg"))
+        findings.append(("NINCS ELSZALAG OSZLOP", "az egész lista",
+                         "egyetlen soron sincs élszalag. Ha ez a SZABÁSLISTA, akkor nincs kész: "
+                         "az élszalag élenként megy, és minden szalagos él 2 mm-t vesz le ABBÓL a "
+                         "méretből. Ha ez a nestelő bemenete, akkor rendben, ott nincs rá szükség"))
 
     # 12 UNDECIDED EDGING. The column check above fires only when the WHOLE list
     # is missing edging. A single row that says "tbc" passes it, and passes every
@@ -222,9 +222,9 @@ def check(job, overall=None):
             continue
         if str(raw).strip().lower() in PLACEHOLDER:
             findings.append(("ELDONTETLEN ELSZALAG", p.get("name"),
-                             f"elszalag = \"{raw}\", ez nem dontes. Minden szalagos el 2 mm-t "
-                             f"vesz le ABBOL a meretbol, tehat a {p.get('w')}x{p.get('h')} "
-                             f"meg nem vegleges. Dontsd el, mielott a lap a fureszhez megy"))
+                             f"élszalag = \"{raw}\", ez nem döntés. Minden szalagos él 2 mm-t "
+                             f"vesz le ABBÓL a méretből, tehát a {p.get('w')}x{p.get('h')} "
+                             f"még nem végleges. Döntsd el, mielőtt a lap a fűrészhez megy"))
 
     by_name = defaultdict(set)
     for p in numeric_parts:
@@ -232,8 +232,8 @@ def check(job, overall=None):
     for n, sizes in by_name.items():
         if len(sizes) > 1:
             findings.append(("AZONOS NEV, MAS MERET", n,
-                             " es ".join(f"{a}x{b}" for a, b in sorted(sizes))
-                             + ": az egyiket atirtak, a masikat nem?"))
+                             " és ".join(f"{a}x{b}" for a, b in sorted(sizes))
+                             + ": az egyiket átírták, a másikat nem?"))
 
     opening = job.get("opening")
     if opening:
@@ -248,19 +248,19 @@ def check(job, overall=None):
                 if housed:
                     if slack >= 0:
                         findings.append(("HORONYBA ULO DARAB TUL ROVID", p.get("name"),
-                                         f"{w} egy {opening} nyilasban, de horonyba ul: "
-                                         f"NAGYOBBNAK kell lennie a nyilasnal, ketszer a horonymelyseggel"))
+                                         f"{w} egy {opening} nyílásban, de horonyba ül: "
+                                         f"NAGYOBBNAK kell lennie a nyílásnál, kétszer a horonymélységgel"))
                 elif slack < 0:
                     findings.append(("POLC SZELESEBB A NYILASNAL", p.get("name"),
-                                     f"{w} nem megy be egy {opening} nyilasba"))
+                                     f"{w} nem megy be egy {opening} nyílásba"))
                 elif slack == 0:
                     findings.append(("POLC JATEK NELKUL", p.get("name"),
-                                     f"{w} = a nyilas. Ez FIX polcnal helyes; ha allithato, be fog szorulni"))
+                                     f"{w} = a nyílás. Ez FIX polcnál helyes; ha állítható, be fog szorulni"))
                 elif slack > 4.0:
                     findings.append(("POLC TUL BO", p.get("name"),
-                                     f"{slack:.1f} mm osszes jatek egy {opening} nyilasban. "
-                                     f"A tervek 1,6 es 6,4 kozott adjak, a sajat munkank 1,5-et. "
-                                     f"Ennyi altalaban azt jelenti, hogy rossz nyilashoz meretezted"))
+                                     f"{slack:.1f} mm összes játék egy {opening} nyílásban. "
+                                     f"A tervek 1,6 és 6,4 között adják, a saját munkánk 1,5-et. "
+                                     f"Ennyi általában azt jelenti, hogy rossz nyíláshoz méretezted"))
 
     if overall:
         widest = max((float(p["w"]) for p in numeric_parts), default=0)
@@ -272,8 +272,8 @@ def check(job, overall=None):
                     best = (p.get("name"), k, w)
         if best is None:
             findings.append(("NEM JON KI AZ OSSZMERET", "-",
-                             f"a {overall} mm-es futast egyetlen alkatresz sem adja ki egesz szammal; "
-                             f"a leghosszabb darab {widest}. Ellenorizd kezzel, hogy a reszek osszege = osszmeret"))
+                             f"a {overall} mm-es futást egyetlen alkatrész sem adja ki egész számmal; "
+                             f"a leghosszabb darab {widest}. Ellenőrizd kézzel, hogy a részek összege = összméret"))
     return findings
 
 
@@ -291,8 +291,8 @@ def main(argv):
         job = json.load(fh)
 
     findings = check(job, overall)
-    print(f"LISTA-ELLENORZES: {job.get('job', argv[1])}")
-    print(f"  {len(job.get('parts', []))} alkatresz-sor\n")
+    print(f"LISTA-ELLENŐRZÉS: {job.get('job', argv[1])}")
+    print(f"  {len(job.get('parts', []))} alkatrész-sor\n")
     if not findings:
         print("  Nincs kifogas. A lista atment minden ellenorzesen.")
         return 0
@@ -304,7 +304,7 @@ def main(argv):
         for name, detail in groups[kind][:12]:
             print(f"    - {name}: {detail}")
         if len(groups[kind]) > 12:
-            print(f"    ... es meg {len(groups[kind]) - 12} sor")
+            print(f"    ... és még {len(groups[kind]) - 12} sor")
         print()
     return 1
 
