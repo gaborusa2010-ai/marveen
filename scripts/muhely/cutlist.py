@@ -48,6 +48,18 @@ Input JSON
 
 Set grain on anything with a visible face. Rotating a veneered panel 90 degrees
 gives you a stripe running the wrong way, and it is only obvious after finishing.
+
+Curved and fitted work (#747, from the #740 study of a published arched cabinet):
+  "blank": {"w": 880, "h": 740}   the part is CUT at this raw size and brought to
+                                  "w" x "h" later (after bending, or on site). The
+                                  sheet is nested with the blank; the list shows both.
+                                  A blank smaller than the finished size stops (exit 3).
+  job "assumptions": ["..."]      generator defaults that are not the owner's numbers
+                                  (ives.py --job writes them); printed in red on the
+                                  cut list page and under MUNKA in the text report.
+  "role": "jig"                   a bending form or template piece: cut from the same
+                                  sheets, listed apart as SABLON, never furniture.
+  "fit": "install"                cut oversize, trimmed to fit after installation.
 """
 import json
 import os
@@ -147,18 +159,38 @@ class Sheet:
         return 0.0 if total <= 0 else 100.0 * (total - self.used_area()) / total
 
 
+def cut_size(p):
+    """The size the saw cuts: the raw blank when there is one, else the part."""
+    b = p.get("blank")
+    if b:
+        return float(b["w"]), float(b["h"])
+    return float(p["w"]), float(p["h"])
+
+
+def special_note(p):
+    """Short MEGJEGYZES text for a curved, jig or fitted part ('' for a plain one)."""
+    bits = []
+    if p.get("role") == "jig":
+        bits.append("SABLON, nem butor")
+    if p.get("blank"):
+        bits.append(f"NYERS, kesz {mm(float(p['w']))}x{mm(float(p['h']))}")
+    if p.get("fit") == "install":
+        bits.append("beszereles utan szabva")
+    return "; ".join(bits)
+
+
 def pack(parts, stock_w, stock_h, kerf):
     """First-fit decreasing over an expanding list of sheets."""
     queue = []
     for p in parts:
         grain = str(p.get("grain", "any")).lower()
-        w = float(p["w"])
-        h = float(p["h"])
+        w, h = cut_size(p)
         if grain == "h":
             w, h = h, w
         may_rotate = grain in ("any", "", "none")
+        name = f'{p["name"]} (nyers)' if p.get("blank") else p["name"]
         for n in range(int(p.get("qty", 1))):
-            queue.append((p["name"], w, h, may_rotate))
+            queue.append((name, w, h, may_rotate))
 
     # Largest first. Big awkward panels decide the layout; offcuts absorb the rest.
     queue.sort(key=lambda t: (max(t[1], t[2]), t[1] * t[2]), reverse=True)
@@ -239,7 +271,29 @@ GRAIN_LABEL = {"w": "a SZELES menten", "h": "a MAGAS menten",
                "any": "mindegy", "none": "mindegy"}
 
 
-def _parts_pages(job_name, parts, W, H):
+def _wrap_note(text, width):
+    """Split a note into lines of at most `width` chars, at '; ' or spaces."""
+    lines, cur = [], ""
+    for word in text.split(" "):
+        while len(word) > width:
+            if cur:
+                lines.append(cur)
+                cur = ""
+            lines.append(word[:width])
+            word = word[width:]
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= width:
+            cur += " " + word
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _parts_pages(job_name, parts, W, H, assumptions=()):
     """The cut list itself: one row per part, with GRAIN and EDGING columns.
 
     The owner's rule (agents/forgacs/CLAUDE.md, workshop conventions): a cut
@@ -258,7 +312,14 @@ def _parts_pages(job_name, parts, W, H):
             (360, "ANYAG"), (420, "SZALIRANY"), (530, "ELSZALAG"), (640, "MEGJEGYZES")]
     pages, pg, y = [], None, 0
     for i, p in enumerate(parts):
-        if pg is None or y < 50:
+        # Wrapped, not cut: a truncated note dropped "beszereles utan szabva"
+        # off the end of a curved part's row during #747.
+        bits = [t for t in (special_note(p), str(p.get("note", "") or "")) if t]
+        lines = _wrap_note("; ".join(bits), 42)
+        # The break looks at the row's LAST note line, not its first: checking
+        # only the first let a wrapped note run into the footer at y=28 and
+        # off the page (Marveen's #747 review: lyford-g06 y=14, 60 long notes y=-19).
+        if pg is None or y - 8 * max(0, len(lines) - 1) < 50:
             pg = Page(W, H)
             pages.append(pg)
             y = H - 42
@@ -269,6 +330,12 @@ def _parts_pages(job_name, parts, W, H):
                                "Az elszalag elenkent megy, es minden szalagos el 2 mm-t "
                                "vesz le abbol a meretbol.", size=9, font="F2", colour=RED)
                 y -= 14
+            # A generator's default (ives.py --job: allowance, form band) is not
+            # the owner's number; on paper it must not look like one (#747).
+            for a in assumptions:
+                for line in _wrap_note(str(a), 120):
+                    pg.text(40, y, line, size=8, font="F2", colour=RED)
+                    y -= 11
             y -= 4
             for x, head in cols:
                 pg.text(x, y, head, size=8, font="F2")
@@ -280,15 +347,20 @@ def _parts_pages(job_name, parts, W, H):
         g_txt = GRAIN_LABEL.get(grain, grain) if grain is not None else "NINCS MEGADVA"
         edging = p.get("edging")
         e_txt = edging if edging else "NINCS MEGADVA"
+        # The size columns are what the saw cuts (the footer says so); for a
+        # curved or fitted part that is the raw blank, and the note carries
+        # the finished size.
+        cw, ch = cut_size(p)
         pg.text(40, y, str(p.get("name", "?"))[:30], size=8)
-        pg.text(210, y, mm(float(p["w"])), size=8)
-        pg.text(270, y, mm(float(p["h"])), size=8)
+        pg.text(210, y, mm(cw), size=8)
+        pg.text(270, y, mm(ch), size=8)
         pg.text(330, y, str(p.get("qty", 1)), size=8)
         pg.text(360, y, str(p.get("material", ""))[:10], size=8)
         pg.text(420, y, g_txt, size=8, colour=RED if grain is None else (0, 0, 0))
         pg.text(530, y, e_txt[:18], size=8, colour=RED if not edging else (0, 0, 0))
-        pg.text(640, y, str(p.get("note", ""))[:38], size=7, colour=(0.35, 0.35, 0.35))
-        y -= 11
+        for k, line in enumerate(lines):
+            pg.text(640, y - 8 * k, line, size=7, colour=(0.35, 0.35, 0.35))
+        y -= 11 + 8 * max(0, len(lines) - 1)
     if pg is not None:
         pg.text(40, 28, "SZALIRANY: merre fusson az erezet az alkatreszen. A meretek mm-ben, "
                         "VAGASI meret (a carcass.py-bol jovo listan az elszalag mar levonva).",
@@ -334,7 +406,8 @@ def render_pdf(result, path, parts=None):
 
     # --- the cut list: grain and edging per part ---
     if parts:
-        pages.extend(_parts_pages(result.get("job", ""), parts, W, H))
+        pages.extend(_parts_pages(result.get("job", ""), parts, W, H,
+                                  result.get("assumptions", ())))
 
     # --- one page per sheet ---
     for e in result["materials"]:
@@ -449,8 +522,19 @@ def main(argv):
     if "--svg" in argv:
         svg_prefix = argv[argv.index("--svg") + 1]
 
-    with open(path) as fh:
-        job = json.load(fh)
+    # An empty or broken job file used to die in a traceback (exit 1, the
+    # crash code), and a job with no parts printed an empty plan with exit 0:
+    # both now stop like any other row that cannot be nested (#747).
+    try:
+        with open(path) as fh:
+            job = json.load(fh)
+    except (OSError, ValueError) as e:
+        print(f"A munkafajl nem olvashato JSON: {path}: {e}", file=sys.stderr)
+        return 3
+    if not isinstance(job, dict) or not job.get("parts") or "stock" not in job:
+        print("A munkafajlban nincs alkatresz ('parts') vagy tabla ('stock'): "
+              "ures vagast nem adok ki kesz tervkent.", file=sys.stderr)
+        return 3
 
     kerf = float(job.get("kerf", DEFAULT_KERF))
     trim = float(job.get("trim", 0))
@@ -474,6 +558,19 @@ def main(argv):
                     bad.append(f'{p.get("name", "?")}: {key}={v!r} nulla vagy negativ')
             except (TypeError, ValueError):
                 bad.append(f'{p.get("name", "?")}: {key}={v!r} nem szam')
+        b = p.get("blank")
+        if b is not None:
+            try:
+                bw, bh = float(b["w"]), float(b["h"])
+                if bw + 1e-9 < float(p["w"]) or bh + 1e-9 < float(p["h"]):
+                    bad.append(f'{p.get("name", "?")}: a nyers meret {b["w"]}x{b["h"]} kisebb, '
+                               f'mint a kesz {p["w"]}x{p["h"]}')
+            except (TypeError, ValueError, KeyError):
+                bad.append(f'{p.get("name", "?")}: blank={b!r} nem w/h szampar')
+        if p.get("role") not in (None, "jig"):
+            bad.append(f'{p.get("name", "?")}: role={p.get("role")!r} ismeretlen (csak "jig")')
+        if p.get("fit") not in (None, "install"):
+            bad.append(f'{p.get("name", "?")}: fit={p.get("fit")!r} ismeretlen (csak "install")')
     if bad:
         print("NEM NESTELHETo SOR, a vagasterv nem keszult el:", file=sys.stderr)
         for b in bad:
@@ -531,6 +628,14 @@ def main(argv):
 
     result["total_cost"] = round(result["total_cost"], 2)
     result["stock_substituted"] = substituted
+    result["assumptions"] = [str(a) for a in job.get("assumptions", [])]
+    result["special"] = {
+        "blank": [{"name": p["name"], "qty": int(p.get("qty", 1)),
+                   "blank": list(cut_size(p)), "finished": [float(p["w"]), float(p["h"])]}
+                  for p in all_parts if p.get("blank")],
+        "jig": [p["name"] for p in all_parts if p.get("role") == "jig"],
+        "fit_on_install": [p["name"] for p in all_parts if p.get("fit") == "install"],
+    }
 
     if "--pdf" in argv:
         out = argv[argv.index("--pdf") + 1]
@@ -552,6 +657,18 @@ def main(argv):
 
     print(f"MUNKA: {result['job']}")
     print(f"Furreszres: {kerf} mm")
+    for a in result["assumptions"]:
+        print(f"  {a}")
+    sp = result["special"]
+    if sp["blank"]:
+        print("NYERS MERETRE VAGVA (a tablan a nyers meret, kesz meretre kesobb):")
+        for b in sp["blank"]:
+            print(f"  {b['name']:<20} {b['qty']} db  nyers {mm(b['blank'][0])} x {mm(b['blank'][1])}"
+                  f"  ->  kesz {mm(b['finished'][0])} x {mm(b['finished'][1])}")
+    if sp["jig"]:
+        print(f"SABLON, nem butor (ugyanabbol a lapbol vagjuk): {', '.join(sp['jig'])}")
+    if sp["fit_on_install"]:
+        print(f"BESZERELES UTAN SZABVA (tulmeretre megy ki): {', '.join(sp['fit_on_install'])}")
     if substituted:
         print(f"FIGYELEM: ezekhez az anyagokhoz nincs sajat tabla megadva, a MERET "
               f"es az AR egyetlen tablabol jon: {', '.join(substituted)}. "

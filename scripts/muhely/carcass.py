@@ -167,18 +167,22 @@ def apply_edging(parts, edging, notes):
     if not rules:
         return
     touched = 0
+    used = set()
     for p in parts:
         # Exact name first, then longest prefix that ends on a WORD BOUNDARY.
         # A bare startswith() is not enough: "fiok elolap" is a prefix of
         # "fiok elolap-belso", so the rule for the visible front silently banded
         # the inside of the box as well, and the box came out 4 mm narrow.
         rule = rules.get(p["name"])
-        if rule is None:
+        if rule is not None:
+            used.add(p["name"])
+        else:
             for key in sorted(rules, key=len, reverse=True):
                 if key == "*":
                     continue
                 if p["name"].startswith(key) and p["name"][len(key):len(key) + 1] == " ":
                     rule = rules[key]
+                    used.add(key)
                     break
         if rule is None:
             rule = rules.get("*")
@@ -194,6 +198,21 @@ def apply_edging(parts, edging, notes):
         p["h"] = round(p["h"] - nh * t, 1)
         p["edging"] = f"{t:.0f}mm sz:{nw} m:{nh}"
         touched += 1
+    # A rule that matched no part is a misspelt name ("polcc"): the part it was
+    # meant for fell to "*" or to "nincs", kept its tape, and left the saw 2-4 mm
+    # oversize on a list that looked complete. Open since 2026-10-17 (#246).
+    # A shared block that is meant to carry a rule this box has no part for
+    # names it in "allow_unused"; anything else that matched nothing stops.
+    allowed = set(edging.get("allow_unused") or [])
+    unused = sorted(k for k in rules if k != "*" and k not in used and k not in allowed)
+    if unused:
+        names = sorted({p["name"] for p in parts})
+        raise ValueError(f"ELSZALAG-szabaly, ami egy alkatreszre sem illik: "
+                         f"{', '.join(unused)}. Az alkatreszek: {', '.join(names)}. "
+                         f"Ha elgepeles, javitsd; ha szandekos (kozos blokk egy "
+                         f"olyan dobozon, amiben nincs ilyen darab, vagy egy rovid "
+                         f"kulcs, amit egy hosszabb mindig megeloz), vedd ki ebbol "
+                         f"a specbol, vagy ird az edging \"allow_unused\" listajaba.")
     if touched:
         notes.append(f"ELSZALAG {t:.0f} mm levonva {touched} alkatresz meretebol. "
                      f"A listan szereplo meret a SZABASMERET, a szalaggal egyutt "
@@ -491,6 +510,7 @@ def apply_slope(parts, notes, *, slope, W, H, t, bays, div_t, panel_depth,
             drop_back = flat_w * tan_a
             parts.remove(p)
             parts.append({**p, "name": "hatlap (trapez)", "h": round(flat_h, 1),
+                          "fit": "install",
                           "note": f"TRAPEZ: {flat_h:.0f} mm a magas vegen, "
                                   f"{flat_h - drop_back:.1f} mm az alacsonyon, a ferde el "
                                   f"{math.degrees(alpha):.1f} fok. A megadott meret a "
@@ -812,6 +832,8 @@ def apply_plinth(parts, notes, *, spec, W, H, t, slope_info):
               note=f"{h:.0f} mm a MAXIMUM magassag, plusz {over:.0f} mm tulmeret: "
                    f"helyszinen a padlohoz szabva. {setback:.0f} mm-rel hatrebb az "
                    f"ajto elolapjatol, szalag nelkul")
+    # cutlist.py lists it under BESZERELES UTAN SZABVA (#747).
+    parts[-1]["fit"] = "install"
     notes.append(f"LABAZAT {h:.0f} mm (maximum), {setback:.0f} mm hatrahuzva az ajto "
                  f"elolapjatol, {over:.0f} mm tulmerettel megy ki. A padlohoz helyben "
                  f"szabjuk.")
@@ -984,8 +1006,20 @@ def build(spec):
             if div_h > inner_h + 0.5:
                 raise ValueError(f"A valaszfal {div_h:.1f} mm magas, a belso "
                                  f"magassag viszont {inner_h:.1f} mm.")
-        parts_add(parts, "valaszfal", panel_depth, div_h, n_div, grain="h",
+        # The divider stands in the clear depth (D - back_t): a rebated back is
+        # one piece and runs behind it, so a full-depth divider would not let
+        # it in. That is the physical argument; the shelf is shorter still
+        # (clear depth minus its setback). The Kreg media console does not
+        # contradict it, but cuts its partition 1.5 in short of the 16.25 depth,
+        # flush with the shelves (raw/05: partition 16 x 14.75), so the 05b case
+        # stays ELTER on the divider (+31.8 mm). A typo in that case (16.25)
+        # briefly argued for full depth; see #246 comments 2394 and 2396.
+        parts_add(parts, "valaszfal", clear_d, div_h, n_div, grain="h",
                   note=div_note, material=f"{div_t:.0f}mm")
+        if back_type == "rebate":
+            notes.append(f"VALASZFAL a szabad melysegben ({clear_d:.0f} mm): a falcolt "
+                         f"hatlap egy darabban megy mogotte. Ha a valaszfalat is "
+                         f"falcolod, {panel_depth:.0f} mm.")
         if div_h_spec != "inner":
             notes.append(f"Valaszfal magassaga {div_h:.1f} mm ({div_note}).")
         explicit = dv.get("bays")
@@ -1330,6 +1364,8 @@ def main(argv):
             "parts": [{k: p[k] for k in ("name", "w", "h", "qty", "grain", "material")}
                       | ({"edging": p["edging"]} if "edging" in p else {})
                       | ({"note": p["note"]} if p.get("note") else {})
+                      # #747: blank / jig / fitted-on-site marks reach cutlist.py
+                      | {k: p[k] for k in ("blank", "role", "fit") if k in p}
                       for p in r["parts"]],
             # And the WHOLE-JOB notes travel for the same reason, one level up.
             # The per-part comment above has said since day one that the JSON is

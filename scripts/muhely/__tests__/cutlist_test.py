@@ -215,6 +215,162 @@ def test_pdf_flags_missing_grain_and_edging():
     check("pdf: hianyzo szalirany kiirva", "NINCS MEGADVA" in txt, True)
 
 
+def _curved_job(**door):
+    """A curved door blank, its bending-form ribs and a fitted top (#747).
+
+    The metric sample from the card: 800 wide opening, 100 deep arc, 18 mm,
+    door front arc 853.5 finished, cut as a 900 x 760 blank.
+    """
+    d = {"name": "ives ajto", "w": 853.5, "h": 700, "qty": 1, "grain": "w",
+         "edging": "nincs", "blank": {"w": 900, "h": 760}}
+    d.update(door)
+    return {"job": "t", "stock": {"w": 2440, "h": 1220},
+            "parts": [d,
+                      {"name": "sablon borda", "w": 803, "h": 140, "qty": 3, "grain": "w",
+                       "edging": "nincs", "role": "jig"},
+                      {"name": "teto", "w": 836, "h": 420, "qty": 1, "grain": "w",
+                       "edging": "nincs", "fit": "install"}]}
+
+
+def test_blank_is_nested_at_blank_size():
+    """The sheet carries the RAW size: nesting the finished size cuts it short."""
+    import json
+    rc, out, _ = _run(_curved_job(), "--json")
+    check("nyers: exit 0", rc, 0)
+    res = json.loads(out)
+    placed = [pl for m in res["materials"] for s in m["sheets"] for pl in s["parts"]]
+    door = [pl for pl in placed if pl["name"].startswith("ives ajto")]
+    check("nyers: a tablan '(nyers)' nevvel", [pl["name"] for pl in door], ["ives ajto (nyers)"])
+    check("nyers: a tablan a nyers meret",
+          sorted([door[0]["w"], door[0]["h"]]), [760.0, 900.0])
+    check("nyers: json special.blank", res["special"]["blank"],
+          [{"name": "ives ajto", "qty": 1, "blank": [900.0, 760.0], "finished": [853.5, 700.0]}])
+    check("nyers: json special.jig", res["special"]["jig"], ["sablon borda"])
+    check("nyers: json special.fit", res["special"]["fit_on_install"], ["teto"])
+
+
+def test_blank_smaller_than_finished_stops():
+    rc, _, _ = _run(_curved_job(blank={"w": 800, "h": 760}))
+    check("nyers kisebb a kesznel: exit 3", rc, 3)
+
+
+def test_bad_blank_stops():
+    for bad in ({"w": 900}, {"w": "tbc", "h": 760}, "tbc", {}):
+        rc, _, _ = _run(_curved_job(blank=bad))
+        check(f"rossz blank {bad!r}: exit 3", rc, 3)
+
+
+def test_unknown_role_and_fit_stop():
+    rc, _, _ = _run(_curved_job(role="sablon"))
+    check("ismeretlen role: exit 3", rc, 3)
+    rc, _, _ = _run(_curved_job(fit="site"))
+    check("ismeretlen fit: exit 3", rc, 3)
+
+
+def test_oversized_blank_is_unplaced():
+    """The finished size fits, the blank does not: that is still a missing part."""
+    rc, out, _ = _run(_curved_job(blank={"w": 2600, "h": 760}))
+    check("tul nagy nyers: exit 4", rc, 4)
+    check("tul nagy nyers: nevvel jelezve", "ives ajto (nyers)" in out and "NEM FER RA" in out, True)
+
+
+def test_special_sections_in_text_and_pdf():
+    rc, out, _ = _run(_curved_job())
+    check("szoveg: NYERS MERETRE VAGVA", "NYERS MERETRE VAGVA" in out, True)
+    check("szoveg: nyers -> kesz", "nyers 900 x 760  ->  kesz 853.5 x 700" in out, True)
+    check("szoveg: SABLON sor", "SABLON, nem butor" in out and "sablon borda" in out, True)
+    check("szoveg: BESZERELES UTAN SZABVA", "BESZERELES UTAN SZABVA" in out and "teto" in out, True)
+    job = _curved_job(note="hajlithato MDF 2x9 mm, egymasra ragasztva")
+    txt = _pdf_text(job)
+    flat = " ".join(txt.split())
+    check("pdf: a nyers sor VAGASI meretet mutat", "900 760" in flat, True)
+    check("pdf: a kesz meret a megjegyzesben", "NYERS, kesz 853.5x700" in flat, True)
+    check("pdf: sablon jelolve", "SABLON, nem butor" in flat, True)
+    check("pdf: beszereles utan szabva", "beszereles utan szabva" in flat, True)
+    check("pdf: hosszu megjegyzes nem vagodik le", "egymasra ragasztva" in flat, True)
+
+
+def test_plain_job_has_no_special_sections():
+    """Negative control: an ordinary job prints none of the new sections."""
+    import json
+    job = {"job": "t", "stock": {"w": 2440, "h": 1220},
+           "parts": [{"name": "oldal", "w": 560, "h": 720, "qty": 2}]}
+    rc, out, _ = _run(job)
+    check("sima: exit 0", rc, 0)
+    check("sima: nincs kulon szakasz",
+          any(k in out for k in ("NYERS", "SABLON", "BESZERELES", "FELTETELEZES")), False)
+    _, out, _ = _run(job, "--json")
+    res = json.loads(out)
+    check("sima: special ures", res["special"], {"blank": [], "jig": [], "fit_on_install": []})
+    check("sima: nincs feltetelezes", res["assumptions"], [])
+
+
+def _row_ys(parts):
+    """Every y the cut-list pages write at, footer (y=28) left out."""
+    import cutlist
+    seen = []
+
+    class Rec(cutlist.Page):
+        def text(self, x, y, s, *a, **k):
+            if y != 28:
+                seen.append((y, str(s)))
+            return super().text(x, y, s, *a, **k)
+
+    real, cutlist.Page = cutlist.Page, Rec
+    try:
+        pages = cutlist._parts_pages("t", parts, *cutlist.A4_LANDSCAPE)
+    finally:
+        cutlist.Page = real
+    return pages, seen
+
+
+def test_wrapped_note_breaks_page_before_footer():
+    """A wrapped note's last line stays above the footer (#747 review, Marveen).
+
+    The page break used to look at the row's first line only; with 60 parts
+    carrying a long note the last lines landed at y=-19, off the paper.
+    Whether a given list hits the bottom depends on where the rows happen to
+    fall, so the test shifts them with 0-5 one-line rows in front and tries
+    2-, 3- and 4-line notes: a single layout passed on the old code by luck.
+    """
+    words = "beszereles utan szabva a helyszinen falhoz igazitva ellenorizd meretet".split()
+    lows, counts = [], []
+    for n_lines in (2, 3, 4):
+        note = " ".join(words[i % len(words)] for i in range(7 * n_lines))
+        for lead in range(6):
+            ps = [{"name": f"r{i}", "w": 300, "h": 400, "qty": 1, "grain": "h",
+                   "edging": "nincs"} for i in range(lead)]
+            ps += [{"name": f"p{i}", "w": 300, "h": 400, "qty": 1, "grain": "h",
+                    "edging": "nincs", "note": note} for i in range(60)]
+            pages, seen = _row_ys(ps)
+            lows.append(min(y for y, _ in seen))
+            counts.append(sum(1 for _, s in seen if s.startswith("p") and s[1:].isdigit()))
+    check("hosszu megjegyzes: semmi nem fut 50 ala (18 elrendezes)", min(lows) >= 50, True)
+    check("hosszu megjegyzes: mind a 60 sor kiirva", set(counts), {60})
+    short = [{"name": f"p{i}", "w": 300, "h": 400, "qty": 1, "grain": "h", "edging": "nincs"}
+             for i in range(30)]
+    check("rovid sorok: egy oldal marad (kontroll)", len(_row_ys(short)[0]), 1)
+
+
+def test_empty_or_broken_job_stops():
+    """No parts is not a plan, and a broken file is not a crash (#747)."""
+    import subprocess
+    import tempfile
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rc, out, _ = _run({"job": "t", "stock": {"w": 2440, "h": 1220}, "parts": []})
+    check("ures parts: exit 3", rc, 3)
+    rc, _, _ = _run({"job": "t", "parts": [{"name": "a", "w": 100, "h": 100}]})
+    check("nincs stock: exit 3", rc, 3)
+    with tempfile.TemporaryDirectory() as d:
+        for body, why in (("", "ures fajl"), ("{not json", "hibas JSON")):
+            path = os.path.join(d, "job.json")
+            with open(path, "w") as fh:
+                fh.write(body)
+            r = subprocess.run([sys.executable, os.path.join(here, "cutlist.py"), path],
+                               capture_output=True, text=True)
+            check(f"{why}: exit 3, nincs traceback", (r.returncode, "Traceback" in r.stderr), (3, False))
+
+
 if __name__ == "__main__":
     print("cutlist.py stock-kezeles")
     test_single_material_keeps_label()
@@ -230,6 +386,16 @@ if __name__ == "__main__":
     print("cutlist.py szabaslista oldal")
     test_pdf_has_grain_and_edging_columns()
     test_pdf_flags_missing_grain_and_edging()
+    print("cutlist.py ives, sablon, beszereles utan (#747)")
+    test_blank_is_nested_at_blank_size()
+    test_blank_smaller_than_finished_stops()
+    test_bad_blank_stops()
+    test_unknown_role_and_fit_stop()
+    test_oversized_blank_is_unplaced()
+    test_special_sections_in_text_and_pdf()
+    test_plain_job_has_no_special_sections()
+    test_wrapped_note_breaks_page_before_footer()
+    test_empty_or_broken_job_stops()
     print()
     if FAILED:
         print(f"BUKOTT: {len(FAILED)} -- {', '.join(FAILED)}")

@@ -84,6 +84,9 @@ if construction != "top_applied":
     got = parts["hatlap (trapez)"]["h"]
     out.append((f"hatlap befoglalo = {want:.1f} (kapott {got})", near(got, want, 0.6)))
     out.append((f"hatlap NEM a kulso {H:.0f}", not near(got, H, 0.6)))
+    # #747: it is trimmed to the fitted top, so the cut list must say so.
+    out.append(("hatlap (trapez) beszereles utan szabva",
+                parts["hatlap (trapez)"].get("fit") == "install"))
 
 # 5. Free controls that need no arithmetic: every upright shorter than the one
 #    before it, and none of them taller than the straight inner height.
@@ -200,6 +203,33 @@ if check "$TMP/rossz.json" sides_full >/dev/null 2>&1; then
 else
   ok "a regi hibaval megbukik, tehat tenyleg meri"
 fi
+
+# FITTED ON SITE (#747): the plinth (scribed to the floor) and the raked back
+# (trimmed to the fitted top) reach cutlist.py marked "fit": "install", so the
+# shop list names them under BESZERELES UTAN SZABVA. A straight box with no
+# plinth is the control: nothing of its own may land there.
+echo "  -- beszereles utan szabva"
+python3 - "$TMP" <<'PY'
+import json, sys
+tmp = sys.argv[1]
+base = {"job": "fit", "w": 900, "h": 720, "d": 560, "t": 18,
+        "back": {"type": "rebate", "t": 6, "rebate": 10}, "construction": "sides_full"}
+json.dump({**base, "plinth": {"h": 50}}, open(f"{tmp}/labazat.json", "w"))
+json.dump(base, open(f"{tmp}/sima.json", "w"))
+PY
+python3 scripts/muhely/carcass.py "$TMP/labazat.json" --cutlist "$TMP/labazat-c.json" >/dev/null 2>&1
+python3 scripts/muhely/carcass.py "$TMP/sima.json" --cutlist "$TMP/sima-c.json" >/dev/null 2>&1
+python3 - "$TMP/labazat-c.json" "$TMP/sima-c.json" <<'PY' \
+  && ok "labazat fit=install, sima dobozon semmi" || no "labazat/sima doboz fit jeloles"
+import json, sys
+lab = {p["name"]: p for p in json.load(open(sys.argv[1]))["parts"]}
+plain = json.load(open(sys.argv[2]))["parts"]
+good = lab["labazat"].get("fit") == "install" and not any(p.get("fit") for p in plain)
+sys.exit(0 if good else 1)
+PY
+python3 scripts/muhely/cutlist.py "$TMP/labazat-c.json" 2>/dev/null | grep -q "BESZERELES UTAN SZABVA.*labazat" \
+  && ok "cutlist: labazat a BESZERELES UTAN SZABVA sorban" \
+  || no "cutlist: labazat nincs a BESZERELES UTAN SZABVA sorban"
 
 [ $fail -eq 0 ] && echo "  MIND RENDBEN" || echo "  BUKOTT"
 exit $fail

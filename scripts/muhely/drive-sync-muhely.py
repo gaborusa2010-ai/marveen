@@ -80,6 +80,9 @@ JOBS = [
     ]),
     ("Referencia - muhely", [
         ("sablon-otletek.md", "Sablon-otletek.md"),
+        # Card #217: the owner's workshop facts. The repo copy is the master, this is
+        # the read-only copy for his phone. The -VAZLAT name stays for old pointers.
+        ("adattar/muhely-adattar-VAZLAT.md", "Muhely-adattar.md"),
     ]),
 ]
 
